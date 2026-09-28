@@ -425,6 +425,13 @@ button:disabled { opacity: .45; cursor: default; }
 .modal-card h3 { font-family: var(--display); color: var(--gold); }
 .modal-lead { font-size: 1.05rem; }
 .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.fork-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+.fork-btn {
+  border-radius: 14px !important;
+  line-height: 1.25;
+  min-height: 3.2rem;
+}
+.fork-btn small { font-weight: 600; opacity: 0.75; }
 .hint { font-size: 0.78rem; color: var(--muted); }
 .stock-list { display: grid; gap: 0.4rem; max-height: 40vh; overflow: auto; }
 .stock-row {

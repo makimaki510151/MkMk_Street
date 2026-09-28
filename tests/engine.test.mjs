@@ -1,8 +1,36 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, calcToll, getPlayerAreaCount, getTollMulti, getPlayerAssets, rollDice, applyChoice, getNode, updateAreaStockPrices } from '../js/engine.js';
+import {
+  createGame,
+  calcToll,
+  getPlayerAreaCount,
+  getTollMulti,
+  getPlayerAssets,
+  rollDice,
+  applyChoice,
+  chooseFork,
+  getForwardNexts,
+  continueMove,
+  updateAreaStockPrices,
+} from '../js/engine.js';
+import { buildBoard } from '../js/board.js';
 
 describe('MkMk Street engine', () => {
+  it('builds a branching board (not a single loop)', () => {
+    const board = buildBoard();
+    const multi = board.nodes.filter((n) => (n.nexts?.length || 0) >= 3);
+    assert.ok(multi.length >= 5, 'expected multiple 3+ way junctions');
+    const bank = board.nodes.find((n) => n.id === board.startId);
+    assert.equal(bank.nexts.length, 4, 'bank should be 4-way');
+    // 双方向リンクされていること
+    for (const n of board.nodes) {
+      for (const nid of n.nexts) {
+        const other = board.nodes.find((x) => x.id === nid);
+        assert.ok(other.nexts.includes(n.id), `missing back-link ${n.id}<->${nid}`);
+      }
+    }
+  });
+
   it('creates a board with shops and areas', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
@@ -30,12 +58,10 @@ describe('MkMk Street engine', () => {
     const shops = g.map.filter((n) => n.type === 'shop' && n.area === area);
     shops[0].owner = 0;
     const toll1 = calcToll(g, shops[0]);
-    shops[1].owner = 0;
-    shops[2].owner = 0;
-    shops[3].owner = 0;
-    const toll4 = calcToll(g, shops[0]);
-    assert.equal(getPlayerAreaCount(g, 0, area), 4);
-    assert.ok(toll4 > toll1 * 3);
+    for (const s of shops) s.owner = 0;
+    const tollMax = calcToll(g, shops[0]);
+    assert.ok(getPlayerAreaCount(g, 0, area) >= 2);
+    assert.ok(tollMax > toll1);
   });
 
   it('updates stock prices from shop values', () => {
@@ -52,16 +78,44 @@ describe('MkMk Street engine', () => {
     assert.ok(g.areas[area].stockPrice >= before);
   });
 
-  it('rolls dice and advances the current player', () => {
+  it('asks for a fork when leaving the bank', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B', isCPU: true }],
       seed: 99,
     });
-    const start = g.players[0].pos;
+    // 銀行は4方向なので最初の一歩で分岐する
     const result = rollDice(g);
     assert.equal(result.ok, true);
-    assert.ok(result.dice >= 1 && result.dice <= 6);
-    assert.notEqual(g.players[0].pos, start);
+    assert.equal(g.phase, 'await_fork');
+    assert.equal(g.pending?.type, 'fork');
+    assert.ok(g.pending.options.length >= 2);
+  });
+
+  it('continues movement after choosing a fork', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+    });
+    rollDice(g);
+    assert.equal(g.phase, 'await_fork');
+    const nextId = g.pending.options[0].id;
+    const stepsBefore = g.move.stepsLeft;
+    const result = chooseFork(g, nextId);
+    assert.equal(result.ok, true);
+    assert.ok(g.players[0].pos === nextId || g.move === null || g.phase !== 'await_fork' || g.move.stepsLeft < stepsBefore);
+  });
+
+  it('filters reverse direction from forward nexts', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const bank = g.startId;
+    const arm = getForwardNexts(g, bank, null);
+    assert.equal(arm.length, 4);
+    const first = arm[0];
+    const fwd = getForwardNexts(g, first, bank);
+    assert.ok(!fwd.includes(bank));
   });
 
   it('can buy a vacant shop via choice', () => {

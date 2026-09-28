@@ -288,9 +288,20 @@ function enterGame() {
   canvas.onclick = (e) => {
     if (!app.game) return;
     const hit = app.renderer.hitTest(app.game, e.clientX, e.clientY);
-    if (hit) {
-      $('#inspect').textContent = shopTooltip(app.game, hit);
+    if (!hit) return;
+
+    // 分岐選択中は候補マスを直接クリックして進める
+    if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
+      const mine = app.mode === 'local'
+        ? !app.game.players[app.game.pending.playerId]?.isCPU
+        : app.game.pending.playerId === app.localSeat;
+      if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
+        sendAction({ type: 'choice', choice: { nextId: hit.id } });
+        return;
+      }
     }
+
+    $('#inspect').textContent = shopTooltip(app.game, hit);
   };
   bindGameControls();
   refreshGameUI();
@@ -378,8 +389,13 @@ function handleHostAction(from, data) {
     const result = rollDice(app.game);
     if (result.state) app.game = restoreState(result.state);
   } else if (action.type === 'choice') {
-    if (!app.game.pending || app.game.pending.playerId !== seat) {
+    const pend = app.game.pending;
+    if (!pend || pend.playerId !== seat) {
       app.net.sendTo(from, { type: 'reject', reason: '選択できません' });
+      return;
+    }
+    if (app.game.phase !== 'await_choice' && app.game.phase !== 'await_fork') {
+      app.net.sendTo(from, { type: 'reject', reason: '今は選択できません' });
       return;
     }
     const result = applyChoice(app.game, action.choice);
@@ -465,7 +481,7 @@ function refreshGameUI() {
   $('#btn-roll').textContent = canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…');
 
   // モーダル
-  if (g.phase === 'await_choice' && g.pending) {
+  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
     if (mine) showChoiceModal(g);
     else {
@@ -490,6 +506,7 @@ function phaseLabel(g) {
   switch (g.phase) {
     case 'await_roll': return 'サイコロ待ち';
     case 'await_choice': return '選択待ち';
+    case 'await_fork': return '分岐選択';
     case 'moving': return '移動中';
     case 'gameover': return '終了';
     default: return g.phase;
@@ -504,6 +521,27 @@ function showChoiceModal(g) {
   modal.hidden = false;
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
+
+  if (pend.type === 'fork') {
+    title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
+    body.innerHTML = `
+      <p class="hint">マスを直接クリックしても選べます</p>
+      <div class="modal-actions fork-actions">
+        ${pend.options.map((o) => `
+          <button class="btn primary fork-btn" data-next="${o.id}">
+            ${o.label}<br><small>${o.dest}</small>
+          </button>
+        `).join('')}
+      </div>`;
+    $('#btn-skip-choice').hidden = true;
+    body.querySelectorAll('[data-next]').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
+      };
+    });
+    return;
+  }
 
   if (pend.type === 'buy_shop') {
     const sq = getNode(g, pend.shopId);

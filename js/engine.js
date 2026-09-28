@@ -1,6 +1,6 @@
 /** MkMk Street — ゲームエンジン（純ロジック / ホスト権威） */
 
-import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH } from './board.js';
+import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
 
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
@@ -12,7 +12,7 @@ const CHANCE_EVENTS = [
   { id: 'bonus', label: '臨時ボーナス', apply: (g, p) => { const n = 200 + p.level * 50; p.cash += n; return `+${n}G` } },
   { id: 'salary', label: '給料日っぽい日', apply: (g, p) => { const n = Math.floor(getLevelBonus(g, p) * 0.5); p.cash += n; return `賞金の半分 +${n}G` } },
   { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `-${n}G` } },
-  { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => { p.pos = g.startId; return '銀行へ移動' } },
+  { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => { p.pos = g.startId; p.prevPos = null; return '銀行へ移動' } },
   { id: 'stock_gift', label: '株のおすそ分け', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
@@ -45,6 +45,7 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     isCPU: !!pl.isCPU,
     cash: initialCash,
     pos: board.startId,
+    prevPos: null,
     marks: [false, false, false, false],
     level: 1,
     stocks: {},
@@ -63,10 +64,11 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     goal,
     players: plist,
     currentPlayerIdx: 0,
-    phase: 'await_roll', // await_roll | moving | resolve | await_choice | gameover
+    phase: 'await_roll', // await_roll | await_fork | await_choice | gameover
     pending: null,
     dice: null,
-    logs: [{ text: 'ゲーム開始！目標資産に到達して銀行へ戻ろう', kind: 'system' }],
+    move: null, // { stepsLeft, path, passedBank }
+    logs: [{ text: 'ゲーム開始！分岐路を選んで目標資産を目指そう', kind: 'system' }],
     winnerId: null,
     turn: 1,
     _seed: seed,
@@ -175,6 +177,7 @@ export function serializeState(g) {
     phase: g.phase,
     pending: g.pending,
     dice: g.dice,
+    move: g.move,
     logs: g.logs.slice(0, 30),
     winnerId: g.winnerId,
     turn: g.turn,
@@ -185,6 +188,96 @@ export function serializeState(g) {
 
 export function restoreState(data) {
   return { ...data };
+}
+
+/** 後退を除いた前進候補。行き止まりなら全方向を許可。 */
+export function getForwardNexts(g, pos, prevPos) {
+  const node = getNode(g, pos);
+  if (!node) return [];
+  const raw = node.nexts || [];
+  if (prevPos == null) return [...raw];
+  const fwd = raw.filter((id) => id !== prevPos);
+  return fwd.length > 0 ? fwd : [...raw];
+}
+
+function onPassThrough(g, p, nodeId) {
+  const nd = getNode(g, nodeId);
+  if (!nd) return;
+  if (nd.type === 'mark' && !p.marks[nd.mark]) {
+    p.marks[nd.mark] = true;
+    addLog(g, `${p.name} が通過で ${SUIT_LABELS[nd.mark]} を入手！`, 'mark');
+  }
+  if (nd.type === 'bank' && nodeId !== g.move?.startPos) {
+    handleBank(g, p, false);
+  }
+}
+
+/** 残歩数を消化。分岐に当たれば await_fork。 */
+export function continueMove(g) {
+  const p = currentPlayer(g);
+  if (!p || !g.move) return { ok: false, error: 'no_move' };
+
+  while (g.move.stepsLeft > 0) {
+    if (g.phase === 'gameover') break;
+
+    const options = getForwardNexts(g, p.pos, p.prevPos);
+    if (options.length === 0) break;
+
+    if (options.length > 1) {
+      g.phase = 'await_fork';
+      g.pending = {
+        type: 'fork',
+        playerId: p.id,
+        options: options.map((id) => {
+          const to = getNode(g, id);
+          return {
+            id,
+            label: dirLabel(getNode(g, p.pos), to),
+            dest: to?.label || `#${id}`,
+          };
+        }),
+        stepsLeft: g.move.stepsLeft,
+      };
+      return { ok: true, forked: true, state: serializeState(g) };
+    }
+
+    const nextId = options[0];
+    p.prevPos = p.pos;
+    p.pos = nextId;
+    g.move.stepsLeft--;
+    g.move.path.push(nextId);
+    if (nextId === g.startId) g.move.passedBank = true;
+    onPassThrough(g, p, nextId);
+  }
+
+  g.pending = null;
+  const passedBank = !!g.move.passedBank;
+  const path = g.move.path;
+  g.move = null;
+  resolveLanding(g, p, { passedBank });
+  return { ok: true, forked: false, path, state: serializeState(g) };
+}
+
+/** 分岐選択後に1歩進めて移動再開 */
+export function chooseFork(g, nextId) {
+  if (g.phase !== 'await_fork' || !g.pending || g.pending.type !== 'fork') {
+    return { ok: false, error: 'no_fork' };
+  }
+  const p = currentPlayer(g);
+  const allowed = (g.pending.options || []).map((o) => o.id);
+  if (!allowed.includes(nextId)) return { ok: false, error: 'bad_fork' };
+
+  p.prevPos = p.pos;
+  p.pos = nextId;
+  g.move.stepsLeft--;
+  g.move.path.push(nextId);
+  if (nextId === g.startId) g.move.passedBank = true;
+  onPassThrough(g, p, nextId);
+
+  addLog(g, `${p.name} は「${getNode(g, nextId)?.label || nextId}」方面へ`, 'dice');
+  g.pending = null;
+  g.phase = 'moving';
+  return continueMove(g);
 }
 
 /** サイコロを振る（ホスト権威） */
@@ -200,27 +293,17 @@ export function rollDice(g) {
     return { ok: true, skipped: true, state: serializeState(g) };
   }
 
+  // 銀行にいるときは出発方向を自由に選べる
+  if (p.pos === g.startId) p.prevPos = null;
+
   const d = Math.floor(rngNext(g) * 6) + 1;
   g.dice = d;
   g.phase = 'moving';
+  g.move = { stepsLeft: d, path: [], passedBank: false, startPos: p.pos };
   addLog(g, `${p.name} のサイコロ → ${d}`, 'dice');
 
-  const path = [];
-  let pos = p.pos;
-  let passedBank = false;
-  for (let i = 0; i < d; i++) {
-    const node = getNode(g, pos);
-    const nextId = node.nexts[0];
-    pos = nextId;
-    path.push(pos);
-    if (pos === g.startId) passedBank = true;
-  }
-  p.pos = pos;
-
-  const result = { ok: true, dice: d, path, passedBank, state: null };
-  resolveLanding(g, p, { passedBank });
-  result.state = serializeState(g);
-  return result;
+  const result = continueMove(g);
+  return { ok: true, dice: d, ...result };
 }
 
 function resolveLanding(g, p, { passedBank }) {
@@ -231,6 +314,16 @@ function resolveLanding(g, p, { passedBank }) {
   }
 
   const sq = getNode(g, p.pos);
+  if (!sq) {
+    endTurn(g);
+    return;
+  }
+
+  if (sq.type === 'junction') {
+    addLog(g, `${p.name} は分岐点に停止`, 'system');
+    endTurn(g);
+    return;
+  }
 
   if (sq.type === 'mark') {
     if (!p.marks[sq.mark]) {
@@ -453,6 +546,10 @@ function autoLiquidate(g, p, need) {
 
 /** プレイヤー選択の解決 */
 export function applyChoice(g, choice) {
+  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
+    return chooseFork(g, Number(choice.nextId));
+  }
+
   if (g.phase !== 'await_choice' || !g.pending) {
     return { ok: false, error: 'no_pending' };
   }
@@ -622,6 +719,25 @@ function endTurn(g) {
   g.dice = null;
 }
 
+function cpuPickFork(g, options) {
+  // 自分の店が多い方面を優先、なければランダム
+  let best = options[0];
+  let bestScore = -1;
+  for (const opt of options) {
+    const to = getNode(g, opt.id);
+    let score = Math.random();
+    if (to?.type === 'shop' && to.owner < 0) score += 2;
+    if (to?.type === 'shop' && to.owner === g.currentPlayerIdx) score += 1.5;
+    if (to?.type === 'mark') score += 1.2;
+    if (to?.type === 'bank') score += 0.8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = opt;
+    }
+  }
+  return best.id;
+}
+
 /** CPUの簡易行動 */
 export function cpuAct(g) {
   const p = currentPlayer(g);
@@ -629,6 +745,11 @@ export function cpuAct(g) {
 
   if (g.phase === 'await_roll') {
     return rollDice(g);
+  }
+
+  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
+    const nextId = cpuPickFork(g, g.pending.options);
+    return chooseFork(g, nextId);
   }
 
   if (g.phase === 'await_choice' && g.pending) {

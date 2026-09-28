@@ -12,6 +12,7 @@ const TYPE_ICON = {
   stockbroker: '株',
   lucky: '★',
   rollon: '再',
+  junction: '分岐',
 };
 
 export function createRenderer(canvas) {
@@ -123,13 +124,26 @@ export function createRenderer(canvas) {
         fill = '#b8860b';
       } else if (n.type === 'rollon') {
         fill = '#2d6a4f';
+      } else if (n.type === 'junction') {
+        fill = '#5a4a3a';
       }
+
+      // 分岐候補のハイライト
+      const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
 
       ctx.fillStyle = fill;
       ctx.fill();
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = n.owner >= 0 ? 3 : 1.5;
+      ctx.strokeStyle = forkOpt ? '#ffe08a' : stroke;
+      ctx.lineWidth = forkOpt ? 4 : (n.owner >= 0 ? 3 : 1.5);
       ctx.stroke();
+
+      if (forkOpt) {
+        ctx.save();
+        ctx.globalAlpha = 0.35 + Math.sin(anim.pulse) * 0.15;
+        ctx.fillStyle = '#ffe08a';
+        ctx.fill();
+        ctx.restore();
+      }
 
       // 現在マスのパルス
       const someoneHere = g.players.some((p) => !p.bankrupt && p.pos === n.id);
