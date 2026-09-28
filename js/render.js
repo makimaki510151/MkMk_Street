@@ -208,21 +208,21 @@ export function createRenderer(canvas) {
       });
     }
 
-    // 中央ブランドプレート
-    const midX = ox + (g.cols * size) / 2;
-    const midY = oy + (g.rows * size) / 2;
+    // 空き象限（左上の内側）にブランドを置き、銀行・十字路を隠さない
+    const brandX = ox + size * 2.5;
+    const brandY = oy + size * 2.5;
     ctx.save();
-    ctx.fillStyle = 'rgba(12, 28, 32, 0.55)';
-    roundRect(ctx, midX - size * 2.2, midY - size * 1.1, size * 4.4, size * 2.2, 16);
+    ctx.fillStyle = 'rgba(12, 28, 32, 0.42)';
+    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 12);
     ctx.fill();
     ctx.fillStyle = '#ffe08a';
-    ctx.font = `900 ${Math.max(18, size * 0.45)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
+    ctx.font = `900 ${Math.max(14, size * 0.32)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('MkMk Street', midX, midY - size * 0.25);
+    ctx.fillText('MkMk Street', brandX, brandY - size * 0.18);
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = `600 ${Math.max(11, size * 0.22)}px "Zen Maru Gothic", sans-serif`;
-    ctx.fillText(`目標 ${g.goal.toLocaleString()}G`, midX, midY + size * 0.35);
+    ctx.font = `600 ${Math.max(10, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
+    ctx.fillText(`目標 ${g.goal.toLocaleString()}G`, brandX, brandY + size * 0.28);
     ctx.restore();
   }
 
