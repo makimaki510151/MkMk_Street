@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>MkMk Street — いただきストリート風 P2Pすごろく</title>
+  <meta name="description" content="GitHub Pagesで遊べるP2Pマルチプレイのいただきストリート風すごろく" />
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <!-- TITLE -->
+  <section id="screen-title" class="screen active">
+    <div id="title-field" aria-hidden="true"></div>
+    <div class="title-brand">
+      <div class="brand-mark">MkMk Street</div>
+      <p class="brand-sub">お店を買い、株を持ち、買い物料を集めて目標資産へ。ブラウザ同士でつながるP2Pマルチプレイすごろく。</p>
+    </div>
+    <div class="title-actions">
+      <button class="btn primary large" id="btn-host">部屋を作る（ホスト）</button>
+      <button class="btn large" id="btn-join">部屋に入る（ゲスト）</button>
+      <button class="btn large" id="btn-local">ローカル / CPU対戦</button>
+      <button class="btn ghost" id="btn-howto">遊び方</button>
+      <p class="hint-mini">PeerJS の無料ブローカー経由でブラウザ同士が直接通信します</p>
+    </div>
+  </section>
+
+  <!-- HOWTO -->
+  <section id="screen-howto" class="screen">
+    <div class="panel howto">
+      <h2>遊び方</h2>
+      <ol>
+        <li>自分の番に<strong>サイコロ</strong>を振り、マスを進みます。</li>
+        <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
+        <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
+        <li>♠♥♦♣ のマークを集めて銀行に戻ると<strong>昇進ボーナス</strong>。</li>
+        <li>銀行や証券マスで<strong>株</strong>を売買。総資産（現金＋店＋株）が目標に達し、<strong>銀行に止まると勝利</strong>。</li>
+        <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。</li>
+      </ol>
+      <div class="row-actions">
+        <button class="btn primary" id="btn-howto-back">戻る</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETUP LOCAL -->
+  <section id="screen-setup" class="screen">
+    <div class="panel">
+      <h2 id="setup-title">セットアップ</h2>
+      <div id="setup-online-only"></div>
+      <label class="field">目標資産（G）
+        <input type="number" id="setup-goal" value="10000" min="3000" step="1000" />
+      </label>
+      <div id="seat-editors"></div>
+      <div class="row-actions">
+        <button class="btn" id="btn-setup-back">戻る</button>
+        <button class="btn primary" id="btn-start-game">ゲーム開始</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="screen-lobby" class="screen">
+    <div class="panel">
+      <h2>マルチプレイロビー</h2>
+      <p id="lobby-role" class="hint"></p>
+      <label class="field">ニックネーム
+        <input id="lobby-name" maxlength="12" value="プレイヤー" />
+      </label>
+      <div id="lobby-room-wrap">
+        <label class="field">部屋コード
+          <input id="lobby-room" maxlength="8" placeholder="例: AB12CD" style="text-transform:uppercase" />
+        </label>
+      </div>
+      <div id="lobby-host-tools">
+        <div class="code-big" id="lobby-code-display">------</div>
+        <div class="row-actions">
+          <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
+          <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
+        </div>
+        <label class="field">目標資産（G）
+          <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
+        </label>
+      </div>
+      <div id="net-status">未接続</div>
+      <div id="lobby-players"></div>
+      <div class="row-actions">
+        <button class="btn" id="btn-lobby-back">戻る</button>
+        <button class="btn primary" id="btn-lobby-connect">接続</button>
+        <button class="btn primary" id="btn-lobby-start">ゲーム開始</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen">
+    <div class="topbar">
+      <span class="brand-mini">MkMk Street</span>
+      <span class="chip" id="goal-chip">目標</span>
+      <span class="chip" id="turn-chip">ターン</span>
+      <span class="chip" id="phase-chip">phase</span>
+      <span id="current-name"></span>
+    </div>
+    <div class="board-wrap">
+      <canvas id="board"></canvas>
+      <div id="inspect">マスをタップして詳細を表示</div>
+    </div>
+    <aside class="side">
+      <div id="players-panel"></div>
+      <div class="controls">
+        <div class="dice-row">
+          <div id="dice-face">·</div>
+          <button class="btn primary" id="btn-roll" style="flex:1">サイコロを振る</button>
+        </div>
+        <div id="stocks-panel"></div>
+        <div id="wait-hint" hidden></div>
+      </div>
+      <div id="log"></div>
+    </aside>
+  </section>
+
+  <div id="modal" hidden>
+    <div class="modal-card">
+      <h3 id="modal-title">選択</h3>
+      <div id="modal-body"></div>
+      <div class="row-actions">
+        <button class="btn" id="btn-skip-choice">やめる</button>
+        <button class="btn primary" id="btn-end-choice" hidden>完了</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="winner" hidden>
+    <div class="winner-card">
+      <h2 id="winner-name">勝利</h2>
+      <p id="winner-sub"></p>
+      <button class="btn primary large" id="btn-again" style="margin-top:1rem">もう一度</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
