@@ -13,7 +13,7 @@ import {
   continueMove,
   updateAreaStockPrices,
 } from '../js/engine.js';
-import { buildBoard } from '../js/board.js';
+import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -28,6 +28,22 @@ describe('MkMk Street engine', () => {
         const other = board.nodes.find((x) => x.id === nid);
         assert.ok(other.nexts.includes(n.id), `missing back-link ${n.id}<->${nid}`);
       }
+    }
+  });
+
+  it('keeps each stock area at 4 shops (max 5)', () => {
+    const board = buildBoard();
+    const counts = {};
+    for (const n of board.nodes.filter((x) => x.type === 'shop')) {
+      counts[n.area] = (counts[n.area] || 0) + 1;
+    }
+    const areas = Object.keys(counts);
+    assert.ok(areas.length >= 6);
+    for (const [area, count] of Object.entries(counts)) {
+      assert.ok(count <= AREA_SHOP_MAX, `area ${area} has ${count} shops`);
+      assert.ok(count >= 3, `area ${area} has too few shops (${count})`);
+      // 基本は4件
+      assert.equal(count, AREA_SHOP_BASE, `area ${area} should be base ${AREA_SHOP_BASE}, got ${count}`);
     }
   });
 
