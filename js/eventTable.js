@@ -159,12 +159,13 @@ export function unscratchedIds(table) {
 }
 
 export function scratchCell(g, player, cellId) {
-  const table = player.eventTable;
+  const table = g.sharedEventTable || player.eventTable;
   if (!table) return { ok: false, error: 'no_table' };
   const cell = table.cells[cellId];
   if (!cell || cell.scratched) return { ok: false, error: 'bad_cell' };
 
   cell.scratched = true;
+  cell.scratchedBy = player.id;
   const messages = [];
   const def = EVENT_CATALOG[cell.eventId - 1];
   applyEventDef(g, player, def, messages);

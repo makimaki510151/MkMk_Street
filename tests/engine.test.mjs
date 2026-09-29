@@ -15,6 +15,7 @@ import {
   updateAreaStockPrices,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
+import { unscratchedIds } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -208,8 +209,8 @@ describe('MkMk Street engine', () => {
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 21,
     });
-    assert.ok(g.players[0].eventTable);
-    assert.equal(g.players[0].eventTable.cells.length, 100);
+    assert.ok(g.sharedEventTable);
+    assert.equal(g.sharedEventTable.cells.length, 100);
     const mark = g.map.find((n) => n.type === 'mark');
     g.players[0].pos = mark.id;
     g.phase = 'moving';
@@ -222,7 +223,22 @@ describe('MkMk Street engine', () => {
     const cellId = g.pending.openIds[0];
     const scratched = applyChoice(g, { action: 'scratch', cellId });
     assert.equal(scratched.ok, true);
-    assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
+    assert.equal(g.sharedEventTable.cells[cellId].scratched, true);
+    assert.equal(g.sharedEventTable.cells[cellId].scratchedBy, 0);
+  });
+
+  it('rejects scratching an already opened cell on the shared table', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 44,
+    });
+    const cellId = 3;
+    g.sharedEventTable.cells[cellId].scratched = true;
+    g.sharedEventTable.cells[cellId].scratchedBy = 1;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: unscratchedIds(g.sharedEventTable) };
+    const bad = applyChoice(g, { action: 'scratch', cellId });
+    assert.equal(bad.ok, false);
   });
 
   it('keeps rest squares minimal on the board', () => {
@@ -239,6 +255,60 @@ describe('MkMk Street engine', () => {
     assert.ok(events.length >= 1);
     assert.equal(scratches[0].col, 0);
     assert.equal(scratches[0].row, 5);
+  });
+
+  it('landing on bank opens level-up then one-type stock buy', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 44,
+    });
+    const arm = getForwardNexts(g, g.startId, null)[0];
+    g.players[0].marks = [true, true, true, true];
+    g.players[0].pos = g.startId;
+    g.players[0].prevPos = arm;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: true, startPos: arm };
+    const beforeLv = g.players[0].level;
+    advanceMove(g);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'level_up');
+    assert.equal(g.players[0].level, beforeLv + 1);
+    applyChoice(g, { action: 'celebrate' });
+    assert.equal(g.pending?.type, 'stock');
+    assert.equal(g.pending.maxBuys, 1);
+    assert.equal(g.pending.bankVisit, true);
+  });
+
+  it('passing bank mid-move interrupts for stock then direction', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 45,
+    });
+    const arm = getForwardNexts(g, g.startId, null)[0];
+    g.players[0].pos = arm;
+    g.players[0].prevPos = null;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 2, path: [], passedBank: false, startPos: arm };
+    // 次が銀行になるよう prev をアーム外に
+    const towardBank = getForwardNexts(g, arm, null).filter((id) => id === g.startId);
+    if (!towardBank.length) {
+      // アームから銀行は必ず繋がる
+      assert.ok(g.map.find((n) => n.id === arm).nexts.includes(g.startId));
+      g.players[0].prevPos = g.map.find((n) => n.id === arm).nexts.find((id) => id !== g.startId) ?? null;
+    } else {
+      g.players[0].prevPos = g.map.find((n) => n.id === arm).nexts.find((id) => id !== g.startId) ?? null;
+    }
+    const r = advanceMove(g);
+    assert.equal(g.players[0].pos, g.startId);
+    assert.equal(r.bankInterrupt, true);
+    assert.equal(g.phase, 'await_choice');
+    assert.ok(g.pending?.type === 'stock' || g.pending?.type === 'level_up');
+    if (g.pending.type === 'level_up') applyChoice(g, { action: 'celebrate' });
+    assert.equal(g.pending?.type, 'stock');
+    assert.equal(g.pending.resumeMove, true);
+    applyChoice(g, { action: 'skip' });
+    assert.ok(g.phase === 'await_fork' || g.phase === 'moving');
+    assert.ok(g.move?.stepsLeft >= 1);
   });
 
   it('auto-skips resting player without starting a move', () => {

@@ -15,6 +15,7 @@ import {
   calcToll,
   getRemainingInvest,
   getNode,
+  getSharedEventTable,
   PLAYER_COLORS,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
@@ -42,16 +43,48 @@ const app = {
   /** 出目演出中は UI / ログで結果を隠す */
   hideDiceResult: false,
   lastSeenLogKey: null,
-  bannerQueue: [],
-  bannerShowing: false,
   lastTurnKey: null,
-  modalMode: 'center', // center | docked | hidden
+  modalMode: 'shown', // shown | hidden
   modalActive: false,
+  /** @type {{x:number,y:number}|null} */
+  modalDrag: null,
+  feedPinnedTop: true,
   inspectedId: null,
   restSkipTimer: null,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
+
+function saveRejoinSession() {
+  if (app.mode === 'local' || !app.net?.roomCode) return;
+  try {
+    sessionStorage.setItem('mkmk_rejoin', JSON.stringify({
+      room: app.net.roomCode,
+      name: app.localName,
+      seat: app.localSeat,
+    }));
+  } catch (_) { /* ignore */ }
+}
+
+function readRejoinSession(roomCode) {
+  try {
+    const raw = sessionStorage.getItem('mkmk_rejoin');
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (j?.room === roomCode) return j;
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+function findRejoinSeat(g, name, rejoinSeat) {
+  const nm = String(name || '').trim();
+  if (!nm) return -1;
+  if (typeof rejoinSeat === 'number' && rejoinSeat >= 0 && rejoinSeat < g.players.length) {
+    const p = g.players[rejoinSeat];
+    if (p && !p.isCPU && p.name === nm && (p.offline || !p.peerId)) return rejoinSeat;
+  }
+  return g.players.findIndex((p) => !p.isCPU && p.name === nm && (p.offline || !p.peerId));
+}
 
 function showScreen(id) {
   $$('.screen').forEach((el) => el.classList.toggle('active', el.id === id));
@@ -191,7 +224,13 @@ async function openLobby(role) {
         renderLobbyPlayers();
         app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
       } else {
-        app.net.sendToHost({ type: 'hello', name, peerId: info.peerId });
+        const rejoin = readRejoinSession(roomInput);
+        app.net.sendToHost({
+          type: 'hello',
+          name,
+          peerId: info.peerId,
+          rejoinSeat: rejoin?.seat,
+        });
       }
     } catch (e) {
       setStatus(e.message || String(e), 'error');
@@ -213,6 +252,7 @@ async function openLobby(role) {
     app.localSeat = 0;
     app.net.broadcast({ type: 'game_start', state: serializeState(app.game), seatMap: players.map((p) => p.peerId) });
     enterGame();
+    saveRejoinSession();
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -259,6 +299,22 @@ function handleNetEvent({ from, data }) {
         return;
       }
       if (app.game) {
+        const seat = findRejoinSeat(app.game, data.name, data.rejoinSeat);
+        if (seat >= 0) {
+          const pl = app.game.players[seat];
+          pl.peerId = data.peerId || from;
+          pl.offline = false;
+          app.game.logs.unshift({ text: `${pl.name} が再接続`, kind: 'system' });
+          if (app.game.logs.length > 30) app.game.logs.length = 30;
+          app.net.sendTo(from, {
+            type: 'game_rejoin',
+            state: serializeState(app.game),
+            seat,
+          });
+          syncState();
+          refreshGameUI();
+          return;
+        }
         app.net.sendTo(from, { type: 'game_already' });
         return;
       }
@@ -276,10 +332,25 @@ function handleNetEvent({ from, data }) {
       handleHostAction(from, data);
       return;
     }
-    if (data.type === 'peer_left' && !app.game) {
-      app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
-      renderLobbyPlayers();
-      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+    if (data.type === 'peer_left') {
+      if (!app.game) {
+        app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
+        renderLobbyPlayers();
+        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        return;
+      }
+      const seat = app.game.players.findIndex((p) => p.peerId === data.peerId);
+      if (seat >= 0) {
+        app.game.players[seat].offline = true;
+        app.game.players[seat].peerId = null;
+        app.game.logs.unshift({
+          text: `${app.game.players[seat].name} が切断（同じ名前で再接続できます）`,
+          kind: 'system',
+        });
+        if (app.game.logs.length > 30) app.game.logs.length = 30;
+        syncState();
+        refreshGameUI();
+      }
     }
   }
 
@@ -293,12 +364,24 @@ function handleNetEvent({ from, data }) {
       toast('部屋が満員です');
       return;
     }
-    if (data.type === 'game_start') {
+    if (data.type === 'game_start' || data.type === 'game_rejoin') {
       app.game = restoreState(data.state);
       const myPeer = app.net.peerId;
-      app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
-      if (app.localSeat < 0) app.localSeat = 0;
+      if (data.type === 'game_rejoin' && typeof data.seat === 'number') {
+        app.localSeat = data.seat;
+        app.game.players[app.localSeat].peerId = myPeer;
+        app.game.players[app.localSeat].offline = false;
+      } else {
+        app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
+        if (app.localSeat < 0) app.localSeat = 0;
+      }
       enterGame();
+      if (data.type === 'game_rejoin') toast('再接続しました');
+      saveRejoinSession();
+      return;
+    }
+    if (data.type === 'game_already') {
+      toast('進行中のゲームがあります。同じ名前で再接続を試してください');
       return;
     }
     if (data.type === 'fx') {
@@ -359,6 +442,22 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'stock') {
+    // 株購入UI＋盤面エリアハイライトのデモ
+    p.cash = Math.max(p.cash, 5000);
+    p.pos = app.game.startId;
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'stock',
+      playerId: p.id,
+      bankVisit: true,
+      atBank: true,
+      maxBuys: 1,
+    };
+    app.game.move = null;
+    refreshGameUI();
   }
 }
 
@@ -368,8 +467,6 @@ function enterGame() {
   audio.startBgm();
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
-  app.bannerQueue = [];
-  app.bannerShowing = false;
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
@@ -397,7 +494,9 @@ function enterGame() {
   };
   bindGameControls();
   bindModalTools();
+  bindModalDrag();
   app.lastTurnKey = null;
+  saveRejoinSession();
   app.inspectedId = app.game.startId;
   updateInspectPanel();
   refreshGameUI();
@@ -475,28 +574,45 @@ function bindGameControls() {
 }
 
 function bindModalTools() {
-  $('#btn-modal-dock').onclick = () => {
-    app.modalMode = app.modalMode === 'docked' ? 'center' : 'docked';
-    applyModalMode();
-    audio.sfx.click();
-  };
   $('#btn-modal-hide').onclick = () => {
     app.modalMode = 'hidden';
     applyModalMode();
     audio.sfx.click();
   };
   $('#btn-modal-restore').onclick = () => {
-    app.modalMode = 'docked';
+    app.modalMode = 'shown';
+    app.modalDrag = null;
     applyModalMode();
     if (app.modalActive && app.game) showChoiceModal(app.game);
     audio.sfx.click();
   };
+  const feed = $('#event-feed');
+  feed?.addEventListener('scroll', () => {
+    app.feedPinnedTop = feed.scrollTop < 24;
+  }, { passive: true });
+}
+
+function applyModalPosition() {
+  const card = $('#modal-card');
+  if (!card) return;
+  if (app.modalDrag) {
+    card.style.position = 'fixed';
+    card.style.left = `${app.modalDrag.x}px`;
+    card.style.top = `${app.modalDrag.y}px`;
+    card.style.margin = '0';
+  } else {
+    card.style.position = '';
+    card.style.left = '';
+    card.style.top = '';
+    card.style.margin = '';
+  }
 }
 
 function applyModalMode() {
   const modal = $('#modal');
   const restore = $('#btn-modal-restore');
-  modal.classList.toggle('docked', app.modalMode === 'docked');
+  modal.classList.toggle('floating', !!app.modalDrag);
+  applyModalPosition();
   if (app.modalMode === 'hidden') {
     modal.hidden = true;
     restore.hidden = !app.modalActive;
@@ -506,7 +622,86 @@ function applyModalMode() {
   } else {
     restore.hidden = true;
   }
-  $('#btn-modal-dock').textContent = app.modalMode === 'docked' ? '中央へ' : '端へ';
+}
+
+function bindModalDrag() {
+  const card = $('#modal-card');
+  const handle = card?.querySelector('.modal-drag-handle');
+  if (!handle || handle.dataset.dragBound) return;
+  handle.dataset.dragBound = '1';
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let origX = 0;
+  let origY = 0;
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    handle.style.cursor = 'grabbing';
+    const rect = card.getBoundingClientRect();
+    app.modalDrag = app.modalDrag || { x: rect.left, y: rect.top };
+    origX = app.modalDrag.x;
+    origY = app.modalDrag.y;
+    startX = e.clientX;
+    startY = e.clientY;
+    $('#modal')?.classList.add('floating');
+    applyModalMode();
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging || !app.modalDrag) return;
+    const w = card.offsetWidth || 320;
+    const h = card.offsetHeight || 200;
+    app.modalDrag.x = Math.max(8, Math.min(window.innerWidth - w - 8, origX + e.clientX - startX));
+    app.modalDrag.y = Math.max(52, Math.min(window.innerHeight - h - 8, origY + e.clientY - startY));
+    applyModalPosition();
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.cursor = 'grab';
+    try { handle.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+  handle.style.cursor = 'grab';
+}
+
+function hideForkRails() {
+  const rails = $('#fork-rails');
+  if (rails) rails.hidden = true;
+}
+
+function renderForkRails(pend) {
+  let rails = $('#fork-rails');
+  if (!rails) {
+    rails = document.createElement('div');
+    rails.id = 'fork-rails';
+    rails.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(rails);
+  }
+  rails.hidden = false;
+  const mkBtn = (o) => `<button type="button" class="btn primary fork-btn fork-pill" data-next="${o.id}">
+    ${o.label}<br><small>${escapeHtml(o.dest)}</small>
+  </button>`;
+  const bySide = (s) => pend.options.filter((o) => o.side === s).map(mkBtn).join('');
+  rails.innerHTML = `
+    <div class="fork-rail fork-rail-left">${bySide('left')}</div>
+    <div class="fork-rail fork-rail-right">${bySide('right')}</div>
+    <div class="fork-rail fork-rail-up">${bySide('up')}</div>
+    <div class="fork-rail fork-rail-down">${bySide('down')}</div>
+  `;
+  rails.querySelectorAll('[data-next]').forEach((btn) => {
+    btn.onclick = () => {
+      hideForkRails();
+      hideModal();
+      sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
+    };
+  });
 }
 
 function sendAction(action) {
@@ -559,8 +754,17 @@ async function applyLocalAction(action) {
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
+
+    // 銀行通過後：進行方向選択 or 移動再開
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -614,8 +818,6 @@ async function runDiceAndMove(face) {
       kind: 'dice',
       color: roller.color,
     });
-    // バナー表示中も進行が止まらないよう、短く待ってから移動
-    await wait(480);
   }
   await continueAdvancing();
   app.busy = false;
@@ -644,6 +846,13 @@ async function continueAdvancing() {
       syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
       refreshGameUI();
       await wait(420);
+    }
+
+    // 銀行通過割込み（昇進→株→方向）
+    if (result.bankInterrupt || app.game.phase === 'await_choice') {
+      syncState();
+      refreshGameUI();
+      return;
     }
 
     if (result.done) {
@@ -740,6 +949,12 @@ async function handleHostAction(from, data) {
     if (result.state) app.game = restoreState(result.state);
     syncState();
     refreshGameUI();
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -814,6 +1029,12 @@ function scheduleCpu() {
       if (result?.state) app.game = restoreState(result.state);
       syncState();
       refreshGameUI();
+      if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+        app.busy = true;
+        await continueAdvancing();
+        app.busy = false;
+        refreshGameUI();
+      }
       scheduleCpu();
     }
   }, 550 + Math.random() * 350);
@@ -949,7 +1170,9 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'five_buy': return '5倍買いを検討中';
-    case 'stock': return pend.bankPass ? '銀行通過の株購入中' : '株を取引中';
+    case 'stock': return (pend.bankVisit || pend.bankPass)
+      ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
+      : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
     case 'level_up': return '昇進を祝っている';
     default: return '選択中';
@@ -957,8 +1180,8 @@ function pendingStatusLabel(pend) {
 }
 
 function setStatusBanner(show, text = '', color = '') {
-  const el = $('#status-banner');
-  const tx = $('#status-banner-text');
+  const el = $('#status-chip');
+  const tx = $('#status-chip-text');
   if (!el || !tx) return;
   if (!show) {
     el.hidden = true;
@@ -1089,47 +1312,30 @@ function bannerFromLog(g, l) {
 
 function enqueueBanner(payload) {
   if (!payload?.title) return;
-  // 各クライアントがログ差分から表示（二重配信しない）
-  app.bannerQueue.push(payload);
-  pumpBannerQueue();
+  pushEventStamp(payload);
 }
 
-async function pumpBannerQueue() {
-  if (app.bannerShowing) return;
-  const next = app.bannerQueue.shift();
-  if (!next) return;
-  app.bannerShowing = true;
-  await showEventBanner(next);
-  app.bannerShowing = false;
-  if (app.bannerQueue.length) pumpBannerQueue();
-}
+/** 左上フィードへ即時スタンプ追加（待ちなし・さかのぼり可） */
+function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
+  const feed = $('#event-feed');
+  if (!feed) return;
 
-function showEventBanner({ kicker, title, detail, kind, color, mine }) {
-  const el = $('#event-banner');
-  if (!el) return Promise.resolve();
-  $('#eb-kicker').textContent = kicker || '';
-  $('#eb-title').textContent = title || '';
-  $('#eb-detail').textContent = detail || '';
-  el.dataset.kind = kind || 'info';
-  el.dataset.mine = mine ? '1' : '0';
-  el.style.setProperty('--eb', color || '#ffe08a');
-  el.hidden = false;
-  el.classList.remove('out');
-  el.classList.add('in');
+  const stamp = document.createElement('article');
+  stamp.className = 'event-stamp';
+  stamp.dataset.kind = kind || 'info';
+  stamp.dataset.mine = mine ? '1' : '0';
+  stamp.style.setProperty('--eb', color || '#ffe08a');
+  stamp.innerHTML = `
+    <div class="eb-kicker">${escapeHtml(kicker || '')}</div>
+    <div class="eb-title">${escapeHtml(title || '')}</div>
+    ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
+  `;
+  feed.prepend(stamp);
 
-  // SE は着地側と二重にならないよう、バナー固有のものだけ
+  while (feed.children.length > 40) feed.lastElementChild?.remove();
+  if (app.feedPinnedTop !== false) feed.scrollTop = 0;
+
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
-  else if (kind === 'dice') { /* 出目SEはオーバーレイ側 */ }
-
-  const hold = kind === 'win' ? 2200 : (mine ? 2000 : 1700);
-  return wait(hold).then(() => {
-    el.classList.remove('in');
-    el.classList.add('out');
-    return wait(280).then(() => {
-      el.hidden = true;
-      el.classList.remove('out');
-    });
-  });
 }
 
 function phaseLabel(g) {
@@ -1149,34 +1355,29 @@ function showChoiceModal(g) {
   const body = $('#modal-body');
   const title = $('#modal-title');
   app.modalActive = true;
-  if (app.modalMode === 'hidden') app.modalMode = 'docked';
+  if (app.modalMode === 'hidden') {
+    applyModalMode();
+    return;
+  }
   modal.hidden = false;
   applyModalMode();
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
   $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
+  $('#modal-card').classList.remove('stock-modal');
+  hideForkRails();
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
+    $('#modal-card').classList.add('fork-hint-only');
     body.innerHTML = `
-      <p class="hint">マスをクリック／下のボタン。「隠す」「端へ」で盤面を確認できます</p>
-      <div class="modal-actions fork-actions">
-        ${pend.options.map((o) => `
-          <button class="btn primary fork-btn" data-next="${o.id}">
-            ${o.label}<br><small>${o.dest}</small>
-          </button>
-        `).join('')}
-      </div>`;
+      <p class="hint">左右（上下）の端に進路があります。盤面のマスをクリックしても選べます。タイトルをドラッグで移動できます。</p>`;
     $('#btn-skip-choice').hidden = true;
-    body.querySelectorAll('[data-next]').forEach((btn) => {
-      btn.onclick = () => {
-        hideModal();
-        sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
-      };
-    });
+    renderForkRails(pend);
     return;
   }
+  $('#modal-card').classList.remove('fork-hint-only');
 
   if (pend.type === 'buy_shop') {
     const sq = getNode(g, pend.shopId);
@@ -1262,38 +1463,118 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'stock') {
-    const pass = !!pend.bankPass;
-    title.textContent = pass
-      ? '銀行通過 — 株を1種類だけ購入'
-      : (pend.atBank ? '銀行 — 株取引' : '証券マス — 株取引');
+    const bankVisit = !!pend.bankVisit || !!pend.bankPass || !!pend.atBank;
+    const p = currentPlayer(g);
+    title.textContent = bankVisit
+      ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
+      : '証券マス — 株取引';
+    $('#modal-card').classList.add('stock-modal');
+    // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
+    app.renderer?.setStockHighlight(null, true);
+    applyModalMode();
+
+    const bindAreaHighlight = (root) => {
+      root.querySelectorAll('[data-area]').forEach((el) => {
+        const area = Number(el.dataset.area);
+        el.addEventListener('pointerenter', () => app.renderer?.setStockHighlight(area, true));
+        el.addEventListener('pointerleave', () => {
+          const sel = root.querySelector('.stock-card.selected, .stock-card.broker.focus');
+          app.renderer?.setStockHighlight(sel ? Number(sel.dataset.area) : null, true);
+        });
+      });
+    };
+
+    if (bankVisit) {
+      const cards = Object.keys(g.areas).map((a) => {
+        const area = Number(a);
+        const meta = g.areas[area];
+        const price = meta.stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const have = p?.stocks[area] || 0;
+        return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max="${max}" ${max < 1 ? 'disabled' : ''}>
+          <span class="sc-swatch" aria-hidden="true"></span>
+          <span class="sc-name">A${area} ${meta.name}</span>
+          <span class="sc-price">${price}G</span>
+          <span class="sc-max">${max < 1 ? '資金不足' : `最大 ${max}枚`}</span>
+          <span class="sc-have">持株 ${have}</span>
+        </button>`;
+      }).join('');
+      body.innerHTML = `
+        <p class="hint">カードに触れると盤面の同じエリア店が光ります。1種類だけ持ち金の限り購入（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
+        <div class="stock-grid">${cards}</div>
+        <div id="stock-buy-panel" class="stock-buy-panel" hidden>
+          <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
+          <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
+        </div>`;
+      $('#btn-end-choice').hidden = true;
+      $('#btn-skip-choice').hidden = false;
+      $('#btn-skip-choice').textContent = pend.resumeMove ? '買わずに進む方向を選ぶ' : '買わずに終了';
+
+      let selected = null;
+      bindAreaHighlight(body);
+      body.querySelectorAll('.stock-card').forEach((btn) => {
+        btn.onclick = () => {
+          body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          selected = Number(btn.dataset.area);
+          app.renderer?.setStockHighlight(selected, true);
+          const max = Number(btn.dataset.max) || 1;
+          const panel = $('#stock-buy-panel');
+          const input = $('#m-stock-count');
+          panel.hidden = false;
+          input.max = String(max);
+          input.value = String(max);
+        };
+      });
+      $('#m-stock-confirm').onclick = () => {
+        if (selected == null) return;
+        const max = Number(body.querySelector(`.stock-card[data-area="${selected}"]`)?.dataset.max) || 1;
+        const count = Math.max(1, Math.min(max, Number($('#m-stock-count').value) || 1));
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'buy', area: selected, count } });
+      };
+      return;
+    }
+
+    // 証券マス：売買＋エリアハイライト
     const rows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
-      const have = currentPlayer(g).stocks[area] || 0;
-      return `<div class="stock-row" style="--ac:${meta.color}">
-        <span class="sr-name">A${area} ${meta.name}</span>
-        <span class="sr-price">${meta.stockPrice}G</span>
-        <span class="sr-have">持株 ${have}</span>
-        <button class="btn tiny" data-buy="${area}">買う</button>
-        ${pass ? '' : `<button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>`}
+      const have = p?.stocks[area] || 0;
+      return `<div class="stock-card broker" style="--ac:${meta.color}" data-area="${area}">
+        <span class="sc-swatch" aria-hidden="true"></span>
+        <span class="sc-name">A${area} ${meta.name}</span>
+        <span class="sc-price">${meta.stockPrice}G / 持株 ${have}</span>
+        <div class="sc-actions">
+          <button class="btn tiny" data-buy="${area}">買う</button>
+          <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
+        </div>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="stock-list">${rows}</div>
-      <p class="hint">${pass ? '通過ボーナス：好きなエリアを1種類だけ購入できます（見送り可）' : '枚数はダイアログで指定。盤面確認は「隠す／端へ」'}</p>`;
+    body.innerHTML = `<p class="hint">カードに触れると盤面のエリア店が光ります</p>
+      <div class="stock-grid">${rows}</div>`;
     $('#btn-end-choice').hidden = false;
-    $('#btn-skip-choice').hidden = !pass;
-    if (pass) $('#btn-skip-choice').textContent = '買わずに進む';
+    $('#btn-skip-choice').hidden = true;
+    bindAreaHighlight(body);
 
+    body.querySelectorAll('.stock-card.broker').forEach((card) => {
+      card.addEventListener('pointerenter', () => card.classList.add('focus'));
+      card.addEventListener('pointerleave', () => card.classList.remove('focus'));
+    });
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.buy);
-        const count = Number(prompt('何枚買いますか？（1〜99）', pass ? '10' : '10')) || 0;
+        app.renderer?.setStockHighlight(area, true);
+        const price = g.areas[area].stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const count = Number(prompt(`A${area} を何枚？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
       };
     });
     body.querySelectorAll('[data-sell]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.sell);
+        app.renderer?.setStockHighlight(area, true);
         const count = Number(prompt('何枚売りますか？', '10')) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'sell', area, count } });
       };
@@ -1303,8 +1584,11 @@ function showChoiceModal(g) {
 
   if (pend.type === 'scratch') {
     const p = g.players[pend.playerId];
-    const table = p?.eventTable;
-    title.textContent = 'イベント表スクラッチ（1〜200）';
+    const table = getSharedEventTable(g);
+    const canPick = app.mode === 'local'
+      ? !p?.isCPU
+      : pend.playerId === app.localSeat;
+    title.textContent = '共通イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     if (!table) {
@@ -1315,22 +1599,30 @@ function showChoiceModal(g) {
       `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
-      const color = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
+      const sealColor = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
-        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">
-          <small>#${c.eventId}</small><span>${c.shortLabel || c.label}</span>
+        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
+        const pc = scratcher?.color || '#888';
+        const who = scratcher ? escapeHtml(scratcher.name) : '';
+        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+          <span class="scratch-owner" aria-hidden="true">${who ? who.slice(0, 1) : '·'}</span>
+          <small>#${c.eventId}</small><span>${escapeHtml(c.shortLabel || c.label)}</span>
         </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="イベントマス">?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${sealColor}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">1マススクラッチ。縦・横・斜めに同じ色が3つ以上そろうと、その色のプレイヤーに ${MATCH_BONUS_PER}G×数</p>
+      <p class="hint">全員共通の表です。すでにめくられたマスは選べません（めくった人の色で表示）。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
     `;
+    if (!canPick) {
+      body.querySelector('.hint')?.insertAdjacentHTML('afterend', '<p class="hint">他のプレイヤーが選ぶのを待っています…</p>');
+    }
     body.querySelectorAll('[data-cell]').forEach((btn) => {
       btn.onclick = () => {
+        if (!canPick) return;
         body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
         const cellId = Number(btn.dataset.cell);
         const cell = table.cells[cellId];
@@ -1355,8 +1647,13 @@ function showChoiceModal(g) {
 
 function hideModal() {
   app.modalActive = false;
+  // 選択完了後は次の選択を右下に再表示
+  app.modalMode = 'shown';
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
+  hideForkRails();
+  $('#modal-card')?.classList.remove('fork-hint-only');
+  app.renderer?.clearStockHighlight();
 }
 
 function showWinner(g) {
