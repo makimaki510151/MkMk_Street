@@ -467,6 +467,9 @@ function enterGame() {
   audio.startBgm();
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
+  app.feedPinnedBottom = true;
+  const feed = $('#event-feed');
+  if (feed) feed.innerHTML = '';
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
@@ -1319,7 +1322,7 @@ function enqueueBanner(payload) {
   pushEventStamp(payload);
 }
 
-/** 左上フィードへ即時スタンプ追加（待ちなし・さかのぼり可） */
+/** 左上フィードへ即時スタンプ追加（上→下・さかのぼり可） */
 function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
   const feed = $('#event-feed');
   if (!feed) return;
@@ -1334,11 +1337,19 @@ function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
     <div class="eb-title">${escapeHtml(title || '')}</div>
     ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
   `;
-  // 上→下に流れる（新しいスタンプは下へ）
+  // 時系列は上（古い）→下（新しい）。新しいスタンプは末尾へ追加
   feed.appendChild(stamp);
 
   while (feed.children.length > 40) feed.firstElementChild?.remove();
-  if (app.feedPinnedBottom !== false) feed.scrollTop = feed.scrollHeight;
+
+  // 未オーバーフロー時は先頭（上）を見せて積み下がりを確認。溢れたら下端追従
+  const overflowing = feed.scrollHeight > feed.clientHeight + 2;
+  if (!overflowing) {
+    feed.scrollTop = 0;
+    app.feedPinnedBottom = true;
+  } else if (app.feedPinnedBottom !== false) {
+    feed.scrollTop = feed.scrollHeight;
+  }
 
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
 }
