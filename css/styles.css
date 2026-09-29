@@ -440,6 +440,15 @@ button:disabled { opacity: .45; cursor: default; }
   max-height: 42vh;
   overflow: auto;
 }
+/* 株購入中は左下ドックで盤面の店ハイライトを広く見せる */
+#modal.docked:has(.stock-modal) {
+  place-items: end start;
+  padding: 0 0 5.2rem 0.65rem;
+}
+#modal.docked .modal-card.stock-modal {
+  width: min(340px, 92vw);
+  max-height: min(58vh, 520px);
+}
 .modal-card {
   pointer-events: auto;
   width: min(420px, 100%);

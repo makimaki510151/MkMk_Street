@@ -359,6 +359,22 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'stock') {
+    // 株購入UI＋盤面エリアハイライトのデモ
+    p.cash = Math.max(p.cash, 5000);
+    p.pos = app.game.startId;
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'stock',
+      playerId: p.id,
+      bankVisit: true,
+      atBank: true,
+      maxBuys: 1,
+    };
+    app.game.move = null;
+    refreshGameUI();
   }
 }
 
