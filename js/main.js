@@ -1647,8 +1647,8 @@ function showChoiceModal(g) {
 
 function hideModal() {
   app.modalActive = false;
-  // 選択終了後は次の選択を右下に出す（「隠す」は進行中のみ維持）
-  if (app.modalMode !== 'hidden') app.modalMode = 'shown';
+  // 選択完了後は次の選択を右下に再表示
+  app.modalMode = 'shown';
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
