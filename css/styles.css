@@ -506,6 +506,17 @@ button:disabled { opacity: .45; cursor: default; }
   width: min(360px, calc(100vw - 320px));
   max-height: min(58vh, 520px);
 }
+#modal .modal-card.raise-modal {
+  width: min(420px, calc(100vw - 320px));
+  max-height: min(70vh, 620px);
+}
+#modal .modal-card.raise-modal .modal-actions {
+  position: sticky;
+  bottom: -0.2rem;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, transparent, #143238 28%);
+  z-index: 2;
+}
 .modal-card {
   pointer-events: auto;
   width: min(420px, 100%);
@@ -752,6 +763,45 @@ button:disabled { opacity: .45; cursor: default; }
   background: color-mix(in srgb, var(--ac) 12%, rgba(0,0,0,0.25));
 }
 .sr-name { font-weight: 700; font-size: 0.85rem; }
+
+.raise-section {
+  margin: 0.55rem 0 0.35rem;
+}
+.raise-section h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  color: var(--gold);
+  font-weight: 800;
+}
+.raise-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.3rem;
+  border-radius: 10px;
+  border-left: 3px solid var(--ac, var(--gold));
+  background: color-mix(in srgb, var(--ac, #888) 14%, rgba(0, 0, 0, 0.28));
+  font-size: 0.84rem;
+}
+.raise-row .field.tiny {
+  margin: 0;
+  font-size: 0.72rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.raise-row .field.tiny input {
+  width: 4.2rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+}
+.pc-money.debt { color: #ff8a80; }
 
 #btn-modal-restore {
   position: fixed;

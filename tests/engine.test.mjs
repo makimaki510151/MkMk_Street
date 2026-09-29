@@ -6,6 +6,7 @@ import {
   getPlayerAreaCount,
   getTollMulti,
   getPlayerAssets,
+  getLiquidatableValue,
   rollDice,
   advanceMove,
   applyChoice,
@@ -380,5 +381,91 @@ describe('MkMk Street engine', () => {
     assert.equal(calcToll(g, shop), 0);
     g.players[0].shopsClosed = false;
     assert.ok(calcToll(g, shop) > 0);
+  });
+
+  it('toll debt opens manual raise_funds instead of auto-selling', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 91,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shop = g.map.find((n) => n.type === 'shop' && n.area === area);
+    shop.owner = 1;
+    shop.price = 800;
+    shop.basePrice = 800;
+    shop.baseToll = 500;
+    shop.extraInvest = 0;
+    // 株は資産として持つが、自動では売られないことだけ検証
+    g.players[0].stocks[area] = 30;
+    g.players[0].cash = 80;
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    const stockBefore = g.players[0].stocks[area];
+    const toll = calcToll(g, shop);
+    assert.ok(toll > g.players[0].cash, `toll ${toll} should exceed cash`);
+    advanceMove(g);
+    assert.ok(g.players[0].cash < 0, `cash should go negative, got ${g.players[0].cash}`);
+    assert.equal(g.players[0].stocks[area], stockBefore, 'stocks not auto-sold');
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'raise_funds');
+    assert.equal(g.pending?.reason, 'toll');
+    assert.equal(g.pending?.targetCash, 0);
+    // 手動で株を売って負債を解消
+    const price = g.areas[area].stockPrice;
+    const need = -g.players[0].cash;
+    const count = Math.min(stockBefore, Math.max(1, Math.ceil(need / Math.max(1, price)) + 1));
+    const sold = applyChoice(g, { action: 'sell_stock', area, count });
+    assert.equal(sold.ok, true);
+    assert.ok(g.players[0].cash >= 0);
+    const cont = applyChoice(g, { action: 'continue' });
+    assert.equal(cont.ok, true);
+  });
+
+  it('five_buy shortfall opens raise_funds then executes after selling stock', () => {
+    const g = createGame({
+      players: [{ name: 'A', cash: 500 }, { name: 'B', cash: 5000 }],
+      seed: 92,
+      cash: 500,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shop = g.map.find((n) => n.type === 'shop' && n.area === area);
+    shop.owner = 1;
+    shop.price = 200;
+    shop.basePrice = 200;
+    shop.extraInvest = 0;
+    updateAreaStockPrices(g);
+    const five = shop.price * 5;
+    g.players[0].cash = Math.floor(five * 0.3);
+    g.players[0].stocks[area] = 80;
+    assert.ok(getLiquidatableValue(g, g.players[0]) >= five);
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'five_buy',
+      playerId: 0,
+      shopId: shop.id,
+      price: five,
+      toll: 40,
+    };
+    const need = applyChoice(g, { action: 'buy' });
+    assert.equal(need.ok, true);
+    assert.equal(need.needFunds, true);
+    assert.equal(g.pending?.type, 'raise_funds');
+    assert.equal(g.pending?.reason, 'five_buy');
+    // 目標まで株を手動売却
+    while (g.players[0].cash < five && (g.players[0].stocks[area] || 0) > 0) {
+      const price = g.areas[area].stockPrice;
+      const needCash = five - g.players[0].cash;
+      const count = Math.min(g.players[0].stocks[area], Math.max(1, Math.ceil(needCash / price)));
+      const sold = applyChoice(g, { action: 'sell_stock', area, count });
+      assert.equal(sold.ok, true);
+      assert.equal(g.pending?.type, 'raise_funds');
+    }
+    assert.ok(g.players[0].cash >= five);
+    const done = applyChoice(g, { action: 'continue', execute: true });
+    assert.equal(done.ok, true);
+    assert.equal(done.fiveBuy, true);
+    assert.equal(shop.owner, 0);
   });
 });
