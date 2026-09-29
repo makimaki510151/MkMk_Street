@@ -15,6 +15,7 @@ import {
   updateAreaStockPrices,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
+import { unscratchedIds } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -208,8 +209,8 @@ describe('MkMk Street engine', () => {
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 21,
     });
-    assert.ok(g.players[0].eventTable);
-    assert.equal(g.players[0].eventTable.cells.length, 100);
+    assert.ok(g.sharedEventTable);
+    assert.equal(g.sharedEventTable.cells.length, 100);
     const mark = g.map.find((n) => n.type === 'mark');
     g.players[0].pos = mark.id;
     g.phase = 'moving';
@@ -222,7 +223,22 @@ describe('MkMk Street engine', () => {
     const cellId = g.pending.openIds[0];
     const scratched = applyChoice(g, { action: 'scratch', cellId });
     assert.equal(scratched.ok, true);
-    assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
+    assert.equal(g.sharedEventTable.cells[cellId].scratched, true);
+    assert.equal(g.sharedEventTable.cells[cellId].scratchedBy, 0);
+  });
+
+  it('rejects scratching an already opened cell on the shared table', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 44,
+    });
+    const cellId = 3;
+    g.sharedEventTable.cells[cellId].scratched = true;
+    g.sharedEventTable.cells[cellId].scratchedBy = 1;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: unscratchedIds(g.sharedEventTable) };
+    const bad = applyChoice(g, { action: 'scratch', cellId });
+    assert.equal(bad.ok, false);
   });
 
   it('keeps rest squares minimal on the board', () => {

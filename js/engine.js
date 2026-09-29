@@ -67,14 +67,16 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     lucky: false,
     resting: false,
     shopsClosed: false,
-    eventTable: createEventTable((seed >>> 0) + i * 9973 + 17),
     bankrupt: false,
+    offline: false,
     flags: {},
   }));
 
   return {
     map: board.nodes,
     areas: board.areas,
+    /** 全員共通のイベント表（1マスずつ誰かがめくる） */
+    sharedEventTable: createEventTable((seed >>> 0) + 7771),
     cols: board.cols,
     rows: board.rows,
     startId: board.startId,
@@ -202,7 +204,19 @@ export function serializeState(g) {
     turn: g.turn,
     _seed: g._seed,
     _rngCount: g._rngCount,
+    sharedEventTable: g.sharedEventTable,
   }));
+}
+
+export function getSharedEventTable(g) {
+  if (g.sharedEventTable) return g.sharedEventTable;
+  const legacy = g.players.find((p) => p.eventTable)?.eventTable;
+  if (legacy) {
+    g.sharedEventTable = legacy;
+    return legacy;
+  }
+  g.sharedEventTable = createEventTable((g._seed >>> 0) + 7771);
+  return g.sharedEventTable;
 }
 
 export function restoreState(data) {
@@ -230,16 +244,23 @@ function onPassThrough(g, p, nodeId) {
 }
 
 function setForkPending(g, p, options) {
+  const from = getNode(g, p.pos);
   g.phase = 'await_fork';
   g.pending = {
     type: 'fork',
     playerId: p.id,
     options: options.map((id) => {
       const to = getNode(g, id);
+      const dc = (to?.col ?? 0) - (from?.col ?? 0);
+      const dr = (to?.row ?? 0) - (from?.row ?? 0);
+      let side = 'center';
+      if (Math.abs(dc) >= Math.abs(dr)) side = dc > 0 ? 'right' : 'left';
+      else side = dr > 0 ? 'down' : 'up';
       return {
         id,
-        label: dirLabel(getNode(g, p.pos), to),
+        label: dirLabel(from, to),
         dest: to?.label || `#${id}`,
+        side,
       };
     }),
     stepsLeft: g.move.stepsLeft,
@@ -656,10 +677,8 @@ function handleBank(g, p, landed) {
 }
 
 function openScratch(g, p) {
-  if (!p.eventTable) {
-    p.eventTable = createEventTable((g._seed >>> 0) + p.id * 9973 + g.turn);
-  }
-  const open = unscratchedIds(p.eventTable);
+  const table = getSharedEventTable(g);
+  const open = unscratchedIds(table);
   if (!open.length) {
     addLog(g, `${p.name} のイベント表はすべてスクラッチ済み`, 'event');
     endTurn(g);
@@ -987,7 +1006,8 @@ export function applyChoice(g, choice) {
 
   if (pending.type === 'scratch') {
     const cellId = Number(choice.cellId);
-    const open = pending.openIds || unscratchedIds(p.eventTable);
+    const table = getSharedEventTable(g);
+    const open = pending.openIds || unscratchedIds(table);
     if (!open.includes(cellId)) return { ok: false, error: 'bad_cell' };
     const result = scratchCell(g, p, cellId);
     if (!result.ok) return { ok: false, error: result.error };
@@ -1129,7 +1149,7 @@ export function cpuAct(g) {
       return applyChoice(g, { action: 'done' });
     }
     if (pend.type === 'scratch') {
-      const open = pend.openIds || unscratchedIds(p.eventTable);
+      const open = pend.openIds || unscratchedIds(getSharedEventTable(g));
       if (!open.length) {
         g.pending = null;
         endTurn(g);
