@@ -43,13 +43,12 @@ const app = {
   /** 出目演出中は UI / ログで結果を隠す */
   hideDiceResult: false,
   lastSeenLogKey: null,
-  bannerQueue: [],
-  bannerShowing: false,
   lastTurnKey: null,
-  modalMode: 'center', // center | docked | hidden
+  modalMode: 'shown', // shown | hidden
   modalActive: false,
   /** @type {{x:number,y:number}|null} */
   modalDrag: null,
+  feedPinnedTop: true,
   inspectedId: null,
   restSkipTimer: null,
 };
@@ -468,8 +467,6 @@ function enterGame() {
   audio.startBgm();
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
-  app.bannerQueue = [];
-  app.bannerShowing = false;
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
@@ -577,23 +574,22 @@ function bindGameControls() {
 }
 
 function bindModalTools() {
-  $('#btn-modal-dock').onclick = () => {
-    app.modalMode = app.modalMode === 'docked' ? 'center' : 'docked';
-    app.modalDrag = null;
-    applyModalMode();
-    audio.sfx.click();
-  };
   $('#btn-modal-hide').onclick = () => {
     app.modalMode = 'hidden';
     applyModalMode();
     audio.sfx.click();
   };
   $('#btn-modal-restore').onclick = () => {
-    app.modalMode = 'docked';
+    app.modalMode = 'shown';
+    app.modalDrag = null;
     applyModalMode();
     if (app.modalActive && app.game) showChoiceModal(app.game);
     audio.sfx.click();
   };
+  const feed = $('#event-feed');
+  feed?.addEventListener('scroll', () => {
+    app.feedPinnedTop = feed.scrollTop < 24;
+  }, { passive: true });
 }
 
 function applyModalPosition() {
@@ -615,7 +611,6 @@ function applyModalPosition() {
 function applyModalMode() {
   const modal = $('#modal');
   const restore = $('#btn-modal-restore');
-  modal.classList.toggle('docked', app.modalMode === 'docked' && !app.modalDrag);
   modal.classList.toggle('floating', !!app.modalDrag);
   applyModalPosition();
   if (app.modalMode === 'hidden') {
@@ -627,7 +622,6 @@ function applyModalMode() {
   } else {
     restore.hidden = true;
   }
-  $('#btn-modal-dock').textContent = app.modalMode === 'docked' ? '中央へ' : '端へ';
 }
 
 function bindModalDrag() {
@@ -824,8 +818,6 @@ async function runDiceAndMove(face) {
       kind: 'dice',
       color: roller.color,
     });
-    // バナー表示中も進行が止まらないよう、短く待ってから移動
-    await wait(480);
   }
   await continueAdvancing();
   app.busy = false;
@@ -1188,8 +1180,8 @@ function pendingStatusLabel(pend) {
 }
 
 function setStatusBanner(show, text = '', color = '') {
-  const el = $('#status-banner');
-  const tx = $('#status-banner-text');
+  const el = $('#status-chip');
+  const tx = $('#status-chip-text');
   if (!el || !tx) return;
   if (!show) {
     el.hidden = true;
@@ -1320,47 +1312,30 @@ function bannerFromLog(g, l) {
 
 function enqueueBanner(payload) {
   if (!payload?.title) return;
-  // 各クライアントがログ差分から表示（二重配信しない）
-  app.bannerQueue.push(payload);
-  pumpBannerQueue();
+  pushEventStamp(payload);
 }
 
-async function pumpBannerQueue() {
-  if (app.bannerShowing) return;
-  const next = app.bannerQueue.shift();
-  if (!next) return;
-  app.bannerShowing = true;
-  await showEventBanner(next);
-  app.bannerShowing = false;
-  if (app.bannerQueue.length) pumpBannerQueue();
-}
+/** 左上フィードへ即時スタンプ追加（待ちなし・さかのぼり可） */
+function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
+  const feed = $('#event-feed');
+  if (!feed) return;
 
-function showEventBanner({ kicker, title, detail, kind, color, mine }) {
-  const el = $('#event-banner');
-  if (!el) return Promise.resolve();
-  $('#eb-kicker').textContent = kicker || '';
-  $('#eb-title').textContent = title || '';
-  $('#eb-detail').textContent = detail || '';
-  el.dataset.kind = kind || 'info';
-  el.dataset.mine = mine ? '1' : '0';
-  el.style.setProperty('--eb', color || '#ffe08a');
-  el.hidden = false;
-  el.classList.remove('out');
-  el.classList.add('in');
+  const stamp = document.createElement('article');
+  stamp.className = 'event-stamp';
+  stamp.dataset.kind = kind || 'info';
+  stamp.dataset.mine = mine ? '1' : '0';
+  stamp.style.setProperty('--eb', color || '#ffe08a');
+  stamp.innerHTML = `
+    <div class="eb-kicker">${escapeHtml(kicker || '')}</div>
+    <div class="eb-title">${escapeHtml(title || '')}</div>
+    ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
+  `;
+  feed.prepend(stamp);
 
-  // SE は着地側と二重にならないよう、バナー固有のものだけ
+  while (feed.children.length > 40) feed.lastElementChild?.remove();
+  if (app.feedPinnedTop !== false) feed.scrollTop = 0;
+
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
-  else if (kind === 'dice') { /* 出目SEはオーバーレイ側 */ }
-
-  const hold = kind === 'win' ? 2200 : (mine ? 2000 : 1700);
-  return wait(hold).then(() => {
-    el.classList.remove('in');
-    el.classList.add('out');
-    return wait(280).then(() => {
-      el.hidden = true;
-      el.classList.remove('out');
-    });
-  });
 }
 
 function phaseLabel(g) {
@@ -1380,7 +1355,10 @@ function showChoiceModal(g) {
   const body = $('#modal-body');
   const title = $('#modal-title');
   app.modalActive = true;
-  if (app.modalMode === 'hidden') app.modalMode = 'docked';
+  if (app.modalMode === 'hidden') {
+    applyModalMode();
+    return;
+  }
   modal.hidden = false;
   applyModalMode();
   $('#btn-end-choice').hidden = true;
@@ -1394,7 +1372,7 @@ function showChoiceModal(g) {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
     $('#modal-card').classList.add('fork-hint-only');
     body.innerHTML = `
-      <p class="hint">左右（上下）の端に進路があります。盤面のマスをクリックしても選べます。タイトルバーをドラッグでウィンドウを移動できます。</p>`;
+      <p class="hint">左右（上下）の端に進路があります。盤面のマスをクリックしても選べます。タイトルをドラッグで移動できます。</p>`;
     $('#btn-skip-choice').hidden = true;
     renderForkRails(pend);
     return;
@@ -1493,7 +1471,6 @@ function showChoiceModal(g) {
     $('#modal-card').classList.add('stock-modal');
     // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
     app.renderer?.setStockHighlight(null, true);
-    app.modalMode = app.modalMode === 'center' ? 'docked' : app.modalMode;
     applyModalMode();
 
     const bindAreaHighlight = (root) => {
@@ -1670,6 +1647,8 @@ function showChoiceModal(g) {
 
 function hideModal() {
   app.modalActive = false;
+  // 選択完了後は次の選択を右下に再表示
+  app.modalMode = 'shown';
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
