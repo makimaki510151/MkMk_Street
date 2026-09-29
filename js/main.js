@@ -685,11 +685,15 @@ function hideForkRails() {
 
 function renderForkRails(pend) {
   let rails = $('#fork-rails');
+  const host = document.querySelector('.board-wrap') || document.body;
   if (!rails) {
     rails = document.createElement('div');
     rails.id = 'fork-rails';
     rails.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(rails);
+    host.appendChild(rails);
+  } else if (rails.parentElement !== host) {
+    // 盤面ウィンドウ基準で上下左右を配置するため board-wrap 内へ
+    host.appendChild(rails);
   }
   rails.hidden = false;
   const mkBtn = (o) => `<button type="button" class="btn primary fork-btn fork-pill" data-next="${o.id}">

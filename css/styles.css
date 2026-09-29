@@ -453,11 +453,12 @@ button:disabled { opacity: .45; cursor: default; }
 .modal-card.fork-hint-only {
   width: min(300px, 92vw);
 }
+/* 分岐ボタンは盤面ウィンドウ（.board-wrap）基準で配置 */
 #fork-rails {
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 32;
+  z-index: 12;
 }
 #fork-rails[hidden] { display: none !important; }
 .fork-rail {
@@ -466,7 +467,7 @@ button:disabled { opacity: .45; cursor: default; }
   flex-direction: column;
   gap: 0.55rem;
   pointer-events: auto;
-  max-width: min(168px, 28vw);
+  max-width: min(168px, 36%);
 }
 .fork-rail-left {
   left: 0.55rem;
@@ -474,23 +475,23 @@ button:disabled { opacity: .45; cursor: default; }
   transform: translateY(-50%);
 }
 .fork-rail-right {
-  right: calc(300px + 0.7rem);
+  right: 0.55rem;
   top: 50%;
   transform: translateY(-50%);
 }
 .fork-rail-up {
-  top: 3.6rem;
+  top: 0.55rem;
   left: 50%;
   transform: translateX(-50%);
   flex-direction: row;
-  max-width: min(420px, 92vw);
+  max-width: min(420px, 92%);
 }
 .fork-rail-down {
-  bottom: 5.4rem;
+  bottom: 0.55rem;
   left: 50%;
   transform: translateX(-50%);
   flex-direction: row;
-  max-width: min(420px, 92vw);
+  max-width: min(420px, 92%);
 }
 .fork-pill {
   min-width: 7.2rem;
@@ -984,7 +985,6 @@ button:disabled { opacity: .45; cursor: default; }
   #modal .modal-card.stock-modal {
     width: min(360px, 96vw);
   }
-  .fork-rail-right { right: 0.55rem; }
   #btn-modal-restore {
     right: 0.75rem;
     bottom: calc(38vh + 0.5rem);
