@@ -268,6 +268,40 @@ describe('MkMk Street engine', () => {
     assert.equal(scratches[0].row, 5);
   });
 
+  it('stockbroker allows only one stock type per visit', () => {
+    const g = createGame({
+      players: [{ name: 'A', cash: 5000 }, { name: 'B' }],
+      seed: 46,
+      cash: 5000,
+    });
+    const broker = g.map.find((n) => n.type === 'stockbroker');
+    assert.ok(broker);
+    g.players[0].pos = broker.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [broker.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+    assert.equal(g.pending?.type, 'stock');
+    assert.equal(g.pending?.broker, true);
+    assert.equal(g.pending?.maxBuys, 1);
+    const areas = Object.keys(g.areas).map(Number);
+    const a1 = areas[0];
+    const a2 = areas[1];
+    const price1 = g.areas[a1].stockPrice;
+    const buy1 = applyChoice(g, { action: 'buy', area: a1, count: 1 });
+    assert.equal(buy1.ok, true);
+    assert.equal(g.players[0].stocks[a1], 1);
+    // 1種類買ったらターン終了（pending クリア）
+    assert.equal(g.pending, null);
+    assert.equal(g.phase, 'await_roll');
+    // 追加購入はできない
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 0, broker: true, maxBuys: 1, buysUsed: 1 };
+    const buy2 = applyChoice(g, { action: 'buy', area: a2, count: 1 });
+    assert.equal(buy2.ok, false);
+    assert.equal(buy2.error, 'buy_limit');
+    assert.ok(price1 > 0);
+  });
+
   it('landing on bank opens level-up then one-type stock buy', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
