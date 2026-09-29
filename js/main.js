@@ -48,7 +48,7 @@ const app = {
   modalActive: false,
   /** @type {{x:number,y:number}|null} */
   modalDrag: null,
-  feedPinnedTop: true,
+  feedPinnedBottom: true,
   inspectedId: null,
   restSkipTimer: null,
 };
@@ -588,7 +588,8 @@ function bindModalTools() {
   };
   const feed = $('#event-feed');
   feed?.addEventListener('scroll', () => {
-    app.feedPinnedTop = feed.scrollTop < 24;
+    const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 28;
+    app.feedPinnedBottom = nearBottom;
   }, { passive: true });
 }
 
@@ -1088,14 +1089,17 @@ function refreshGameUI() {
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
 
-  const logLines = g.logs.slice(0, 24).map((l) => {
+  // 上→下（古い→新しい）。内部配列は newest-first のため表示時に反転
+  const logLines = g.logs.slice(0, 24).reverse().map((l) => {
     let text = l.text;
     if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→\s*\d/.test(text)) {
       text = text.replace(/サイコロ\s*→\s*\d+/, 'サイコロ → ？');
     }
     return `<div class="log-line ${l.kind || ''}">${escapeHtml(text)}</div>`;
   });
-  $('#log').innerHTML = logLines.join('');
+  const logEl = $('#log');
+  logEl.innerHTML = logLines.join('');
+  logEl.scrollTop = logEl.scrollHeight;
 
   const diceEl = $('#dice-face');
   if (app.hideDiceResult) {
@@ -1330,10 +1334,11 @@ function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
     <div class="eb-title">${escapeHtml(title || '')}</div>
     ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
   `;
-  feed.prepend(stamp);
+  // 上→下に流れる（新しいスタンプは下へ）
+  feed.appendChild(stamp);
 
-  while (feed.children.length > 40) feed.lastElementChild?.remove();
-  if (app.feedPinnedTop !== false) feed.scrollTop = 0;
+  while (feed.children.length > 40) feed.firstElementChild?.remove();
+  if (app.feedPinnedBottom !== false) feed.scrollTop = feed.scrollHeight;
 
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
 }
