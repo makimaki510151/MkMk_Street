@@ -377,7 +377,8 @@ export function rollDice(g) {
   g.dice = d;
   g.phase = 'moving';
   g.move = { stepsLeft: d, path: [], passedBank: false, startPos: p.pos };
-  addLog(g, `${p.name} のサイコロ → ${d}`, 'dice');
+  // 出目数値は演出後に UI が表示。ログも演出中のネタバレを避けるため「？」で残し、UI が確定後に見せる
+  addLog(g, `${p.name} がサイコロを振った`, 'dice');
 
   return { ok: true, dice: d, needsAdvance: true, state: serializeState(g) };
 }

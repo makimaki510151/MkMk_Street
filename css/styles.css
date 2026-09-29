@@ -579,6 +579,87 @@ button:disabled { opacity: .45; cursor: default; }
   100% { transform: rotate(-8deg) scale(0.96); }
 }
 
+/* event / status banners on board */
+#event-banner {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%) scale(0.92);
+  z-index: 8;
+  min-width: min(86%, 320px);
+  max-width: min(92%, 420px);
+  padding: 1rem 1.25rem 1.15rem;
+  border-radius: 18px;
+  text-align: center;
+  pointer-events: none;
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--eb, #ffe08a) 28%, #102428), rgba(10, 28, 32, 0.92));
+  border: 2px solid color-mix(in srgb, var(--eb, #ffe08a) 70%, #fff);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+}
+#event-banner[hidden] { display: none !important; }
+#event-banner.in {
+  animation: ebIn 0.28s ease forwards;
+}
+#event-banner.out {
+  animation: ebOut 0.28s ease forwards;
+}
+#event-banner[data-mine="1"] {
+  border-width: 3px;
+}
+.eb-kicker {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--eb, #ffe08a) 80%, #fff);
+  margin-bottom: 0.25rem;
+}
+.eb-title {
+  font-family: var(--display);
+  font-size: clamp(1.55rem, 4.5vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: #fffef5;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+.eb-detail {
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+  line-height: 1.35;
+}
+@keyframes ebIn {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.88); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes ebOut {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -56%) scale(0.96); }
+}
+
+#status-banner {
+  position: absolute;
+  left: 50%;
+  top: 0.55rem;
+  transform: translateX(-50%);
+  z-index: 6;
+  pointer-events: none;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: #1a1200;
+  background: linear-gradient(180deg, #ffe08a, color-mix(in srgb, var(--sb, #f0a202) 80%, #fff));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+  max-width: 94%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#status-banner[hidden] { display: none !important; }
+
 /* volume dock — いつでも操作可 */
 #vol-dock {
   position: fixed;

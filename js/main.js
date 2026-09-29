@@ -39,10 +39,17 @@ const app = {
   renderer: null,
   cpuTimer: null,
   busy: false,
+  /** 出目演出中は UI / ログで結果を隠す */
+  hideDiceResult: false,
+  lastSeenLogKey: null,
+  bannerQueue: [],
+  bannerShowing: false,
   lastTurnKey: null,
   modalMode: 'center', // center | docked | hidden
   modalActive: false,
 };
+
+const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
 
 function showScreen(id) {
   $$('.screen').forEach((el) => el.classList.toggle('active', el.id === id));
@@ -299,6 +306,8 @@ function handleNetEvent({ from, data }) {
     if (data.type === 'state') {
       const prev = app.game;
       app.game = restoreState(data.state);
+      if (data.hideDice) app.hideDiceResult = true;
+      else if (data.hideDice === false) app.hideDiceResult = false;
       if (prev && data.anim?.from != null && data.anim?.to != null) {
         app.renderer?.animateToken(data.anim.pid, data.anim.from, data.anim.to, 380);
         audio.sfx.step();
@@ -313,7 +322,16 @@ function handleNetEvent({ from, data }) {
 }
 
 function playRemoteFx(data) {
-  if (data.kind === 'dice') playDiceOverlay(data.face, true);
+  if (data.kind === 'dice') {
+    app.hideDiceResult = true;
+    playDiceOverlay(data.face, true).finally(() => {
+      app.hideDiceResult = false;
+      refreshGameUI();
+    });
+  }
+  if (data.kind === 'banner') {
+    enqueueBanner(data.payload || data);
+  }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
@@ -346,6 +364,10 @@ function enterGame() {
   showScreen('screen-game');
   audio.resume();
   audio.startBgm();
+  app.hideDiceResult = false;
+  app.lastSeenLogKey = null;
+  app.bannerQueue = [];
+  app.bannerShowing = false;
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
@@ -461,12 +483,15 @@ async function applyLocalAction(action) {
     const result = rollDice(app.game);
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
-    syncState();
-    refreshGameUI();
     if (result.skipped) {
+      syncState();
+      refreshGameUI();
       scheduleCpu();
       return;
     }
+    // 出目は演出後に同期（ネタバレ防止）
+    app.hideDiceResult = true;
+    refreshGameUI();
     await runDiceAndMove(result.dice);
     return;
   }
@@ -521,9 +546,29 @@ async function resolveForkChoice(nextId) {
 
 async function runDiceAndMove(face) {
   app.busy = true;
+  app.hideDiceResult = true;
   $('#btn-roll').disabled = true;
   broadcastFx({ kind: 'dice', face });
   await playDiceOverlay(face);
+  app.hideDiceResult = false;
+  const roller = currentPlayer(app.game);
+  if (roller && app.game) {
+    app.game.logs.unshift({ text: `${roller.name} のサイコロ → ${face}`, kind: 'dice', t: Date.now() });
+    if (app.game.logs.length > 80) app.game.logs.length = 80;
+  }
+  syncState({ hideDice: false });
+  refreshGameUI();
+  if (roller) {
+    enqueueBanner({
+      kicker: `${roller.name} のサイコロ`,
+      title: `${face}`,
+      detail: `${face} マス進みます`,
+      kind: 'dice',
+      color: roller.color,
+    });
+    // バナー表示中も進行が止まらないよう、短く待ってから移動
+    await wait(480);
+  }
   await continueAdvancing();
   app.busy = false;
   refreshGameUI();
@@ -576,9 +621,13 @@ async function playDiceOverlay(face, remote = false) {
   const overlay = $('#dice-overlay');
   const faceEl = $('#dice-overlay-face');
   const label = $('#dice-overlay-label');
+  app.hideDiceResult = true;
   overlay.hidden = false;
   overlay.classList.remove('landed');
   label.textContent = 'サイコロ…';
+  faceEl.textContent = '?';
+  $('#dice-face').textContent = '?';
+  $('#dice-face').classList.remove('pop');
   if (!remote) audio.sfx.dice();
 
   const start = performance.now();
@@ -589,6 +638,7 @@ async function playDiceOverlay(face, remote = false) {
   faceEl.textContent = String(face);
   overlay.classList.add('landed');
   label.textContent = `${face} が出た！`;
+  app.hideDiceResult = false;
   $('#dice-face').textContent = String(face);
   $('#dice-face').classList.add('pop');
   if (!remote) audio.sfx.diceLand(face);
@@ -612,10 +662,15 @@ async function handleHostAction(from, data) {
     }
     const result = rollDice(app.game);
     if (result.state) app.game = restoreState(result.state);
-    syncState();
+    if (result.skipped) {
+      syncState();
+      refreshGameUI();
+      scheduleCpu();
+      return;
+    }
+    app.hideDiceResult = true;
     refreshGameUI();
-    if (!result.skipped) await runDiceAndMove(result.dice);
-    else scheduleCpu();
+    await runDiceAndMove(result.dice);
     return;
   }
 
@@ -673,10 +728,15 @@ function scheduleCpu() {
     if (phase === 'await_roll') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
-      syncState();
-      refreshGameUI();
-      if (result?.dice) await runDiceAndMove(result.dice);
-      else scheduleCpu();
+      if (result?.dice) {
+        app.hideDiceResult = true;
+        refreshGameUI();
+        await runDiceAndMove(result.dice);
+      } else {
+        syncState();
+        refreshGameUI();
+        scheduleCpu();
+      }
       return;
     }
 
@@ -759,10 +819,20 @@ function refreshGameUI() {
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
 
-  $('#log').innerHTML = g.logs.slice(0, 24).map((l) => `<div class="log-line ${l.kind || ''}">${escapeHtml(l.text)}</div>`).join('');
+  const logLines = g.logs.slice(0, 24).map((l) => {
+    let text = l.text;
+    if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→\s*\d/.test(text)) {
+      text = text.replace(/サイコロ\s*→\s*\d+/, 'サイコロ → ？');
+    }
+    return `<div class="log-line ${l.kind || ''}">${escapeHtml(text)}</div>`;
+  });
+  $('#log').innerHTML = logLines.join('');
 
   const diceEl = $('#dice-face');
-  if (g.dice) {
+  if (app.hideDiceResult) {
+    diceEl.textContent = '?';
+    diceEl.classList.remove('pop');
+  } else if (g.dice) {
     diceEl.textContent = String(g.dice);
     diceEl.classList.add('pop');
   } else if (!app.busy) {
@@ -778,6 +848,7 @@ function refreshGameUI() {
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
+    const actor = g.players[g.pending.playerId];
     if (mine) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
@@ -787,17 +858,27 @@ function refreshGameUI() {
         showChoiceModal(g);
       }
       $('#wait-hint').hidden = true;
+      setStatusBanner(false);
     } else {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
-      $('#wait-hint').textContent = `${g.players[g.pending.playerId]?.name || ''} が選択中…`;
+      const pendingLabel = pendingStatusLabel(g.pending);
+      $('#wait-hint').textContent = `${actor?.name || ''} が${pendingLabel}…`;
+      setStatusBanner(true, `${actor?.name || '相手'} が${pendingLabel}`, actor?.color);
     }
   } else if (!app.busy) {
     app.modalActive = false;
     hideModal();
     $('#wait-hint').hidden = true;
     $('#btn-modal-restore').hidden = true;
+    if (g.phase === 'moving' || app.hideDiceResult) {
+      setStatusBanner(true, `${cur?.name || ''} が移動中`, cur?.color);
+    } else {
+      setStatusBanner(false);
+    }
+  } else if (app.hideDiceResult) {
+    setStatusBanner(true, `${cur?.name || ''} がサイコロ中`, cur?.color);
   }
 
   if (g.phase === 'gameover') {
@@ -806,6 +887,195 @@ function refreshGameUI() {
 
   renderStockPanel(g);
   maybeYourTurnChime();
+  announceNewLogs(g);
+}
+
+function pendingStatusLabel(pend) {
+  switch (pend?.type) {
+    case 'fork': return '分岐を選択中';
+    case 'buy_shop': return 'お店を購入するか選択中';
+    case 'invest': return '増資を検討中';
+    case 'five_buy': return '5倍買いを検討中';
+    case 'stock': return '株を取引中';
+    case 'scratch': return 'イベント表をスクラッチ中';
+    default: return '選択中';
+  }
+}
+
+function setStatusBanner(show, text = '', color = '') {
+  const el = $('#status-banner');
+  const tx = $('#status-banner-text');
+  if (!el || !tx) return;
+  if (!show) {
+    el.hidden = true;
+    return;
+  }
+  tx.textContent = text;
+  el.style.setProperty('--sb', color || '#ffe08a');
+  el.hidden = false;
+}
+
+function logKey(l) {
+  return `${l.t || ''}|${l.kind || ''}|${l.text}`;
+}
+
+function announceNewLogs(g) {
+  if (!g?.logs?.length) return;
+  // 初回は既存ログを既読扱いにしてスパムしない
+  if (app.lastSeenLogKey == null) {
+    app.lastSeenLogKey = logKey(g.logs[0]);
+    return;
+  }
+  const fresh = [];
+  for (const l of g.logs) {
+    if (logKey(l) === app.lastSeenLogKey) break;
+    fresh.push(l);
+  }
+  if (!fresh.length) return;
+  app.lastSeenLogKey = logKey(g.logs[0]);
+
+  // 新しいものから時系列順へ
+  for (const l of fresh.reverse()) {
+    if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→/.test(l.text)) continue;
+    const banner = bannerFromLog(g, l);
+    if (banner) enqueueBanner(banner);
+  }
+}
+
+function bannerFromLog(g, l) {
+  if (!l) return null;
+  // 出目確定ログは runDiceAndMove 側のバナーで表示済み
+  if (l.kind === 'dice' && (/サイコロ\s*→/.test(l.text) || /サイコロを振った/.test(l.text))) return null;
+  if (l.kind === 'dice' && !/もう一回|方面へ/.test(l.text)) return null;
+
+  const kind = l.kind || 'info';
+  if (!BANNER_KINDS.has(kind) && !(kind === 'dice' && /もう一回/.test(l.text))) return null;
+
+  const player = g.players.find((p) => l.text.includes(p.name));
+  const mine = player && (
+    app.mode === 'local' ? !player.isCPU : player.id === app.localSeat
+  );
+
+  let title = l.text;
+  let detail = '';
+  let kicker = mine ? 'あなたにイベント' : (player ? `${player.name} にイベント` : '出来事');
+
+  if (kind === 'mark') {
+    kicker = mine ? 'マーク入手！' : `${player?.name || ''} がマーク入手`;
+    const m = l.text.match(/[♠♥♦♣]/);
+    title = m ? m[0] : 'マーク';
+    detail = l.text;
+  } else if (kind === 'toll') {
+    kicker = '買い物料';
+    title = '支払い発生';
+    detail = l.text;
+  } else if (kind === 'level') {
+    kicker = mine ? '昇進！' : `${player?.name || ''} が昇進`;
+    title = 'レベルアップ';
+    detail = l.text;
+  } else if (kind === 'shop') {
+    kicker = mine ? 'お店' : `${player?.name || ''} のお店`;
+    title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
+    detail = l.text;
+  } else if (kind === 'event') {
+    if (/店休/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = 'お店が休み';
+      detail = l.text;
+    } else if (/スクラッチ\s*→/.test(l.text)) {
+      kicker = mine ? 'スクラッチ' : `${player?.name || ''} のスクラッチ`;
+      title = 'スクラッチ結果';
+      detail = l.text.replace(/^.*?スクラッチ\s*→\s*/, '');
+    } else if (/イベント表をスクラッチ/.test(l.text)) {
+      kicker = mine ? 'マーク停止' : `${player?.name || ''} がマーク停止`;
+      title = 'イベント表オープン';
+      detail = l.text;
+    } else if (/チャンス|イベント！/.test(l.text)) {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
+      title = l.text.replace(/（.*）/, '').replace(/^(チャンス！|イベント！)\s*/, '') || 'イベント';
+      detail = (l.text.match(/（(.+)）/) || [])[1] || l.text;
+    } else if (/ラッキー/.test(l.text)) {
+      kicker = mine ? 'ラッキー！' : `${player?.name || ''} がラッキー`;
+      title = 'ラッキーステータス';
+      detail = l.text;
+    } else {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
+      title = 'イベント';
+      detail = l.text;
+    }
+  } else if (kind === 'system') {
+    if (/休み|店休|休憩|営業再開|破産|売却|休み中/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = /店休|休み中/.test(l.text) ? 'お店が休み' : (/休憩|次ターン休み|復帰/.test(l.text) ? '休憩' : 'お知らせ');
+      detail = l.text;
+    } else {
+      return null;
+    }
+  } else if (kind === 'win') {
+    kicker = 'ゲーム終了';
+    title = '勝利！';
+    detail = l.text;
+  } else if (kind === 'dice' && /もう一回/.test(l.text)) {
+    kicker = mine ? 'もう一回！' : `${player?.name || ''} にもう一回`;
+    title = 'サイコロ再挑戦';
+    detail = l.text;
+  } else {
+    return null;
+  }
+
+  return {
+    kicker,
+    title,
+    detail,
+    kind,
+    color: player?.color || '#ffe08a',
+    mine: !!mine,
+  };
+}
+
+function enqueueBanner(payload) {
+  if (!payload?.title) return;
+  // 各クライアントがログ差分から表示（二重配信しない）
+  app.bannerQueue.push(payload);
+  pumpBannerQueue();
+}
+
+async function pumpBannerQueue() {
+  if (app.bannerShowing) return;
+  const next = app.bannerQueue.shift();
+  if (!next) return;
+  app.bannerShowing = true;
+  await showEventBanner(next);
+  app.bannerShowing = false;
+  if (app.bannerQueue.length) pumpBannerQueue();
+}
+
+function showEventBanner({ kicker, title, detail, kind, color, mine }) {
+  const el = $('#event-banner');
+  if (!el) return Promise.resolve();
+  $('#eb-kicker').textContent = kicker || '';
+  $('#eb-title').textContent = title || '';
+  $('#eb-detail').textContent = detail || '';
+  el.dataset.kind = kind || 'info';
+  el.dataset.mine = mine ? '1' : '0';
+  el.style.setProperty('--eb', color || '#ffe08a');
+  el.hidden = false;
+  el.classList.remove('out');
+  el.classList.add('in');
+
+  // SE は着地側と二重にならないよう、バナー固有のものだけ
+  if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
+  else if (kind === 'dice') { /* 出目SEはオーバーレイ側 */ }
+
+  const hold = kind === 'win' ? 2200 : (mine ? 2000 : 1700);
+  return wait(hold).then(() => {
+    el.classList.remove('in');
+    el.classList.add('out');
+    return wait(280).then(() => {
+      el.hidden = true;
+      el.classList.remove('out');
+    });
+  });
 }
 
 function phaseLabel(g) {
