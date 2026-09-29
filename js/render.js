@@ -309,13 +309,19 @@ export function createRenderer(canvas) {
 }
 
 function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
+  const rw = Math.max(0, w);
+  const rh = Math.max(0, h);
+  const rr = Math.max(0, Math.min(r, rw / 2, rh / 2));
   ctx.beginPath();
+  if (rw < 0.5 || rh < 0.5) {
+    ctx.rect(x, y, rw, rh);
+    return;
+  }
   ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.arcTo(x + rw, y, x + rw, y + rh, rr);
+  ctx.arcTo(x + rw, y + rh, x, y + rh, rr);
+  ctx.arcTo(x, y + rh, x, y, rr);
+  ctx.arcTo(x, y, x + rw, y, rr);
   ctx.closePath();
 }
 
