@@ -978,14 +978,28 @@ function bannerFromLog(g, l) {
     title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
     detail = l.text;
   } else if (kind === 'event') {
-    kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
-    if (/スクラッチ\s*→/.test(l.text)) {
+    if (/店休/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = 'お店が休み';
+      detail = l.text;
+    } else if (/スクラッチ\s*→/.test(l.text)) {
+      kicker = mine ? 'スクラッチ' : `${player?.name || ''} のスクラッチ`;
       title = 'スクラッチ結果';
       detail = l.text.replace(/^.*?スクラッチ\s*→\s*/, '');
+    } else if (/イベント表をスクラッチ/.test(l.text)) {
+      kicker = mine ? 'マーク停止' : `${player?.name || ''} がマーク停止`;
+      title = 'イベント表オープン';
+      detail = l.text;
     } else if (/チャンス|イベント！/.test(l.text)) {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
       title = l.text.replace(/（.*）/, '').replace(/^(チャンス！|イベント！)\s*/, '') || 'イベント';
       detail = (l.text.match(/（(.+)）/) || [])[1] || l.text;
+    } else if (/ラッキー/.test(l.text)) {
+      kicker = mine ? 'ラッキー！' : `${player?.name || ''} がラッキー`;
+      title = 'ラッキーステータス';
+      detail = l.text;
     } else {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
       title = 'イベント';
       detail = l.text;
     }
