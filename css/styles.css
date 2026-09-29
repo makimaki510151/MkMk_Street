@@ -732,10 +732,14 @@ button:disabled { opacity: .45; cursor: default; }
 .sc-actions { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
 .stock-buy-panel {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 0.45rem;
   align-items: end;
   padding-top: 0.2rem;
+}
+.stock-buy-panel .field { grid-column: 1 / -1; }
+@media (min-width: 420px) {
+  .stock-buy-panel .field { grid-column: auto; }
 }
 .stock-row {
   display: grid;

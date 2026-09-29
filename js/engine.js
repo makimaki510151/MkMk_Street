@@ -534,7 +534,8 @@ function resolveLanding(g, p, { passedBank }) {
 
   if (sq.type === 'stockbroker') {
     g.phase = 'await_choice';
-    g.pending = { type: 'stock', playerId: p.id, broker: true };
+    // 証券でも1回の訪問で買えるのは1種類のみ
+    g.pending = { type: 'stock', playerId: p.id, broker: true, maxBuys: 1 };
     return;
   }
 
@@ -968,8 +969,8 @@ export function applyChoice(g, choice) {
       if (!g.areas[area]) return { ok: false, error: 'bad_area' };
       const price = g.areas[area].stockPrice;
       const maxAfford = Math.floor(p.cash / price);
-      // 銀行は持ち金の限り。証券は従来どおり上限99
-      const hardCap = bankVisit ? Math.max(1, maxAfford) : 99;
+      // 1種類購入時は持ち金の限り（証券・銀行とも）
+      const hardCap = Math.max(1, maxAfford);
       const count = Math.max(1, Math.min(hardCap, Number(choice.count) || 1));
       const cost = price * count;
       if (p.cash < cost) return { ok: false, error: 'insufficient' };
