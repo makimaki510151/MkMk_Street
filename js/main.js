@@ -16,7 +16,6 @@ import {
   getRemainingInvest,
   getNode,
   PLAYER_COLORS,
-  continueMove,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import { GROUP_COLORS, TABLE_SIZE } from './eventTable.js';
@@ -324,6 +323,23 @@ function startLocal(seats) {
   app.localSeat = seats.findIndex((s) => !s.isCPU);
   if (app.localSeat < 0) app.localSeat = 0;
   enterGame();
+  maybeDemoLanding();
+}
+
+function maybeDemoLanding() {
+  const demo = new URLSearchParams(location.search).get('demo');
+  if (!demo || !app.game) return;
+  const p = currentPlayer(app.game);
+  if (!p) return;
+  if (demo === 'scratch') {
+    const mark = app.game.map.find((n) => n.type === 'mark');
+    if (!mark) return;
+    p.pos = mark.id;
+    app.game.phase = 'moving';
+    app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
+    advanceMove(app.game);
+    refreshGameUI();
+  }
 }
 
 function enterGame() {
