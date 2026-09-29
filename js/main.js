@@ -18,6 +18,7 @@ import {
   PLAYER_COLORS,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
+import { GROUP_COLORS, TABLE_SIZE } from './eventTable.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
@@ -718,13 +719,17 @@ function refreshGameUI() {
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
+    const status = [
+      p.resting ? '<span class="pc-flag">休み</span>' : '',
+      p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
+    ].join('');
     return `
       <div class="player-card ${active} ${me}" style="--pc:${p.color}">
         <div class="pc-head"><span class="pc-dot"></span><strong>${p.name}</strong><span class="pc-lv">Lv.${p.level}</span></div>
         <div class="pc-money">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
-        <div class="pc-marks">${marks}</div>
+        <div class="pc-marks">${marks}${status}</div>
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
     `;
@@ -808,6 +813,7 @@ function showChoiceModal(g) {
   applyModalMode();
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
+  $('#modal-card').classList.remove('wide');
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
@@ -915,7 +921,53 @@ function showChoiceModal(g) {
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'sell', area, count } });
       };
     });
+    return;
   }
+
+  if (pend.type === 'scratch') {
+    const p = g.players[pend.playerId];
+    const table = p?.eventTable;
+    title.textContent = 'イベント表スクラッチ';
+    $('#btn-skip-choice').hidden = true;
+    $('#modal-card').classList.add('wide');
+    if (!table) {
+      body.innerHTML = '<p class="hint">イベント表がありません</p>';
+      return;
+    }
+    const cells = table.cells.map((c) => {
+      const color = GROUP_COLORS[c.group] || '#888';
+      if (c.scratched) {
+        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">${c.label}</button>`;
+      }
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="マス${c.id + 1}">?</button>`;
+    }).join('');
+    body.innerHTML = `
+      <p class="hint">未公開のマスを1つ選んでスクラッチ。縦横が揃うとボーナス！</p>
+      <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
+      <p class="scratch-result" id="scratch-result" hidden></p>
+    `;
+    body.querySelectorAll('[data-cell]').forEach((btn) => {
+      btn.onclick = () => {
+        body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
+        const cellId = Number(btn.dataset.cell);
+        const cell = table.cells[cellId];
+        btn.classList.remove('sealed');
+        btn.classList.add('reveal');
+        btn.textContent = cell?.label || '!';
+        const resultEl = $('#scratch-result');
+        if (resultEl) {
+          resultEl.hidden = false;
+          resultEl.textContent = `${cell?.label || ''} をスクラッチ…`;
+        }
+        audio.sfx.buy();
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'scratch', cellId } });
+      };
+    });
+    return;
+  }
+
+  $('#modal-card').classList.remove('wide');
 }
 
 function hideModal() {
