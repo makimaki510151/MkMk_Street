@@ -1,16 +1,20 @@
 /** MkMk Street — 本家いただきストリート風・分岐マップ */
 
+/**
+ * 店グループ色は非暖色・プレイヤー単色と混ざらないクール系。
+ * pattern: check | stripe | dots | grid | diamond
+ */
 export const AREA_META = {
-  1: { name: '桜通り', color: '#e85d75' },
-  2: { name: '青葉通り', color: '#3cb371' },
-  3: { name: '港町', color: '#3d8bfd' },
-  4: { name: '陽だまり', color: '#f0a202' },
-  5: { name: '月見坂', color: '#9b6bff' },
-  6: { name: '市場横丁', color: '#20c997' },
-  7: { name: '夕焼け通り', color: '#ff8c42' },
-  8: { name: '温泉通り', color: '#7b68ee' },
-  9: { name: '中央広場', color: '#c45c26' },
-  10: { name: '駅前', color: '#5c7cfa' },
+  1: { name: '桜通り', color: '#5b7c99', pattern: 'check', patternInk: '#9eb6c9' },
+  2: { name: '青葉通り', color: '#3d6b5e', pattern: 'stripe', patternInk: '#7fad9c' },
+  3: { name: '港町', color: '#4a6fa5', pattern: 'dots', patternInk: '#8fb0d9' },
+  4: { name: '陽だまり', color: '#5c6bc0', pattern: 'grid', patternInk: '#9aa6e0' },
+  5: { name: '月見坂', color: '#6a5b8c', pattern: 'diamond', patternInk: '#a899c4' },
+  6: { name: '市場横丁', color: '#2f6f7a', pattern: 'check', patternInk: '#6ea8b3' },
+  7: { name: '夕焼け通り', color: '#455a7a', pattern: 'stripe', patternInk: '#7f95b5' },
+  8: { name: '温泉通り', color: '#51607a', pattern: 'dots', patternInk: '#8a9ab3' },
+  9: { name: '中央広場', color: '#3f5f6b', pattern: 'grid', patternInk: '#7a9aa6' },
+  10: { name: '駅前', color: '#4d5f8a', pattern: 'diamond', patternInk: '#8796bc' },
 };
 
 /** 1グループ（株エリア）あたりのお店数の上限 */
@@ -33,6 +37,7 @@ function link(...pairs) {
 /**
  * 銀行を中心に十字＋外周ループ。
  * マーク（♠♥♦♣）は四隅。辺の中央は特殊マス（イベント／店休／休憩／チャンス）。
+ * 休みマスは最小限（ストレス軽減）。
  */
 export function buildBoard() {
   const nodes = [];
@@ -47,10 +52,9 @@ export function buildBoard() {
 
   // ── 十字アーム ──
   const n1 = N('shop', { label: '喫茶店', area: 9, basePrice: 200, col: 5, row: 4 });
-  const n2 = N('rest', { label: '休憩', col: 5, row: 3 });
+  const n2 = N('lucky', { label: '★', col: 5, row: 3 });
   const n3 = N('shop', { label: '花屋', area: 9, basePrice: 160, col: 5, row: 2 });
   const n4 = N('chance', { label: 'チャンス', col: 5, row: 1 });
-  // 辺中央（旧マーク位置）→ 特殊マス（3方向ハブ）
   const hubN = N('event', { label: 'イベント', col: 5, row: 0 });
 
   const e1 = N('shop', { label: '本屋', area: 10, basePrice: 180, col: 6, row: 5 });
@@ -63,32 +67,31 @@ export function buildBoard() {
   const s2 = N('lucky', { label: '★', col: 5, row: 7 });
   const s3 = N('shop', { label: '時計店', area: 9, basePrice: 280, col: 5, row: 8 });
   const s4 = N('chance', { label: 'チャンス', col: 5, row: 9 });
+  // 唯一の休憩マス（旧複数休みを集約）
   const hubS = N('rest', { label: '休憩', col: 5, row: 10 });
 
   const w1 = N('shop', { label: '靴屋', area: 10, basePrice: 220, col: 4, row: 5 });
   const w2 = N('stockbroker', { label: '証券', col: 3, row: 5 });
   const w3 = N('shop', { label: '眼鏡店', area: 10, basePrice: 190, col: 2, row: 5 });
-  const w4 = N('rest', { label: '休憩', col: 1, row: 5 });
-  const hubW = N('event', { label: 'イベント', col: 0, row: 5 });
+  const w4 = N('rollon', { label: 'もう一回', col: 1, row: 5 });
+  // 西ハブはスクラッチ専用マス（イベント表を削れる）
+  const hubW = N('scratch', { label: 'スクラッチ', col: 0, row: 5 });
 
   link([bank, n1], [n1, n2], [n2, n3], [n3, n4], [n4, hubN]);
   link([bank, e1], [e1, e2], [e2, e3], [e3, e4], [e4, hubE]);
   link([bank, s1], [s1, s2], [s2, s3], [s3, s4], [s4, hubS]);
   link([bank, w1], [w1, w2], [w2, w3], [w3, w4], [w4, hubW]);
 
-  // ── 四隅＝マーク ──
   const mkNW = N('mark', { label: '♠', mark: 0, col: 0, row: 0 });
   const mkNE = N('mark', { label: '♥', mark: 1, col: 10, row: 0 });
   const mkSE = N('mark', { label: '♣', mark: 3, col: 10, row: 10 });
   const mkSW = N('mark', { label: '♦', mark: 2, col: 0, row: 10 });
 
-  // エリア1 桜通り：北辺左
   const a1 = N('shop', { label: 'カフェ', area: 1, basePrice: 290, col: 4, row: 0 });
   const a2 = N('shop', { label: '洋服屋', area: 1, basePrice: 410, col: 3, row: 0 });
   const a3 = N('shop', { label: 'パン屋', area: 1, basePrice: 190, col: 2, row: 0 });
   const a4 = N('shop', { label: 'アクセ', area: 1, basePrice: 350, col: 1, row: 0 });
 
-  // エリア2 青葉通り：北辺右
   const b1 = N('shop', { label: 'ラーメン', area: 2, basePrice: 280, col: 6, row: 0 });
   const b2 = N('shop', { label: 'ファミレス', area: 2, basePrice: 300, col: 7, row: 0 });
   const b3 = N('shop', { label: 'コンビニ', area: 2, basePrice: 170, col: 8, row: 0 });
@@ -97,13 +100,11 @@ export function buildBoard() {
   link([hubN, a1], [a1, a2], [a2, a3], [a3, a4], [a4, mkNW]);
   link([hubN, b1], [b1, b2], [b2, b3], [b3, b4], [b4, mkNE]);
 
-  // エリア3 港町：東辺上
   const c1 = N('shop', { label: 'ホテル', area: 3, basePrice: 420, col: 10, row: 1 });
   const c2 = N('shop', { label: '水族館', area: 3, basePrice: 380, col: 10, row: 2 });
   const c3 = N('shop', { label: '港食堂', area: 3, basePrice: 240, col: 10, row: 3 });
   const c4 = N('shop', { label: '土産物', area: 3, basePrice: 150, col: 10, row: 4 });
 
-  // エリア4 陽だまり：東辺下
   const d1 = N('shop', { label: 'ゲーム店', area: 4, basePrice: 200, col: 10, row: 6 });
   const d2 = N('shop', { label: '映画館', area: 4, basePrice: 300, col: 10, row: 7 });
   const d3 = N('shop', { label: '遊園地', area: 4, basePrice: 500, col: 10, row: 8 });
@@ -112,13 +113,11 @@ export function buildBoard() {
   link([mkNE, c1], [c1, c2], [c2, c3], [c3, c4], [c4, hubE]);
   link([hubE, d1], [d1, d2], [d2, d3], [d3, d4], [d4, mkSE]);
 
-  // エリア5 月見坂：南辺右
   const f1 = N('shop', { label: '薬局', area: 5, basePrice: 160, col: 6, row: 10 });
   const f2 = N('shop', { label: '雑貨', area: 5, basePrice: 130, col: 7, row: 10 });
   const f3 = N('shop', { label: '百均', area: 5, basePrice: 80, col: 8, row: 10 });
   const f4 = N('shop', { label: '家電', area: 5, basePrice: 340, col: 9, row: 10 });
 
-  // エリア6 市場横丁：南辺左
   const g1 = N('shop', { label: 'たこ焼き', area: 6, basePrice: 100, col: 4, row: 10 });
   const g2 = N('shop', { label: 'うどん屋', area: 6, basePrice: 150, col: 3, row: 10 });
   const g3 = N('shop', { label: '寿司屋', area: 6, basePrice: 260, col: 2, row: 10 });
@@ -127,13 +126,11 @@ export function buildBoard() {
   link([hubS, f1], [f1, f2], [f2, f3], [f3, f4], [f4, mkSE]);
   link([hubS, g1], [g1, g2], [g2, g3], [g3, g4], [g4, mkSW]);
 
-  // エリア7 夕焼け通り：西辺上
   const h1 = N('shop', { label: '古本屋', area: 7, basePrice: 70, col: 0, row: 4 });
   const h2 = N('shop', { label: '茶屋', area: 7, basePrice: 180, col: 0, row: 3 });
   const h3 = N('shop', { label: 'ギャラリー', area: 7, basePrice: 320, col: 0, row: 2 });
   const h4 = N('shop', { label: '旅館', area: 7, basePrice: 400, col: 0, row: 1 });
 
-  // エリア8 温泉通り：西辺下
   const i1 = N('shop', { label: '美容院', area: 8, basePrice: 210, col: 0, row: 6 });
   const i2 = N('shop', { label: 'カラオケ', area: 8, basePrice: 230, col: 0, row: 7 });
   const i3 = N('shop', { label: '銭湯', area: 8, basePrice: 170, col: 0, row: 8 });
@@ -165,6 +162,8 @@ export function buildBoard() {
       stockPrice: targetStock,
       name: AREA_META[a]?.name || `エリア${a}`,
       color: AREA_META[a]?.color || '#888',
+      pattern: AREA_META[a]?.pattern || 'check',
+      patternInk: AREA_META[a]?.patternInk || '#aaa',
       shopCount: shops.length,
     };
   }

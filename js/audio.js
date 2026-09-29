@@ -133,18 +133,44 @@ export function createAudio() {
     win() {
       [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.25, 'triangle', 0.1, i * 0.12));
     },
+    levelUp() {
+      [392, 494, 587, 784, 988, 1175].forEach((f, i) => tone(f, 0.22, 'triangle', 0.1, i * 0.11));
+      tone(1568, 0.45, 'sine', 0.08, 0.7);
+    },
     cancel() { tone(280, 0.08, 'triangle', 0.05); },
   };
 
-  // やさしいペンタトニック循環
-  const BGM_NOTES = [262, 294, 330, 392, 440, 392, 330, 294];
+  /**
+   * 約32秒で一周する穏やかなフレーズ（500ms × 64ステップ）。
+   * 0 は休符。
+   */
+  const BGM_NOTES = [
+    // A 主題
+    262, 294, 330, 392, 440, 392, 330, 294,
+    262, 330, 392, 440, 523, 440, 392, 330,
+    // B 展開
+    294, 330, 370, 440, 494, 440, 370, 330,
+    294, 0, 330, 392, 440, 0, 392, 330,
+    // C 高音
+    392, 440, 523, 587, 523, 440, 392, 349,
+    330, 294, 262, 294, 330, 392, 330, 294,
+    // D 締め→主題へ
+    262, 0, 294, 0, 330, 392, 440, 523,
+    494, 440, 392, 349, 330, 294, 262, 0,
+  ];
+  const BGM_STEP_MS = 500;
 
   function tickBgm() {
     if (!ctx || vol.muted) return;
     const note = BGM_NOTES[bgmStep % BGM_NOTES.length];
-    tone(note, 0.35, 'sine', 0.045, 0, bgmGain);
-    tone(note * 1.5, 0.3, 'triangle', 0.02, 0.02, bgmGain);
     bgmStep++;
+    if (!note) return;
+    const soft = 0.038 + (bgmStep % 8 === 0 ? 0.012 : 0);
+    tone(note, 0.42, 'sine', soft, 0, bgmGain);
+    tone(note * 1.5, 0.34, 'triangle', soft * 0.45, 0.03, bgmGain);
+    if (bgmStep % 4 === 0) {
+      tone(note / 2, 0.55, 'sine', 0.018, 0, bgmGain);
+    }
   }
 
   function startBgm() {
@@ -152,7 +178,7 @@ export function createAudio() {
     if (bgmTimer) return;
     bgmStep = 0;
     tickBgm();
-    bgmTimer = setInterval(tickBgm, 480);
+    bgmTimer = setInterval(tickBgm, BGM_STEP_MS);
   }
 
   function stopBgm() {

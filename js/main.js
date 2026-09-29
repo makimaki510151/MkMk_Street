@@ -18,7 +18,7 @@ import {
   PLAYER_COLORS,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { GROUP_COLORS, TABLE_SIZE } from './eventTable.js';
+import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER } from './eventTable.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
@@ -39,10 +39,19 @@ const app = {
   renderer: null,
   cpuTimer: null,
   busy: false,
+  /** 出目演出中は UI / ログで結果を隠す */
+  hideDiceResult: false,
+  lastSeenLogKey: null,
+  bannerQueue: [],
+  bannerShowing: false,
   lastTurnKey: null,
   modalMode: 'center', // center | docked | hidden
   modalActive: false,
+  inspectedId: null,
+  restSkipTimer: null,
 };
+
+const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
 
 function showScreen(id) {
   $$('.screen').forEach((el) => el.classList.toggle('active', el.id === id));
@@ -299,6 +308,8 @@ function handleNetEvent({ from, data }) {
     if (data.type === 'state') {
       const prev = app.game;
       app.game = restoreState(data.state);
+      if (data.hideDice) app.hideDiceResult = true;
+      else if (data.hideDice === false) app.hideDiceResult = false;
       if (prev && data.anim?.from != null && data.anim?.to != null) {
         app.renderer?.animateToken(data.anim.pid, data.anim.from, data.anim.to, 380);
         audio.sfx.step();
@@ -313,7 +324,16 @@ function handleNetEvent({ from, data }) {
 }
 
 function playRemoteFx(data) {
-  if (data.kind === 'dice') playDiceOverlay(data.face, true);
+  if (data.kind === 'dice') {
+    app.hideDiceResult = true;
+    playDiceOverlay(data.face, true).finally(() => {
+      app.hideDiceResult = false;
+      refreshGameUI();
+    });
+  }
+  if (data.kind === 'banner') {
+    enqueueBanner(data.payload || data);
+  }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
@@ -339,6 +359,22 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'stock') {
+    // 株購入UI＋盤面エリアハイライトのデモ
+    p.cash = Math.max(p.cash, 5000);
+    p.pos = app.game.startId;
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'stock',
+      playerId: p.id,
+      bankVisit: true,
+      atBank: true,
+      maxBuys: 1,
+    };
+    app.game.move = null;
+    refreshGameUI();
   }
 }
 
@@ -346,15 +382,25 @@ function enterGame() {
   showScreen('screen-game');
   audio.resume();
   audio.startBgm();
+  app.hideDiceResult = false;
+  app.lastSeenLogKey = null;
+  app.bannerQueue = [];
+  app.bannerShowing = false;
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
   window.addEventListener('resize', () => app.renderer?.resize());
   app.renderer.startLoop(() => app.game);
   canvas.onclick = (e) => {
-    if (!app.game || app.busy) return;
+    if (!app.game) return;
     const hit = app.renderer.hitTest(app.game, e.clientX, e.clientY);
     if (!hit) return;
+
+    // マス情報は演出中でも常に更新
+    app.inspectedId = hit.id;
+    updateInspectPanel();
+
+    if (app.busy) return;
 
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
@@ -362,18 +408,58 @@ function enterGame() {
         : app.game.pending.playerId === app.localSeat;
       if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
         sendAction({ type: 'choice', choice: { nextId: hit.id } });
-        return;
       }
     }
-
-    $('#inspect').textContent = shopTooltip(app.game, hit);
   };
   bindGameControls();
   bindModalTools();
   app.lastTurnKey = null;
+  app.inspectedId = app.game.startId;
+  updateInspectPanel();
   refreshGameUI();
   maybeYourTurnChime();
+  maybeAutoSkipRest();
   scheduleCpu();
+}
+
+function updateInspectPanel() {
+  const el = $('#inspect');
+  if (!el || !app.game) return;
+  const sq = app.inspectedId != null ? getNode(app.game, app.inspectedId) : null;
+  if (!sq) {
+    el.innerHTML = '<strong>マス情報</strong><span class="inspect-sub">マスをクリックして詳細を固定表示</span>';
+    return;
+  }
+  el.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(app.game, sq))}</span>`;
+}
+
+/** 休み中は自動スキップ（人間がNPCのダイスを振らされるのを防ぐ） */
+function maybeAutoSkipRest() {
+  clearTimeout(app.restSkipTimer);
+  if (!app.game || app.busy || app.mode === 'guest') return;
+  if (app.game.phase !== 'await_roll') return;
+  const cur = currentPlayer(app.game);
+  if (!cur?.resting || cur.bankrupt) return;
+
+  // 人間プレイヤーが休みのときも自動で進める
+  app.restSkipTimer = setTimeout(async () => {
+    if (!app.game || app.busy || app.game.phase !== 'await_roll') return;
+    const p = currentPlayer(app.game);
+    if (!p?.resting) return;
+    enqueueBanner({
+      kicker: `${p.name} は休憩中`,
+      title: 'ターンスキップ',
+      detail: '休憩のためサイコロは振りません',
+      kind: 'system',
+      color: p.color,
+      mine: app.mode === 'local' ? !p.isCPU : p.id === app.localSeat,
+    });
+    const result = rollDice(app.game);
+    if (result.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
+    scheduleCpu();
+  }, 700);
 }
 
 function isMyTurn() {
@@ -461,12 +547,15 @@ async function applyLocalAction(action) {
     const result = rollDice(app.game);
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
-    syncState();
-    refreshGameUI();
     if (result.skipped) {
+      syncState();
+      refreshGameUI();
       scheduleCpu();
       return;
     }
+    // 出目は演出後に同期（ネタバレ防止）
+    app.hideDiceResult = true;
+    refreshGameUI();
     await runDiceAndMove(result.dice);
     return;
   }
@@ -486,8 +575,17 @@ async function applyLocalAction(action) {
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
+
+    // 銀行通過後：進行方向選択 or 移動再開
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -521,9 +619,29 @@ async function resolveForkChoice(nextId) {
 
 async function runDiceAndMove(face) {
   app.busy = true;
+  app.hideDiceResult = true;
   $('#btn-roll').disabled = true;
   broadcastFx({ kind: 'dice', face });
   await playDiceOverlay(face);
+  app.hideDiceResult = false;
+  const roller = currentPlayer(app.game);
+  if (roller && app.game) {
+    app.game.logs.unshift({ text: `${roller.name} のサイコロ → ${face}`, kind: 'dice', t: Date.now() });
+    if (app.game.logs.length > 80) app.game.logs.length = 80;
+  }
+  syncState({ hideDice: false });
+  refreshGameUI();
+  if (roller) {
+    enqueueBanner({
+      kicker: `${roller.name} のサイコロ`,
+      title: `${face}`,
+      detail: `${face} マス進みます`,
+      kind: 'dice',
+      color: roller.color,
+    });
+    // バナー表示中も進行が止まらないよう、短く待ってから移動
+    await wait(480);
+  }
   await continueAdvancing();
   app.busy = false;
   refreshGameUI();
@@ -553,6 +671,13 @@ async function continueAdvancing() {
       await wait(420);
     }
 
+    // 銀行通過割込み（昇進→株→方向）
+    if (result.bankInterrupt || app.game.phase === 'await_choice') {
+      syncState();
+      refreshGameUI();
+      return;
+    }
+
     if (result.done) {
       onLandingSfx();
       syncState();
@@ -576,9 +701,13 @@ async function playDiceOverlay(face, remote = false) {
   const overlay = $('#dice-overlay');
   const faceEl = $('#dice-overlay-face');
   const label = $('#dice-overlay-label');
+  app.hideDiceResult = true;
   overlay.hidden = false;
   overlay.classList.remove('landed');
   label.textContent = 'サイコロ…';
+  faceEl.textContent = '?';
+  $('#dice-face').textContent = '?';
+  $('#dice-face').classList.remove('pop');
   if (!remote) audio.sfx.dice();
 
   const start = performance.now();
@@ -589,6 +718,7 @@ async function playDiceOverlay(face, remote = false) {
   faceEl.textContent = String(face);
   overlay.classList.add('landed');
   label.textContent = `${face} が出た！`;
+  app.hideDiceResult = false;
   $('#dice-face').textContent = String(face);
   $('#dice-face').classList.add('pop');
   if (!remote) audio.sfx.diceLand(face);
@@ -612,10 +742,15 @@ async function handleHostAction(from, data) {
     }
     const result = rollDice(app.game);
     if (result.state) app.game = restoreState(result.state);
-    syncState();
+    if (result.skipped) {
+      syncState();
+      refreshGameUI();
+      scheduleCpu();
+      return;
+    }
+    app.hideDiceResult = true;
     refreshGameUI();
-    if (!result.skipped) await runDiceAndMove(result.dice);
-    else scheduleCpu();
+    await runDiceAndMove(result.dice);
     return;
   }
 
@@ -637,6 +772,12 @@ async function handleHostAction(from, data) {
     if (result.state) app.game = restoreState(result.state);
     syncState();
     refreshGameUI();
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -673,10 +814,15 @@ function scheduleCpu() {
     if (phase === 'await_roll') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
-      syncState();
-      refreshGameUI();
-      if (result?.dice) await runDiceAndMove(result.dice);
-      else scheduleCpu();
+      if (result?.dice) {
+        app.hideDiceResult = true;
+        refreshGameUI();
+        await runDiceAndMove(result.dice);
+      } else {
+        syncState();
+        refreshGameUI();
+        scheduleCpu();
+      }
       return;
     }
 
@@ -706,6 +852,12 @@ function scheduleCpu() {
       if (result?.state) app.game = restoreState(result.state);
       syncState();
       refreshGameUI();
+      if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+        app.busy = true;
+        await continueAdvancing();
+        app.busy = false;
+        refreshGameUI();
+      }
       scheduleCpu();
     }
   }, 550 + Math.random() * 350);
@@ -759,10 +911,20 @@ function refreshGameUI() {
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
 
-  $('#log').innerHTML = g.logs.slice(0, 24).map((l) => `<div class="log-line ${l.kind || ''}">${escapeHtml(l.text)}</div>`).join('');
+  const logLines = g.logs.slice(0, 24).map((l) => {
+    let text = l.text;
+    if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→\s*\d/.test(text)) {
+      text = text.replace(/サイコロ\s*→\s*\d+/, 'サイコロ → ？');
+    }
+    return `<div class="log-line ${l.kind || ''}">${escapeHtml(text)}</div>`;
+  });
+  $('#log').innerHTML = logLines.join('');
 
   const diceEl = $('#dice-face');
-  if (g.dice) {
+  if (app.hideDiceResult) {
+    diceEl.textContent = '?';
+    diceEl.classList.remove('pop');
+  } else if (g.dice) {
     diceEl.textContent = String(g.dice);
     diceEl.classList.add('pop');
   } else if (!app.busy) {
@@ -770,14 +932,18 @@ function refreshGameUI() {
     diceEl.classList.remove('pop');
   }
 
-  const canRoll = !app.busy && g.phase === 'await_roll' && (app.mode === 'local' ? !cur?.isCPU : isMyTurn());
+  const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
+  const canRoll = !app.busy && g.phase === 'await_roll' && humanTurn && !cur?.resting;
   $('#btn-roll').disabled = !canRoll;
   $('#btn-roll').textContent = app.busy
     ? '演出中…'
-    : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…'));
+    : (cur?.resting && humanTurn
+      ? '休憩中（自動スキップ）…'
+      : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
+    const actor = g.players[g.pending.playerId];
     if (mine) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
@@ -787,17 +953,27 @@ function refreshGameUI() {
         showChoiceModal(g);
       }
       $('#wait-hint').hidden = true;
+      setStatusBanner(false);
     } else {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
-      $('#wait-hint').textContent = `${g.players[g.pending.playerId]?.name || ''} が選択中…`;
+      const pendingLabel = pendingStatusLabel(g.pending);
+      $('#wait-hint').textContent = `${actor?.name || ''} が${pendingLabel}…`;
+      setStatusBanner(true, `${actor?.name || '相手'} が${pendingLabel}`, actor?.color);
     }
   } else if (!app.busy) {
     app.modalActive = false;
     hideModal();
     $('#wait-hint').hidden = true;
     $('#btn-modal-restore').hidden = true;
+    if (g.phase === 'moving' || app.hideDiceResult) {
+      setStatusBanner(true, `${cur?.name || ''} が移動中`, cur?.color);
+    } else {
+      setStatusBanner(false);
+    }
+  } else if (app.hideDiceResult) {
+    setStatusBanner(true, `${cur?.name || ''} がサイコロ中`, cur?.color);
   }
 
   if (g.phase === 'gameover') {
@@ -805,7 +981,201 @@ function refreshGameUI() {
   }
 
   renderStockPanel(g);
+  updateInspectPanel();
   maybeYourTurnChime();
+  announceNewLogs(g);
+  maybeAutoSkipRest();
+}
+
+function pendingStatusLabel(pend) {
+  switch (pend?.type) {
+    case 'fork': return '分岐を選択中';
+    case 'buy_shop': return 'お店を購入するか選択中';
+    case 'invest': return '増資を検討中';
+    case 'five_buy': return '5倍買いを検討中';
+    case 'stock': return (pend.bankVisit || pend.bankPass)
+      ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
+      : '株を取引中';
+    case 'scratch': return 'イベント表をスクラッチ中';
+    case 'level_up': return '昇進を祝っている';
+    default: return '選択中';
+  }
+}
+
+function setStatusBanner(show, text = '', color = '') {
+  const el = $('#status-banner');
+  const tx = $('#status-banner-text');
+  if (!el || !tx) return;
+  if (!show) {
+    el.hidden = true;
+    return;
+  }
+  tx.textContent = text;
+  el.style.setProperty('--sb', color || '#ffe08a');
+  el.hidden = false;
+}
+
+function logKey(l) {
+  return `${l.t || ''}|${l.kind || ''}|${l.text}`;
+}
+
+function announceNewLogs(g) {
+  if (!g?.logs?.length) return;
+  // 初回は既存ログを既読扱いにしてスパムしない
+  if (app.lastSeenLogKey == null) {
+    app.lastSeenLogKey = logKey(g.logs[0]);
+    return;
+  }
+  const fresh = [];
+  for (const l of g.logs) {
+    if (logKey(l) === app.lastSeenLogKey) break;
+    fresh.push(l);
+  }
+  if (!fresh.length) return;
+  app.lastSeenLogKey = logKey(g.logs[0]);
+
+  // 新しいものから時系列順へ
+  for (const l of fresh.reverse()) {
+    if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→/.test(l.text)) continue;
+    const banner = bannerFromLog(g, l);
+    if (banner) enqueueBanner(banner);
+  }
+}
+
+function bannerFromLog(g, l) {
+  if (!l) return null;
+  // 出目確定ログは runDiceAndMove 側のバナーで表示済み
+  if (l.kind === 'dice' && (/サイコロ\s*→/.test(l.text) || /サイコロを振った/.test(l.text))) return null;
+  if (l.kind === 'dice' && !/もう一回|方面へ/.test(l.text)) return null;
+
+  const kind = l.kind || 'info';
+  if (!BANNER_KINDS.has(kind) && !(kind === 'dice' && /もう一回/.test(l.text))) return null;
+
+  const player = g.players.find((p) => l.text.includes(p.name));
+  const mine = player && (
+    app.mode === 'local' ? !player.isCPU : player.id === app.localSeat
+  );
+
+  let title = l.text;
+  let detail = '';
+  let kicker = mine ? 'あなたにイベント' : (player ? `${player.name} にイベント` : '出来事');
+
+  if (kind === 'mark') {
+    kicker = mine ? 'マーク入手！' : `${player?.name || ''} がマーク入手`;
+    const m = l.text.match(/[♠♥♦♣]/);
+    title = m ? m[0] : 'マーク';
+    detail = l.text;
+  } else if (kind === 'toll') {
+    kicker = '買い物料';
+    title = '支払い発生';
+    detail = l.text;
+  } else if (kind === 'level') {
+    kicker = mine ? '昇進！' : `${player?.name || ''} が昇進`;
+    title = 'レベルアップ';
+    detail = l.text;
+  } else if (kind === 'shop') {
+    kicker = mine ? 'お店' : `${player?.name || ''} のお店`;
+    title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
+    detail = l.text;
+  } else if (kind === 'event') {
+    if (/店休/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = 'お店が休み';
+      detail = l.text;
+    } else if (/スクラッチ\s*→/.test(l.text)) {
+      kicker = mine ? 'スクラッチ' : `${player?.name || ''} のスクラッチ`;
+      title = 'スクラッチ結果';
+      detail = l.text.replace(/^.*?スクラッチ\s*→\s*/, '');
+    } else if (/イベント表をスクラッチ/.test(l.text)) {
+      kicker = mine ? 'マーク停止' : `${player?.name || ''} がマーク停止`;
+      title = 'イベント表オープン';
+      detail = l.text;
+    } else if (/チャンス|イベント！/.test(l.text)) {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
+      title = l.text.replace(/（.*）/, '').replace(/^(チャンス！|イベント！)\s*/, '') || 'イベント';
+      detail = (l.text.match(/（(.+)）/) || [])[1] || l.text;
+    } else if (/ラッキー/.test(l.text)) {
+      kicker = mine ? 'ラッキー！' : `${player?.name || ''} がラッキー`;
+      title = 'ラッキーステータス';
+      detail = l.text;
+    } else {
+      kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
+      title = 'イベント';
+      detail = l.text;
+    }
+  } else if (kind === 'system') {
+    if (/休み|店休|休憩|営業再開|破産|売却|休み中/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = /店休|休み中/.test(l.text) ? 'お店が休み' : (/休憩|次ターン休み|復帰/.test(l.text) ? '休憩' : 'お知らせ');
+      detail = l.text;
+    } else {
+      return null;
+    }
+  } else if (kind === 'win') {
+    kicker = 'ゲーム終了';
+    title = '勝利！';
+    detail = l.text;
+  } else if (kind === 'dice' && /もう一回/.test(l.text)) {
+    kicker = mine ? 'もう一回！' : `${player?.name || ''} にもう一回`;
+    title = 'サイコロ再挑戦';
+    detail = l.text;
+  } else {
+    return null;
+  }
+
+  return {
+    kicker,
+    title,
+    detail,
+    kind,
+    color: player?.color || '#ffe08a',
+    mine: !!mine,
+  };
+}
+
+function enqueueBanner(payload) {
+  if (!payload?.title) return;
+  // 各クライアントがログ差分から表示（二重配信しない）
+  app.bannerQueue.push(payload);
+  pumpBannerQueue();
+}
+
+async function pumpBannerQueue() {
+  if (app.bannerShowing) return;
+  const next = app.bannerQueue.shift();
+  if (!next) return;
+  app.bannerShowing = true;
+  await showEventBanner(next);
+  app.bannerShowing = false;
+  if (app.bannerQueue.length) pumpBannerQueue();
+}
+
+function showEventBanner({ kicker, title, detail, kind, color, mine }) {
+  const el = $('#event-banner');
+  if (!el) return Promise.resolve();
+  $('#eb-kicker').textContent = kicker || '';
+  $('#eb-title').textContent = title || '';
+  $('#eb-detail').textContent = detail || '';
+  el.dataset.kind = kind || 'info';
+  el.dataset.mine = mine ? '1' : '0';
+  el.style.setProperty('--eb', color || '#ffe08a');
+  el.hidden = false;
+  el.classList.remove('out');
+  el.classList.add('in');
+
+  // SE は着地側と二重にならないよう、バナー固有のものだけ
+  if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
+  else if (kind === 'dice') { /* 出目SEはオーバーレイ側 */ }
+
+  const hold = kind === 'win' ? 2200 : (mine ? 2000 : 1700);
+  return wait(hold).then(() => {
+    el.classList.remove('in');
+    el.classList.add('out');
+    return wait(280).then(() => {
+      el.hidden = true;
+      el.classList.remove('out');
+    });
+  });
 }
 
 function phaseLabel(g) {
@@ -830,7 +1200,9 @@ function showChoiceModal(g) {
   applyModalMode();
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
+  $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
+  $('#modal-card').classList.remove('stock-modal');
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
@@ -905,35 +1277,151 @@ function showChoiceModal(g) {
     return;
   }
 
+  if (pend.type === 'level_up') {
+    const p = g.players[pend.playerId];
+    title.textContent = '昇進おめでとう！';
+    $('#btn-skip-choice').hidden = true;
+    body.innerHTML = `
+      <div class="levelup-hero" style="--pc:${p?.color || '#ffe08a'}">
+        <div class="levelup-badge">LEVEL UP</div>
+        <p class="modal-lead"><strong>${escapeHtml(p?.name || '')}</strong></p>
+        <p class="levelup-levels">Lv.${pend.from} → <strong>Lv.${pend.to}</strong></p>
+        <p class="levelup-bonus">昇進賞金 <strong>+${Number(pend.bonus || 0).toLocaleString()}G</strong></p>
+        <p class="hint">マークを揃えて銀行へ到達！</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn primary large" id="m-levelup">お祝いする</button>
+      </div>`;
+    audio.sfx.levelUp?.() || audio.sfx.win();
+    enqueueBanner({
+      kicker: '昇進！',
+      title: `Lv.${pend.to}`,
+      detail: `${p?.name || ''} +${pend.bonus}G`,
+      kind: 'level',
+      color: p?.color,
+      mine: true,
+    });
+    $('#m-levelup').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'celebrate' } });
+    };
+    return;
+  }
+
   if (pend.type === 'stock') {
-    title.textContent = pend.atBank ? '銀行 — 株取引' : '証券マス — 株取引';
+    const bankVisit = !!pend.bankVisit || !!pend.bankPass || !!pend.atBank;
+    const p = currentPlayer(g);
+    title.textContent = bankVisit
+      ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
+      : '証券マス — 株取引';
+    $('#modal-card').classList.add('stock-modal');
+    // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
+    app.renderer?.setStockHighlight(null, true);
+    app.modalMode = app.modalMode === 'center' ? 'docked' : app.modalMode;
+    applyModalMode();
+
+    const bindAreaHighlight = (root) => {
+      root.querySelectorAll('[data-area]').forEach((el) => {
+        const area = Number(el.dataset.area);
+        el.addEventListener('pointerenter', () => app.renderer?.setStockHighlight(area, true));
+        el.addEventListener('pointerleave', () => {
+          const sel = root.querySelector('.stock-card.selected, .stock-card.broker.focus');
+          app.renderer?.setStockHighlight(sel ? Number(sel.dataset.area) : null, true);
+        });
+      });
+    };
+
+    if (bankVisit) {
+      const cards = Object.keys(g.areas).map((a) => {
+        const area = Number(a);
+        const meta = g.areas[area];
+        const price = meta.stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const have = p?.stocks[area] || 0;
+        return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max="${max}" ${max < 1 ? 'disabled' : ''}>
+          <span class="sc-swatch" aria-hidden="true"></span>
+          <span class="sc-name">A${area} ${meta.name}</span>
+          <span class="sc-price">${price}G</span>
+          <span class="sc-max">${max < 1 ? '資金不足' : `最大 ${max}枚`}</span>
+          <span class="sc-have">持株 ${have}</span>
+        </button>`;
+      }).join('');
+      body.innerHTML = `
+        <p class="hint">カードに触れると盤面の同じエリア店が光ります。1種類だけ持ち金の限り購入（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
+        <div class="stock-grid">${cards}</div>
+        <div id="stock-buy-panel" class="stock-buy-panel" hidden>
+          <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
+          <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
+        </div>`;
+      $('#btn-end-choice').hidden = true;
+      $('#btn-skip-choice').hidden = false;
+      $('#btn-skip-choice').textContent = pend.resumeMove ? '買わずに進む方向を選ぶ' : '買わずに終了';
+
+      let selected = null;
+      bindAreaHighlight(body);
+      body.querySelectorAll('.stock-card').forEach((btn) => {
+        btn.onclick = () => {
+          body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          selected = Number(btn.dataset.area);
+          app.renderer?.setStockHighlight(selected, true);
+          const max = Number(btn.dataset.max) || 1;
+          const panel = $('#stock-buy-panel');
+          const input = $('#m-stock-count');
+          panel.hidden = false;
+          input.max = String(max);
+          input.value = String(max);
+        };
+      });
+      $('#m-stock-confirm').onclick = () => {
+        if (selected == null) return;
+        const max = Number(body.querySelector(`.stock-card[data-area="${selected}"]`)?.dataset.max) || 1;
+        const count = Math.max(1, Math.min(max, Number($('#m-stock-count').value) || 1));
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'buy', area: selected, count } });
+      };
+      return;
+    }
+
+    // 証券マス：売買＋エリアハイライト
     const rows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
-      const have = currentPlayer(g).stocks[area] || 0;
-      return `<div class="stock-row" style="--ac:${meta.color}">
-        <span class="sr-name">A${area} ${meta.name}</span>
-        <span class="sr-price">${meta.stockPrice}G</span>
-        <span class="sr-have">持株 ${have}</span>
-        <button class="btn tiny" data-buy="${area}">買う</button>
-        <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
+      const have = p?.stocks[area] || 0;
+      return `<div class="stock-card broker" style="--ac:${meta.color}" data-area="${area}">
+        <span class="sc-swatch" aria-hidden="true"></span>
+        <span class="sc-name">A${area} ${meta.name}</span>
+        <span class="sc-price">${meta.stockPrice}G / 持株 ${have}</span>
+        <div class="sc-actions">
+          <button class="btn tiny" data-buy="${area}">買う</button>
+          <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
+        </div>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="stock-list">${rows}</div>
-      <p class="hint">枚数はダイアログで指定。盤面確認は「隠す／端へ」</p>`;
+    body.innerHTML = `<p class="hint">カードに触れると盤面のエリア店が光ります</p>
+      <div class="stock-grid">${rows}</div>`;
     $('#btn-end-choice').hidden = false;
     $('#btn-skip-choice').hidden = true;
+    bindAreaHighlight(body);
 
+    body.querySelectorAll('.stock-card.broker').forEach((card) => {
+      card.addEventListener('pointerenter', () => card.classList.add('focus'));
+      card.addEventListener('pointerleave', () => card.classList.remove('focus'));
+    });
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.buy);
-        const count = Number(prompt('何枚買いますか？（1〜99）', '10')) || 0;
+        app.renderer?.setStockHighlight(area, true);
+        const price = g.areas[area].stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const count = Number(prompt(`A${area} を何枚？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
       };
     });
     body.querySelectorAll('[data-sell]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.sell);
+        app.renderer?.setStockHighlight(area, true);
         const count = Number(prompt('何枚売りますか？', '10')) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'sell', area, count } });
       };
@@ -944,22 +1432,28 @@ function showChoiceModal(g) {
   if (pend.type === 'scratch') {
     const p = g.players[pend.playerId];
     const table = p?.eventTable;
-    title.textContent = 'イベント表スクラッチ';
+    title.textContent = 'イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     if (!table) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
     }
+    const legend = GROUP_COLORS.map((c, i) =>
+      `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
+    ).join('');
     const cells = table.cells.map((c) => {
-      const color = GROUP_COLORS[c.group] || '#888';
+      const color = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
-        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">${c.label}</button>`;
+        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">
+          <small>#${c.eventId}</small><span>${c.shortLabel || c.label}</span>
+        </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="マス${c.id + 1}">?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="イベントマス">?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">未公開のマスを1つ選んでスクラッチ。縦横が揃うとボーナス！</p>
+      <p class="hint">1マススクラッチ。縦・横・斜めに同じ色が3つ以上そろうと、その色のプレイヤーに ${MATCH_BONUS_PER}G×数</p>
+      <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
     `;
@@ -970,7 +1464,7 @@ function showChoiceModal(g) {
         const cell = table.cells[cellId];
         btn.classList.remove('sealed');
         btn.classList.add('reveal');
-        btn.textContent = cell?.label || '!';
+        btn.innerHTML = `<small>#${cell?.eventId ?? ''}</small><span>${cell?.shortLabel || cell?.label || '!'}</span>`;
         const resultEl = $('#scratch-result');
         if (resultEl) {
           resultEl.hidden = false;
@@ -991,6 +1485,7 @@ function hideModal() {
   app.modalActive = false;
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
+  app.renderer?.clearStockHighlight();
 }
 
 function showWinner(g) {

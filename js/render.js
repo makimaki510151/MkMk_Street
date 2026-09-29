@@ -10,6 +10,7 @@ const TYPE_ICON = {
   rest: '休',
   holiday: '店休',
   event: 'EV',
+  scratch: '削',
   chance: '？',
   stockbroker: '株',
   lucky: '★',
@@ -27,6 +28,9 @@ export function createRenderer(canvas) {
   };
   let raf = 0;
   let layout = { size: 40, ox: 0, oy: 0 };
+  /** 株購入中に盤面で強調するエリア番号（null=強調なし / 'all'=全店にA番号） */
+  let stockHighlightArea = null;
+  let stockHighlightMode = false;
 
   function resize() {
     const parent = canvas.parentElement;
@@ -151,12 +155,13 @@ export function createRenderer(canvas) {
       let stroke = 'rgba(255,255,255,0.15)';
       const owner = n.type === 'shop' && n.owner >= 0 ? g.players[n.owner] : null;
       if (n.type === 'shop') {
-        fill = AREA_META[n.area]?.color || '#666';
+        fill = AREA_META[n.area]?.color || '#51607a';
         if (owner) stroke = owner.color || '#fff';
       } else if (n.type === 'bank') fill = '#d4a017';
       else if (n.type === 'mark') fill = '#3a2f55';
       else if (n.type === 'chance') fill = '#c45c26';
       else if (n.type === 'event') fill = '#6b3fa0';
+      else if (n.type === 'scratch') fill = '#1f6f8b';
       else if (n.type === 'holiday') fill = '#a65d2e';
       else if (n.type === 'stockbroker') fill = '#2f6f6a';
       else if (n.type === 'rest') fill = '#4a6a7a';
@@ -165,14 +170,59 @@ export function createRenderer(canvas) {
       else if (n.type === 'junction') fill = '#5a4a3a';
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
+      const stockMode = stockHighlightMode || (g.phase === 'await_choice' && g.pending?.type === 'stock');
+      const areaHot = stockMode && n.type === 'shop' && (
+        stockHighlightArea == null
+          ? true
+          : Number(stockHighlightArea) === Number(n.area)
+      );
+      const areaDim = stockMode && n.type === 'shop' && stockHighlightArea != null
+        && Number(stockHighlightArea) !== Number(n.area);
 
       ctx.fillStyle = fill;
       ctx.fill();
-      ctx.strokeStyle = forkOpt ? '#ffe08a' : stroke;
-      ctx.lineWidth = forkOpt ? 4 : (owner ? 3.5 : 1.5);
+
+      if (n.type === 'shop') {
+        const meta = AREA_META[n.area];
+        fillShopPattern(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r, meta);
+      }
+
+      // 株購入中：対象外エリアを暗く
+      if (areaDim) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 12, 16, 0.55)';
+        roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 株購入中：エリア色の縁取り（全体表示 or 選択/ホバー中を強調）
+      if (areaHot && n.type === 'shop') {
+        ctx.save();
+        const selected = stockHighlightArea != null;
+        const glow = selected
+          ? 0.4 + Math.sin(anim.pulse) * 0.25
+          : 0.22 + Math.sin(anim.pulse) * 0.08;
+        ctx.globalAlpha = glow;
+        ctx.strokeStyle = AREA_META[n.area]?.patternInk || AREA_META[n.area]?.color || '#ffe08a';
+        ctx.lineWidth = selected ? 4.5 : 2.5;
+        roundRect(ctx, x + pad - 1, y + pad - 1, size - pad * 2 + 2, size - pad * 2 + 2, r + 1);
+        ctx.stroke();
+        if (selected) {
+          ctx.globalAlpha = 0.24 + Math.sin(anim.pulse) * 0.12;
+          ctx.fillStyle = AREA_META[n.area]?.color || '#ffe08a';
+          roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      ctx.strokeStyle = forkOpt ? '#ffe08a' : (areaHot && stockHighlightArea != null ? '#fffef5' : stroke);
+      ctx.lineWidth = forkOpt ? 4 : (areaHot && stockHighlightArea != null ? 3.5 : (owner ? 3.5 : 1.5));
+      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
       ctx.stroke();
 
-      // 所有者の色帯（上辺）
+      // 所有者の色帯（上辺）— プレイヤー単色。グループ模様と分離
       if (owner) {
         ctx.fillStyle = owner.color;
         roundRect(ctx, x + pad, y + pad, size - pad * 2, Math.max(4, size * 0.14), r);
@@ -218,15 +268,25 @@ export function createRenderer(canvas) {
       ctx.textBaseline = 'middle';
 
       if (n.type === 'shop') {
-        ctx.font = `700 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
-        ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.02);
-        ctx.font = `600 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
-        ctx.fillText(`${n.price}G`, x + size / 2, y + size / 2 + size * 0.24);
+        if (stockMode) {
+          // 株購入中はエリア番号を大きく表示
+          ctx.font = `900 ${Math.max(11, size * 0.28)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.35)' : '#ffe08a';
+          ctx.fillText(`A${n.area}`, x + size / 2, y + size / 2 - size * 0.12);
+          ctx.font = `700 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.95)';
+          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 + size * 0.16);
+        } else {
+          ctx.font = `700 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.02);
+          ctx.font = `600 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.fillText(`${n.price}G`, x + size / 2, y + size / 2 + size * 0.24);
+        }
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
         ctx.fillText(SUIT_LABELS[n.mark], x + size / 2, y + size / 2);
-      } else if (n.type === 'holiday' || n.type === 'event') {
+      } else if (n.type === 'holiday' || n.type === 'event' || n.type === 'scratch') {
         ctx.font = `800 ${Math.max(9, size * 0.22)}px "Zen Maru Gothic", sans-serif`;
         ctx.fillText(TYPE_ICON[n.type] || n.label.slice(0, 2), x + size / 2, y + size / 2);
       } else {
@@ -312,7 +372,85 @@ export function createRenderer(canvas) {
     return null;
   }
 
-  return { resize, draw, startLoop, stop, hitTest, animateToken };
+  /** @param {number|null} area 強調するエリア。null で解除。mode=true で株UI中のA番号表示 */
+  function setStockHighlight(area, mode = true) {
+    stockHighlightMode = !!mode;
+    stockHighlightArea = area == null ? null : Number(area);
+  }
+
+  function clearStockHighlight() {
+    stockHighlightMode = false;
+    stockHighlightArea = null;
+  }
+
+  return { resize, draw, startLoop, stop, hitTest, animateToken, setStockHighlight, clearStockHighlight };
+}
+
+function fillShopPattern(ctx, x, y, w, h, r, meta) {
+  if (!meta) return;
+  ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  const ink = meta.patternInk || 'rgba(255,255,255,0.35)';
+  const pat = meta.pattern || 'check';
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
+  ctx.globalAlpha = 0.55;
+  if (pat === 'check') {
+    const s = Math.max(5, w / 5);
+    for (let iy = 0; iy < h; iy += s) {
+      for (let ix = 0; ix < w; ix += s) {
+        if (((ix / s) + (iy / s)) % 2 < 1) ctx.fillRect(x + ix, y + iy, s, s);
+      }
+    }
+  } else if (pat === 'stripe') {
+    ctx.lineWidth = 2;
+    for (let i = -h; i < w + h; i += 6) {
+      ctx.beginPath();
+      ctx.moveTo(x + i, y);
+      ctx.lineTo(x + i + h, y + h);
+      ctx.stroke();
+    }
+  } else if (pat === 'dots') {
+    const s = Math.max(6, w / 4);
+    for (let iy = s / 2; iy < h; iy += s) {
+      for (let ix = s / 2; ix < w; ix += s) {
+        ctx.beginPath();
+        ctx.arc(x + ix, y + iy, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  } else if (pat === 'grid') {
+    ctx.lineWidth = 1.2;
+    const s = Math.max(5, w / 4);
+    for (let ix = s; ix < w; ix += s) {
+      ctx.beginPath();
+      ctx.moveTo(x + ix, y);
+      ctx.lineTo(x + ix, y + h);
+      ctx.stroke();
+    }
+    for (let iy = s; iy < h; iy += s) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + iy);
+      ctx.lineTo(x + w, y + iy);
+      ctx.stroke();
+    }
+  } else if (pat === 'diamond') {
+    ctx.lineWidth = 1.2;
+    const s = Math.max(6, w / 3.5);
+    for (let iy = 0; iy < h + s; iy += s) {
+      for (let ix = 0; ix < w + s; ix += s) {
+        ctx.beginPath();
+        ctx.moveTo(x + ix, y + iy - s / 2);
+        ctx.lineTo(x + ix + s / 2, y + iy);
+        ctx.lineTo(x + ix, y + iy + s / 2);
+        ctx.lineTo(x + ix - s / 2, y + iy);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -337,6 +475,7 @@ export function shopTooltip(g, sq) {
   if (sq.type === 'mark') return `マーク ${sq.label}（通過で入手／停止でイベント表スクラッチ）`;
   if (sq.type === 'holiday') return `${sq.label} — 止まるとお店が1ターン休み`;
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
+  if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
   if (sq.type === 'rest') return `${sq.label} — 止まると次ターン休み`;
   if (sq.type !== 'shop') return `${sq.label}`;
   const owner = sq.owner >= 0 ? g.players[sq.owner]?.name : '空き';

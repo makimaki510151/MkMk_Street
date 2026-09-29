@@ -31,8 +31,8 @@
         <li>自分の番に<strong>サイコロ</strong>を振り、マスを進みます。マップは分岐路で、交差点では<strong>進む方向を選択</strong>します。</li>
         <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
         <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
-        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まると</strong>10×10イベント表を1マススクラッチできます。</li>
-        <li>マークを集めて銀行に戻ると<strong>昇進ボーナス</strong>。銀行・証券で<strong>株</strong>を売買し、目標資産で銀行に止まると勝利。</li>
+        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が3つ以上そろえるとその色のプレイヤーがボーナス。</li>
+        <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。銀行に止まっても株を1種類買えます。目標資産で銀行に止まると勝利。</li>
         <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。</li>
       </ol>
       <div class="row-actions">
@@ -107,6 +107,14 @@
           <div id="dice-overlay-face">?</div>
           <div id="dice-overlay-label">サイコロ…</div>
         </div>
+      </div>
+      <div id="event-banner" hidden>
+        <div class="eb-kicker" id="eb-kicker"></div>
+        <div class="eb-title" id="eb-title"></div>
+        <div class="eb-detail" id="eb-detail"></div>
+      </div>
+      <div id="status-banner" hidden>
+        <span id="status-banner-text"></span>
       </div>
     </div>
     <aside class="side">

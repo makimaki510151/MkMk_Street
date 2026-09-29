@@ -225,6 +225,89 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
   });
 
+  it('keeps rest squares minimal on the board', () => {
+    const board = buildBoard();
+    const rests = board.nodes.filter((n) => n.type === 'rest');
+    assert.ok(rests.length <= 1, `expected at most 1 rest, got ${rests.length}`);
+  });
+
+  it('has one dedicated scratch hub and one event hub on mid-sides', () => {
+    const board = buildBoard();
+    const scratches = board.nodes.filter((n) => n.type === 'scratch');
+    const events = board.nodes.filter((n) => n.type === 'event');
+    assert.equal(scratches.length, 1);
+    assert.ok(events.length >= 1);
+    assert.equal(scratches[0].col, 0);
+    assert.equal(scratches[0].row, 5);
+  });
+
+  it('landing on bank opens level-up then one-type stock buy', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 44,
+    });
+    const arm = getForwardNexts(g, g.startId, null)[0];
+    g.players[0].marks = [true, true, true, true];
+    g.players[0].pos = g.startId;
+    g.players[0].prevPos = arm;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: true, startPos: arm };
+    const beforeLv = g.players[0].level;
+    advanceMove(g);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'level_up');
+    assert.equal(g.players[0].level, beforeLv + 1);
+    applyChoice(g, { action: 'celebrate' });
+    assert.equal(g.pending?.type, 'stock');
+    assert.equal(g.pending.maxBuys, 1);
+    assert.equal(g.pending.bankVisit, true);
+  });
+
+  it('passing bank mid-move interrupts for stock then direction', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 45,
+    });
+    const arm = getForwardNexts(g, g.startId, null)[0];
+    g.players[0].pos = arm;
+    g.players[0].prevPos = null;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 2, path: [], passedBank: false, startPos: arm };
+    // 次が銀行になるよう prev をアーム外に
+    const towardBank = getForwardNexts(g, arm, null).filter((id) => id === g.startId);
+    if (!towardBank.length) {
+      // アームから銀行は必ず繋がる
+      assert.ok(g.map.find((n) => n.id === arm).nexts.includes(g.startId));
+      g.players[0].prevPos = g.map.find((n) => n.id === arm).nexts.find((id) => id !== g.startId) ?? null;
+    } else {
+      g.players[0].prevPos = g.map.find((n) => n.id === arm).nexts.find((id) => id !== g.startId) ?? null;
+    }
+    const r = advanceMove(g);
+    assert.equal(g.players[0].pos, g.startId);
+    assert.equal(r.bankInterrupt, true);
+    assert.equal(g.phase, 'await_choice');
+    assert.ok(g.pending?.type === 'stock' || g.pending?.type === 'level_up');
+    if (g.pending.type === 'level_up') applyChoice(g, { action: 'celebrate' });
+    assert.equal(g.pending?.type, 'stock');
+    assert.equal(g.pending.resumeMove, true);
+    applyChoice(g, { action: 'skip' });
+    assert.ok(g.phase === 'await_fork' || g.phase === 'moving');
+    assert.ok(g.move?.stepsLeft >= 1);
+  });
+
+  it('auto-skips resting player without starting a move', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 2,
+    });
+    g.players[0].resting = true;
+    const r = rollDice(g);
+    assert.equal(r.skipped, true);
+    assert.equal(g.players[0].resting, false);
+    assert.equal(g.currentPlayerIdx, 1);
+    assert.equal(g.move, null);
+  });
+
   it('shop holiday zeroes toll for one turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
