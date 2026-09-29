@@ -7,6 +7,7 @@ import {
   getTollMulti,
   getPlayerAssets,
   rollDice,
+  advanceMove,
   applyChoice,
   chooseFork,
   getForwardNexts,
@@ -99,9 +100,11 @@ describe('MkMk Street engine', () => {
       players: [{ name: 'A' }, { name: 'B', isCPU: true }],
       seed: 99,
     });
-    // 銀行は4方向なので最初の一歩で分岐する
     const result = rollDice(g);
     assert.equal(result.ok, true);
+    assert.equal(result.needsAdvance, true);
+    const step = advanceMove(g);
+    assert.equal(step.forked, true);
     assert.equal(g.phase, 'await_fork');
     assert.equal(g.pending?.type, 'fork');
     assert.ok(g.pending.options.length >= 2);
@@ -113,12 +116,25 @@ describe('MkMk Street engine', () => {
       seed: 11,
     });
     rollDice(g);
+    advanceMove(g);
     assert.equal(g.phase, 'await_fork');
     const nextId = g.pending.options[0].id;
     const stepsBefore = g.move.stepsLeft;
     const result = chooseFork(g, nextId);
     assert.equal(result.ok, true);
-    assert.ok(g.players[0].pos === nextId || g.move === null || g.phase !== 'await_fork' || g.move.stepsLeft < stepsBefore);
+    assert.equal(g.players[0].pos, nextId);
+    assert.ok(!g.move || g.move.stepsLeft < stepsBefore);
+  });
+
+  it('continueMove reaches fork or landing', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    rollDice(g);
+    const r = continueMove(g);
+    assert.equal(r.ok, true);
+    assert.ok(r.forked || r.done || g.phase === 'await_choice' || g.phase === 'await_roll' || g.phase === 'gameover' || g.phase === 'await_fork');
   });
 
   it('filters reverse direction from forward nexts', () => {

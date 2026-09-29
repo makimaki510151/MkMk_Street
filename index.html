@@ -103,6 +103,12 @@
     <div class="board-wrap">
       <canvas id="board"></canvas>
       <div id="inspect">マスをタップして詳細を表示</div>
+      <div id="dice-overlay" hidden>
+        <div class="dice-stage">
+          <div id="dice-overlay-face">?</div>
+          <div id="dice-overlay-label">サイコロ…</div>
+        </div>
+      </div>
     </div>
     <aside class="side">
       <div id="players-panel"></div>
@@ -119,8 +125,14 @@
   </section>
 
   <div id="modal" hidden>
-    <div class="modal-card">
-      <h3 id="modal-title">選択</h3>
+    <div class="modal-card" id="modal-card">
+      <div class="modal-toolbar">
+        <h3 id="modal-title">選択</h3>
+        <div class="modal-tools">
+          <button type="button" class="btn tiny ghost" id="btn-modal-dock" title="端へ寄せる">端へ</button>
+          <button type="button" class="btn tiny ghost" id="btn-modal-hide" title="一時的に隠す">隠す</button>
+        </div>
+      </div>
       <div id="modal-body"></div>
       <div class="row-actions">
         <button class="btn" id="btn-skip-choice">やめる</button>
@@ -128,6 +140,7 @@
       </div>
     </div>
   </div>
+  <button type="button" id="btn-modal-restore" hidden>選択を再表示</button>
 
   <div id="winner" hidden>
     <div class="winner-card">
@@ -138,6 +151,13 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="vol-dock" aria-label="音量">
+    <button type="button" id="btn-mute" class="btn tiny" title="ミュート">🔊</button>
+    <label class="vol-label">全体<input type="range" id="vol-master" min="0" max="1" step="0.01" /></label>
+    <label class="vol-label">BGM<input type="range" id="vol-bgm" min="0" max="1" step="0.01" /></label>
+    <label class="vol-label">SE<input type="range" id="vol-se" min="0" max="1" step="0.01" /></label>
+  </div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

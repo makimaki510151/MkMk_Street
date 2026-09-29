@@ -5,7 +5,9 @@ import {
   serializeState,
   restoreState,
   rollDice,
+  advanceMove,
   applyChoice,
+  chooseFork,
   preTurnSell,
   cpuAct,
   currentPlayer,
@@ -18,12 +20,16 @@ import {
 import { AREA_META, SUIT_LABELS } from './board.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
+import { createAudio } from './audio.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const audio = createAudio();
 
 const app = {
-  mode: null, // local | host | guest
+  mode: null,
   net: null,
   game: null,
   localSeat: 0,
@@ -31,6 +37,10 @@ const app = {
   lobbyPlayers: [],
   renderer: null,
   cpuTimer: null,
+  busy: false,
+  lastTurnKey: null,
+  modalMode: 'center', // center | docked | hidden
+  modalActive: false,
 };
 
 function showScreen(id) {
@@ -52,14 +62,40 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
+function bindVolumeUI() {
+  const v = audio.getVolume();
+  $('#vol-master').value = v.master;
+  $('#vol-bgm').value = v.bgm;
+  $('#vol-se').value = v.se;
+  $('#btn-mute').textContent = v.muted ? '🔇' : '🔊';
+
+  const unlock = () => {
+    audio.resume();
+    audio.startBgm();
+  };
+  document.addEventListener('pointerdown', unlock, { once: true });
+
+  $('#vol-master').oninput = (e) => { audio.setMaster(e.target.value); unlock(); };
+  $('#vol-bgm').oninput = (e) => { audio.setBgm(e.target.value); unlock(); };
+  $('#vol-se').oninput = (e) => { audio.setSe(e.target.value); unlock(); };
+  $('#btn-mute').onclick = () => {
+    const muted = audio.toggleMute();
+    $('#btn-mute').textContent = muted ? '🔇' : '🔊';
+    unlock();
+  };
+}
+
 function bindTitle() {
   $('#btn-local').onclick = () => {
+    audio.resume();
+    audio.startBgm();
+    audio.sfx.click();
     app.mode = 'local';
     openSetupLocal();
   };
-  $('#btn-host').onclick = () => openLobby('host');
-  $('#btn-join').onclick = () => openLobby('guest');
-  $('#btn-howto').onclick = () => showScreen('screen-howto');
+  $('#btn-host').onclick = () => { audio.sfx.click(); openLobby('host'); };
+  $('#btn-join').onclick = () => { audio.sfx.click(); openLobby('guest'); };
+  $('#btn-howto').onclick = () => { audio.sfx.click(); showScreen('screen-howto'); };
   $('#btn-howto-back').onclick = () => showScreen('screen-title');
 }
 
@@ -71,6 +107,7 @@ function openSetupLocal() {
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
     if (seats.length < 2) return toast('2人以上必要です');
+    audio.sfx.click();
     startLocal(seats);
   };
   $('#btn-setup-back').onclick = () => showScreen('screen-title');
@@ -162,7 +199,6 @@ async function openLobby(role) {
       color: PLAYER_COLORS[i % PLAYER_COLORS.length],
       isCPU: !!p.isCPU,
     }));
-    // 足りない分をCPUで埋めるオプションはホストUIから
     app.game = createGame({ players, goal });
     app.localSeat = 0;
     app.net.broadcast({ type: 'game_start', state: serializeState(app.game), seatMap: players.map((p) => p.peerId) });
@@ -182,7 +218,6 @@ async function openLobby(role) {
     app.net?.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
   };
 
-  // クリップボード
   $('#btn-copy-code').onclick = async () => {
     const code = $('#lobby-code-display').textContent;
     try {
@@ -231,13 +266,10 @@ function handleNetEvent({ from, data }) {
       handleHostAction(from, data);
       return;
     }
-    if (data.type === 'peer_left') {
-      // ロビー中なら除去
-      if (!app.game) {
-        app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
-        renderLobbyPlayers();
-        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
-      }
+    if (data.type === 'peer_left' && !app.game) {
+      app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
+      renderLobbyPlayers();
+      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
     }
   }
 
@@ -259,8 +291,17 @@ function handleNetEvent({ from, data }) {
       enterGame();
       return;
     }
+    if (data.type === 'fx') {
+      playRemoteFx(data);
+      return;
+    }
     if (data.type === 'state') {
+      const prev = app.game;
       app.game = restoreState(data.state);
+      if (prev && data.anim?.from != null && data.anim?.to != null) {
+        app.renderer?.animateToken(data.anim.pid, data.anim.from, data.anim.to, 380);
+        audio.sfx.step();
+      }
       refreshGameUI();
       return;
     }
@@ -268,6 +309,11 @@ function handleNetEvent({ from, data }) {
       toast(data.reason || '操作が拒否されました');
     }
   }
+}
+
+function playRemoteFx(data) {
+  if (data.kind === 'dice') playDiceOverlay(data.face, true);
+  if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
 function startLocal(seats) {
@@ -280,17 +326,18 @@ function startLocal(seats) {
 
 function enterGame() {
   showScreen('screen-game');
+  audio.resume();
+  audio.startBgm();
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
   window.addEventListener('resize', () => app.renderer?.resize());
   app.renderer.startLoop(() => app.game);
   canvas.onclick = (e) => {
-    if (!app.game) return;
+    if (!app.game || app.busy) return;
     const hit = app.renderer.hitTest(app.game, e.clientX, e.clientY);
     if (!hit) return;
 
-    // 分岐選択中は候補マスを直接クリックして進める
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
         ? !app.game.players[app.game.pending.playerId]?.isCPU
@@ -304,7 +351,10 @@ function enterGame() {
     $('#inspect').textContent = shopTooltip(app.game, hit);
   };
   bindGameControls();
+  bindModalTools();
+  app.lastTurnKey = null;
   refreshGameUI();
+  maybeYourTurnChime();
   scheduleCpu();
 }
 
@@ -314,23 +364,61 @@ function isMyTurn() {
   const cur = currentPlayer(app.game);
   if (!cur || cur.isCPU) return false;
   if (app.mode === 'local') return !cur.isCPU;
-  if (app.mode === 'host') {
-    return cur.peerId === app.net?.peerId || cur.id === 0;
-  }
+  if (app.mode === 'host') return cur.peerId === app.net?.peerId || cur.id === 0;
   if (app.mode === 'guest') return cur.peerId === app.net?.peerId;
   return false;
 }
 
 function bindGameControls() {
-  $('#btn-roll').onclick = () => sendAction({ type: 'roll' });
+  $('#btn-roll').onclick = () => {
+    if (app.busy) return;
+    audio.resume();
+    sendAction({ type: 'roll' });
+  };
   $('#btn-end-choice').onclick = () => {
     hideModal();
     sendAction({ type: 'choice', choice: { action: 'done' } });
   };
   $('#btn-skip-choice').onclick = () => {
+    audio.sfx.cancel();
     hideModal();
     sendAction({ type: 'choice', choice: { action: 'skip' } });
   };
+}
+
+function bindModalTools() {
+  $('#btn-modal-dock').onclick = () => {
+    app.modalMode = app.modalMode === 'docked' ? 'center' : 'docked';
+    applyModalMode();
+    audio.sfx.click();
+  };
+  $('#btn-modal-hide').onclick = () => {
+    app.modalMode = 'hidden';
+    applyModalMode();
+    audio.sfx.click();
+  };
+  $('#btn-modal-restore').onclick = () => {
+    app.modalMode = 'docked';
+    applyModalMode();
+    if (app.modalActive && app.game) showChoiceModal(app.game);
+    audio.sfx.click();
+  };
+}
+
+function applyModalMode() {
+  const modal = $('#modal');
+  const restore = $('#btn-modal-restore');
+  modal.classList.toggle('docked', app.modalMode === 'docked');
+  if (app.modalMode === 'hidden') {
+    modal.hidden = true;
+    restore.hidden = !app.modalActive;
+  } else if (app.modalActive) {
+    modal.hidden = false;
+    restore.hidden = true;
+  } else {
+    restore.hidden = true;
+  }
+  $('#btn-modal-dock').textContent = app.modalMode === 'docked' ? '中央へ' : '端へ';
 }
 
 function sendAction(action) {
@@ -338,17 +426,13 @@ function sendAction(action) {
     app.net.sendToHost({ type: 'action', action, seat: app.localSeat });
     return;
   }
-  // host or local
   applyLocalAction(action);
 }
 
-function applyLocalAction(action) {
-  if (!app.game) return;
-  let result = null;
+async function applyLocalAction(action) {
+  if (!app.game || app.busy) return;
+
   if (action.type === 'roll') {
-    if (!isMyTurn() && app.mode !== 'local') {
-      // local: any human can roll on their turn; isMyTurn handles CPU
-    }
     const cur = currentPlayer(app.game);
     if (app.mode === 'local') {
       if (cur.isCPU) return;
@@ -356,27 +440,149 @@ function applyLocalAction(action) {
       return toast('あなたのターンではありません');
     }
     if (app.game.phase !== 'await_roll') return;
-    result = rollDice(app.game);
-  } else if (action.type === 'choice') {
-    const pend = app.game.pending;
-    if (!pend) return;
-    if (app.mode !== 'local' && pend.playerId !== app.localSeat && app.mode === 'guest') return;
-    result = applyChoice(app.game, action.choice);
-  } else if (action.type === 'sell') {
-    result = preTurnSell(app.game, action.playerId, action.area, action.count);
-  }
-
-  if (result && !result.ok) {
-    toast(result.error || '失敗');
+    const result = rollDice(app.game);
+    if (!result.ok) return toast(result.error || '失敗');
+    if (result.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
+    if (result.skipped) {
+      scheduleCpu();
+      return;
+    }
+    await runDiceAndMove(result.dice);
     return;
   }
-  if (result?.state) app.game = restoreState(result.state);
-  syncState();
+
+  if (action.type === 'choice') {
+    const pend = app.game.pending;
+    if (!pend) return;
+    if (app.mode === 'guest') return;
+
+    if (pend.type === 'fork') {
+      await resolveForkChoice(Number(action.choice.nextId));
+      return;
+    }
+
+    const result = applyChoice(app.game, action.choice);
+    if (!result.ok) return toast(result.error || '失敗');
+    if (result.state) app.game = restoreState(result.state);
+    if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
+    if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    syncState();
+    refreshGameUI();
+    scheduleCpu();
+    return;
+  }
+
+  if (action.type === 'sell') {
+    const result = preTurnSell(app.game, action.playerId, action.area, action.count);
+    if (result?.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
+  }
+}
+
+async function resolveForkChoice(nextId) {
+  const pid = app.game.currentPlayerIdx;
+  const from = app.game.players[pid].pos;
+  const result = chooseFork(app.game, nextId);
+  if (!result.ok) return toast(result.error || '失敗');
+  if (result.state) app.game = restoreState(result.state);
+  hideModal();
+  app.busy = true;
+  app.renderer?.animateToken(pid, from, nextId, 400);
+  audio.sfx.step();
+  syncState({ anim: { pid, from, to: nextId } });
+  refreshGameUI();
+  await wait(420);
+  await continueAdvancing();
+  app.busy = false;
   refreshGameUI();
   scheduleCpu();
 }
 
-function handleHostAction(from, data) {
+async function runDiceAndMove(face) {
+  app.busy = true;
+  $('#btn-roll').disabled = true;
+  broadcastFx({ kind: 'dice', face });
+  await playDiceOverlay(face);
+  await continueAdvancing();
+  app.busy = false;
+  refreshGameUI();
+  scheduleCpu();
+}
+
+async function continueAdvancing() {
+  while (app.game?.move && app.game.phase === 'moving') {
+    const pid = app.game.currentPlayerIdx;
+    const from = app.game.players[pid].pos;
+    const result = advanceMove(app.game);
+    if (!result.ok) break;
+    if (result.state) app.game = restoreState(result.state);
+
+    if (result.forked) {
+      audio.sfx.fork();
+      syncState();
+      refreshGameUI();
+      return;
+    }
+
+    if (result.stepped) {
+      app.renderer?.animateToken(pid, result.from ?? from, result.to, 400);
+      audio.sfx.step();
+      syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
+      refreshGameUI();
+      await wait(420);
+    }
+
+    if (result.done) {
+      onLandingSfx();
+      syncState();
+      refreshGameUI();
+      return;
+    }
+  }
+  syncState();
+  refreshGameUI();
+}
+
+function onLandingSfx() {
+  const g = app.game;
+  if (!g) return;
+  if (g.phase === 'gameover') audio.sfx.win();
+  else if (g.pending?.type === 'buy_shop') { /* wait */ }
+  else if (g.logs[0]?.kind === 'toll') audio.sfx.toll();
+}
+
+async function playDiceOverlay(face, remote = false) {
+  const overlay = $('#dice-overlay');
+  const faceEl = $('#dice-overlay-face');
+  const label = $('#dice-overlay-label');
+  overlay.hidden = false;
+  overlay.classList.remove('landed');
+  label.textContent = 'サイコロ…';
+  if (!remote) audio.sfx.dice();
+
+  const start = performance.now();
+  while (performance.now() - start < 1100) {
+    faceEl.textContent = String(1 + Math.floor(Math.random() * 6));
+    await wait(70);
+  }
+  faceEl.textContent = String(face);
+  overlay.classList.add('landed');
+  label.textContent = `${face} が出た！`;
+  $('#dice-face').textContent = String(face);
+  $('#dice-face').classList.add('pop');
+  if (!remote) audio.sfx.diceLand(face);
+  await wait(650);
+  overlay.hidden = true;
+}
+
+async function handleHostAction(from, data) {
+  if (app.busy) {
+    app.net.sendTo(from, { type: 'reject', reason: '演出中です' });
+    return;
+  }
   const action = data.action;
   const seat = app.game.players.findIndex((p) => p.peerId === from);
   if (seat < 0) return;
@@ -388,55 +594,124 @@ function handleHostAction(from, data) {
     }
     const result = rollDice(app.game);
     if (result.state) app.game = restoreState(result.state);
-  } else if (action.type === 'choice') {
+    syncState();
+    refreshGameUI();
+    if (!result.skipped) await runDiceAndMove(result.dice);
+    else scheduleCpu();
+    return;
+  }
+
+  if (action.type === 'choice') {
     const pend = app.game.pending;
     if (!pend || pend.playerId !== seat) {
       app.net.sendTo(from, { type: 'reject', reason: '選択できません' });
       return;
     }
-    if (app.game.phase !== 'await_choice' && app.game.phase !== 'await_fork') {
+    if (pend.type === 'fork') {
+      await resolveForkChoice(Number(action.choice.nextId));
+      return;
+    }
+    if (app.game.phase !== 'await_choice') {
       app.net.sendTo(from, { type: 'reject', reason: '今は選択できません' });
       return;
     }
     const result = applyChoice(app.game, action.choice);
     if (result.state) app.game = restoreState(result.state);
-  } else if (action.type === 'sell') {
+    syncState();
+    refreshGameUI();
+    scheduleCpu();
+    return;
+  }
+
+  if (action.type === 'sell') {
     const result = preTurnSell(app.game, seat, action.area, action.count);
     if (result.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
   }
-  syncState();
-  refreshGameUI();
-  scheduleCpu();
 }
 
-function syncState() {
+function syncState(extra = {}) {
   if (app.mode === 'host' && app.net) {
-    app.net.broadcast({ type: 'state', state: serializeState(app.game) });
+    app.net.broadcast({ type: 'state', state: serializeState(app.game), ...extra });
   }
+}
+
+function broadcastFx(fx) {
+  if (app.mode === 'host' && app.net) app.net.broadcast({ type: 'fx', ...fx });
 }
 
 function scheduleCpu() {
   clearTimeout(app.cpuTimer);
-  if (!app.game || app.game.phase === 'gameover') return;
-  // CPUはホストまたはローカルのみ実行
+  if (!app.game || app.game.phase === 'gameover' || app.busy) return;
   if (app.mode === 'guest') return;
   const cur = currentPlayer(app.game);
   if (!cur?.isCPU) return;
 
-  app.cpuTimer = setTimeout(() => {
-    const result = cpuAct(app.game);
-    if (result?.state) app.game = restoreState(result.state);
-    syncState();
-    refreshGameUI();
-    scheduleCpu();
-  }, 700 + Math.random() * 500);
+  app.cpuTimer = setTimeout(async () => {
+    if (app.busy || !app.game) return;
+    const phase = app.game.phase;
+
+    if (phase === 'await_roll') {
+      const result = cpuAct(app.game);
+      if (result?.state) app.game = restoreState(result.state);
+      syncState();
+      refreshGameUI();
+      if (result?.dice) await runDiceAndMove(result.dice);
+      else scheduleCpu();
+      return;
+    }
+
+    if (phase === 'await_fork') {
+      const result = cpuAct(app.game);
+      if (!result?.ok) return;
+      const pid = app.game.currentPlayerIdx;
+      // chooseFork already applied in cpuAct
+      if (result.state) app.game = restoreState(result.state);
+      if (result.stepped) {
+        app.busy = true;
+        app.renderer?.animateToken(pid, result.from, result.to, 400);
+        audio.sfx.step();
+        syncState({ anim: { pid, from: result.from, to: result.to } });
+        refreshGameUI();
+        await wait(420);
+        await continueAdvancing();
+        app.busy = false;
+      }
+      refreshGameUI();
+      scheduleCpu();
+      return;
+    }
+
+    if (phase === 'await_choice') {
+      const result = cpuAct(app.game);
+      if (result?.state) app.game = restoreState(result.state);
+      syncState();
+      refreshGameUI();
+      scheduleCpu();
+    }
+  }, 550 + Math.random() * 350);
+}
+
+function maybeYourTurnChime() {
+  const g = app.game;
+  if (!g || g.phase !== 'await_roll') return;
+  const cur = currentPlayer(g);
+  if (!cur || cur.isCPU) return;
+  const mine = app.mode === 'local' ? !cur.isCPU : (
+    app.mode === 'guest' ? cur.peerId === app.net?.peerId : (cur.peerId === app.net?.peerId || cur.id === 0)
+  );
+  const key = `${g.turn}-${g.currentPlayerIdx}-${g.phase}`;
+  if (!mine || app.lastTurnKey === key) return;
+  app.lastTurnKey = key;
+  audio.sfx.yourTurn();
+  broadcastFx({ kind: 'yourTurn', seat: cur.id });
 }
 
 function refreshGameUI() {
   const g = app.game;
   if (!g) return;
 
-  // プレイヤーステータス
   const box = $('#players-panel');
   box.innerHTML = g.players.map((p) => {
     const a = getPlayerAssets(g, p);
@@ -462,44 +737,53 @@ function refreshGameUI() {
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
 
-  // ログ
   $('#log').innerHTML = g.logs.slice(0, 24).map((l) => `<div class="log-line ${l.kind || ''}">${escapeHtml(l.text)}</div>`).join('');
 
-  // ダイス表示
   const diceEl = $('#dice-face');
   if (g.dice) {
     diceEl.textContent = String(g.dice);
     diceEl.classList.add('pop');
-  } else {
+  } else if (!app.busy) {
     diceEl.textContent = '·';
     diceEl.classList.remove('pop');
   }
 
-  // ロールボタン
-  const canRoll = g.phase === 'await_roll' && (app.mode === 'local' ? !cur?.isCPU : isMyTurn());
+  const canRoll = !app.busy && g.phase === 'await_roll' && (app.mode === 'local' ? !cur?.isCPU : isMyTurn());
   $('#btn-roll').disabled = !canRoll;
-  $('#btn-roll').textContent = canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…');
+  $('#btn-roll').textContent = app.busy
+    ? '演出中…'
+    : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…'));
 
-  // モーダル
-  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
+  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
-    if (mine) showChoiceModal(g);
-    else {
+    if (mine) {
+      app.modalActive = true;
+      if (app.modalMode === 'hidden') {
+        $('#modal').hidden = true;
+        $('#btn-modal-restore').hidden = false;
+      } else {
+        showChoiceModal(g);
+      }
+      $('#wait-hint').hidden = true;
+    } else {
+      app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
       $('#wait-hint').textContent = `${g.players[g.pending.playerId]?.name || ''} が選択中…`;
     }
-  } else {
+  } else if (!app.busy) {
+    app.modalActive = false;
     hideModal();
     $('#wait-hint').hidden = true;
+    $('#btn-modal-restore').hidden = true;
   }
 
   if (g.phase === 'gameover') {
     showWinner(g);
   }
 
-  // 株パネル
   renderStockPanel(g);
+  maybeYourTurnChime();
 }
 
 function phaseLabel(g) {
@@ -518,14 +802,17 @@ function showChoiceModal(g) {
   const modal = $('#modal');
   const body = $('#modal-body');
   const title = $('#modal-title');
+  app.modalActive = true;
+  if (app.modalMode === 'hidden') app.modalMode = 'docked';
   modal.hidden = false;
+  applyModalMode();
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
     body.innerHTML = `
-      <p class="hint">マスを直接クリックしても選べます</p>
+      <p class="hint">マスをクリック／下のボタン。「隠す」「端へ」で盤面を確認できます</p>
       <div class="modal-actions fork-actions">
         ${pend.options.map((o) => `
           <button class="btn primary fork-btn" data-next="${o.id}">
@@ -548,7 +835,7 @@ function showChoiceModal(g) {
     title.textContent = 'お店を購入？';
     body.innerHTML = `
       <p class="modal-lead"><strong>${sq.label}</strong>（${AREA_META[sq.area]?.name}）</p>
-      <p>価格 <strong>${sq.price.toLocaleString()}G</strong> / 買い物料 ${calcToll(g, { ...sq, owner: app.localSeat })}G〜</p>
+      <p>価格 <strong>${sq.price.toLocaleString()}G</strong></p>
       <div class="modal-actions">
         <button class="btn primary" id="m-buy">購入する</button>
       </div>`;
@@ -565,7 +852,7 @@ function showChoiceModal(g) {
     title.textContent = '増資する？';
     body.innerHTML = `
       <p class="modal-lead"><strong>${sq.label}</strong></p>
-      <p>現在の買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資上限 残り ${rem.toLocaleString()}G</p>
+      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り ${rem.toLocaleString()}G</p>
       <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" /></label>
       <div class="modal-actions">
         <button class="btn primary" id="m-inv">増資する</button>
@@ -580,9 +867,10 @@ function showChoiceModal(g) {
 
   if (pend.type === 'five_buy') {
     const sq = getNode(g, pend.shopId);
+    const owner = g.players[sq.owner];
     title.textContent = '5倍買い？';
     body.innerHTML = `
-      <p class="modal-lead"><strong>${sq.label}</strong> を奪い取れます</p>
+      <p class="modal-lead"><strong>${sq.label}</strong>（${owner?.name || ''}の店）</p>
       <p>価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
       <div class="modal-actions">
         <button class="btn danger" id="m-five">5倍買いする</button>
@@ -609,7 +897,7 @@ function showChoiceModal(g) {
       </div>`;
     }).join('');
     body.innerHTML = `<div class="stock-list">${rows}</div>
-      <p class="hint">枚数はダイアログで指定。終わったら「完了」を押してください。</p>`;
+      <p class="hint">枚数はダイアログで指定。盤面確認は「隠す／端へ」</p>`;
     $('#btn-end-choice').hidden = false;
     $('#btn-skip-choice').hidden = true;
 
@@ -631,7 +919,9 @@ function showChoiceModal(g) {
 }
 
 function hideModal() {
+  app.modalActive = false;
   $('#modal').hidden = true;
+  $('#btn-modal-restore').hidden = true;
 }
 
 function showWinner(g) {
@@ -643,6 +933,7 @@ function showWinner(g) {
   const a = w ? getPlayerAssets(g, w) : { total: 0 };
   $('#winner-sub').textContent = `総資産 ${a.total.toLocaleString()}G`;
   $('#btn-again').onclick = () => location.reload();
+  audio.sfx.win();
 }
 
 function renderStockPanel(g) {
@@ -661,10 +952,10 @@ function escapeHtml(s) {
 }
 
 // boot
+bindVolumeUI();
 bindTitle();
 showScreen('screen-title');
 
-// タイトルの浮遊モーション用ドット
 const field = $('#title-field');
 if (field) {
   for (let i = 0; i < 18; i++) {
