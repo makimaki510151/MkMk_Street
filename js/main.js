@@ -612,7 +612,10 @@ function applyModalPosition() {
 function applyModalMode() {
   const modal = $('#modal');
   const restore = $('#btn-modal-restore');
+  const card = $('#modal-card');
+  const centered = !!card?.classList.contains('scratch-modal') && !app.modalDrag;
   modal.classList.toggle('floating', !!app.modalDrag);
+  modal.classList.toggle('centered', centered);
   applyModalPosition();
   if (app.modalMode === 'hidden') {
     modal.hidden = true;
@@ -1371,6 +1374,7 @@ function showChoiceModal(g) {
   $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
   $('#modal-card').classList.remove('stock-modal');
+  $('#modal-card').classList.remove('scratch-modal');
   hideForkRails();
 
   if (pend.type === 'fork') {
@@ -1595,7 +1599,10 @@ function showChoiceModal(g) {
       : pend.playerId === app.localSeat;
     title.textContent = '共通イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
-    $('#modal-card').classList.add('wide');
+    // スクラッチは中央に大きく表示（ドラッグ位置はリセット）
+    app.modalDrag = null;
+    $('#modal-card').classList.add('wide', 'scratch-modal');
+    applyModalMode();
     if (!table) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
@@ -1657,7 +1664,9 @@ function hideModal() {
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
-  $('#modal-card')?.classList.remove('fork-hint-only');
+  const card = $('#modal-card');
+  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'wide');
+  $('#modal')?.classList.remove('centered');
   app.renderer?.clearStockHighlight();
 }
 

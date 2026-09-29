@@ -430,9 +430,19 @@ button:disabled { opacity: .45; cursor: default; }
   pointer-events: none;
 }
 #modal[hidden] { display: none !important; }
+#modal.centered {
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 12, 14, 0.42);
+}
+#modal.centered .modal-card.scratch-modal {
+  width: min(520px, 96vw);
+  max-height: min(86vh, 720px);
+}
 #modal.floating {
   display: block;
   padding: 0;
+  background: transparent;
 }
 #modal.floating .modal-card {
   pointer-events: auto;
