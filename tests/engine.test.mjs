@@ -225,6 +225,25 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
   });
 
+  it('keeps rest squares minimal on the board', () => {
+    const board = buildBoard();
+    const rests = board.nodes.filter((n) => n.type === 'rest');
+    assert.ok(rests.length <= 1, `expected at most 1 rest, got ${rests.length}`);
+  });
+
+  it('auto-skips resting player without starting a move', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 2,
+    });
+    g.players[0].resting = true;
+    const r = rollDice(g);
+    assert.equal(r.skipped, true);
+    assert.equal(g.players[0].resting, false);
+    assert.equal(g.currentPlayerIdx, 1);
+    assert.equal(g.move, null);
+  });
+
   it('shop holiday zeroes toll for one turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
