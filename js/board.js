@@ -74,7 +74,8 @@ export function buildBoard() {
   const w2 = N('stockbroker', { label: '証券', col: 3, row: 5 });
   const w3 = N('shop', { label: '眼鏡店', area: 10, basePrice: 190, col: 2, row: 5 });
   const w4 = N('rollon', { label: 'もう一回', col: 1, row: 5 });
-  const hubW = N('event', { label: 'イベント', col: 0, row: 5 });
+  // 西ハブはスクラッチ専用マス（イベント表を削れる）
+  const hubW = N('scratch', { label: 'スクラッチ', col: 0, row: 5 });
 
   link([bank, n1], [n1, n2], [n2, n3], [n3, n4], [n4, hubN]);
   link([bank, e1], [e1, e2], [e2, e3], [e3, e4], [e4, hubE]);

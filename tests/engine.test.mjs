@@ -231,6 +231,16 @@ describe('MkMk Street engine', () => {
     assert.ok(rests.length <= 1, `expected at most 1 rest, got ${rests.length}`);
   });
 
+  it('has one dedicated scratch hub and one event hub on mid-sides', () => {
+    const board = buildBoard();
+    const scratches = board.nodes.filter((n) => n.type === 'scratch');
+    const events = board.nodes.filter((n) => n.type === 'event');
+    assert.equal(scratches.length, 1);
+    assert.ok(events.length >= 1);
+    assert.equal(scratches[0].col, 0);
+    assert.equal(scratches[0].row, 5);
+  });
+
   it('auto-skips resting player without starting a move', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B', isCPU: true }],

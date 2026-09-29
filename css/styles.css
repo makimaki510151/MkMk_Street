@@ -293,11 +293,14 @@ button:disabled { opacity: .45; cursor: default; }
   display: block;
 }
 #inspect {
+  /* 音量ドック（画面左下）と重ならないよう盤面右上へ */
   position: absolute;
-  left: 10px;
-  bottom: 10px;
+  right: 10px;
+  top: 10px;
+  left: auto;
+  bottom: auto;
   z-index: 7;
-  max-width: min(92%, 440px);
+  max-width: min(70%, 360px);
   background: rgba(8, 20, 24, 0.88);
   border: 1px solid var(--line);
   border-radius: 12px;

@@ -10,6 +10,7 @@ const TYPE_ICON = {
   rest: '休',
   holiday: '店休',
   event: 'EV',
+  scratch: '削',
   chance: '？',
   stockbroker: '株',
   lucky: '★',
@@ -157,6 +158,7 @@ export function createRenderer(canvas) {
       else if (n.type === 'mark') fill = '#3a2f55';
       else if (n.type === 'chance') fill = '#c45c26';
       else if (n.type === 'event') fill = '#6b3fa0';
+      else if (n.type === 'scratch') fill = '#1f6f8b';
       else if (n.type === 'holiday') fill = '#a65d2e';
       else if (n.type === 'stockbroker') fill = '#2f6f6a';
       else if (n.type === 'rest') fill = '#4a6a7a';
@@ -233,7 +235,7 @@ export function createRenderer(canvas) {
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
         ctx.fillText(SUIT_LABELS[n.mark], x + size / 2, y + size / 2);
-      } else if (n.type === 'holiday' || n.type === 'event') {
+      } else if (n.type === 'holiday' || n.type === 'event' || n.type === 'scratch') {
         ctx.font = `800 ${Math.max(9, size * 0.22)}px "Zen Maru Gothic", sans-serif`;
         ctx.fillText(TYPE_ICON[n.type] || n.label.slice(0, 2), x + size / 2, y + size / 2);
       } else {
@@ -411,6 +413,7 @@ export function shopTooltip(g, sq) {
   if (sq.type === 'mark') return `マーク ${sq.label}（通過で入手／停止でイベント表スクラッチ）`;
   if (sq.type === 'holiday') return `${sq.label} — 止まるとお店が1ターン休み`;
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
+  if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
   if (sq.type === 'rest') return `${sq.label} — 止まると次ターン休み`;
   if (sq.type !== 'shop') return `${sq.label}`;
   const owner = sq.owner >= 0 ? g.players[sq.owner]?.name : '空き';

@@ -431,6 +431,12 @@ function resolveLanding(g, p, { passedBank }) {
     return;
   }
 
+  if (sq.type === 'scratch') {
+    addLog(g, `${p.name} がスクラッチマスに停止`, 'event');
+    openScratch(g, p);
+    return;
+  }
+
   if (sq.type === 'event') {
     const ev = BOARD_EVENTS[Math.floor(rngNext(g) * BOARD_EVENTS.length)];
     const detail = ev.apply(g, p);
