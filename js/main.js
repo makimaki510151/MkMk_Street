@@ -559,8 +559,17 @@ async function applyLocalAction(action) {
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
+
+    // 銀行通過後：進行方向選択 or 移動再開
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -644,6 +653,13 @@ async function continueAdvancing() {
       syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
       refreshGameUI();
       await wait(420);
+    }
+
+    // 銀行通過割込み（昇進→株→方向）
+    if (result.bankInterrupt || app.game.phase === 'await_choice') {
+      syncState();
+      refreshGameUI();
+      return;
     }
 
     if (result.done) {
@@ -740,6 +756,12 @@ async function handleHostAction(from, data) {
     if (result.state) app.game = restoreState(result.state);
     syncState();
     refreshGameUI();
+    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+      app.busy = true;
+      await continueAdvancing();
+      app.busy = false;
+      refreshGameUI();
+    }
     scheduleCpu();
     return;
   }
@@ -814,6 +836,12 @@ function scheduleCpu() {
       if (result?.state) app.game = restoreState(result.state);
       syncState();
       refreshGameUI();
+      if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+        app.busy = true;
+        await continueAdvancing();
+        app.busy = false;
+        refreshGameUI();
+      }
       scheduleCpu();
     }
   }, 550 + Math.random() * 350);
@@ -949,7 +977,9 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'five_buy': return '5倍買いを検討中';
-    case 'stock': return pend.bankPass ? '銀行通過の株購入中' : '株を取引中';
+    case 'stock': return (pend.bankVisit || pend.bankPass)
+      ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
+      : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
     case 'level_up': return '昇進を祝っている';
     default: return '選択中';
@@ -1156,6 +1186,7 @@ function showChoiceModal(g) {
   $('#btn-skip-choice').hidden = false;
   $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
+  $('#modal-card').classList.remove('stock-modal');
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
@@ -1262,32 +1293,88 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'stock') {
-    const pass = !!pend.bankPass;
-    title.textContent = pass
-      ? '銀行通過 — 株を1種類だけ購入'
-      : (pend.atBank ? '銀行 — 株取引' : '証券マス — 株取引');
+    const bankVisit = !!pend.bankVisit || !!pend.bankPass || !!pend.atBank;
+    const broker = !!pend.broker;
+    const p = currentPlayer(g);
+    title.textContent = bankVisit
+      ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
+      : '証券マス — 株取引';
+    $('#modal-card').classList.add('stock-modal');
+
+    if (bankVisit) {
+      const cards = Object.keys(g.areas).map((a) => {
+        const area = Number(a);
+        const meta = g.areas[area];
+        const price = meta.stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const have = p?.stocks[area] || 0;
+        return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max="${max}" ${max < 1 ? 'disabled' : ''}>
+          <span class="sc-name">A${area} ${meta.name}</span>
+          <span class="sc-price">${price}G</span>
+          <span class="sc-max">${max < 1 ? '資金不足' : `最大 ${max}枚`}</span>
+          <span class="sc-have">持株 ${have}</span>
+        </button>`;
+      }).join('');
+      body.innerHTML = `
+        <p class="hint">1種類だけ、持ち金の限り購入できます（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
+        <div class="stock-grid">${cards}</div>
+        <div id="stock-buy-panel" class="stock-buy-panel" hidden>
+          <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
+          <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
+        </div>`;
+      $('#btn-end-choice').hidden = true;
+      $('#btn-skip-choice').hidden = false;
+      $('#btn-skip-choice').textContent = pend.resumeMove ? '買わずに進む方向を選ぶ' : '買わずに終了';
+
+      let selected = null;
+      body.querySelectorAll('.stock-card').forEach((btn) => {
+        btn.onclick = () => {
+          body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          selected = Number(btn.dataset.area);
+          const max = Number(btn.dataset.max) || 1;
+          const panel = $('#stock-buy-panel');
+          const input = $('#m-stock-count');
+          panel.hidden = false;
+          input.max = String(max);
+          input.value = String(max);
+        };
+      });
+      $('#m-stock-confirm').onclick = () => {
+        if (selected == null) return;
+        const max = Number(body.querySelector(`.stock-card[data-area="${selected}"]`)?.dataset.max) || 1;
+        const count = Math.max(1, Math.min(max, Number($('#m-stock-count').value) || 1));
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'buy', area: selected, count } });
+      };
+      return;
+    }
+
+    // 証券マス：従来の売買（コンパクトグリッド・二重スクロール回避）
     const rows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
-      const have = currentPlayer(g).stocks[area] || 0;
-      return `<div class="stock-row" style="--ac:${meta.color}">
-        <span class="sr-name">A${area} ${meta.name}</span>
-        <span class="sr-price">${meta.stockPrice}G</span>
-        <span class="sr-have">持株 ${have}</span>
-        <button class="btn tiny" data-buy="${area}">買う</button>
-        ${pass ? '' : `<button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>`}
+      const have = p?.stocks[area] || 0;
+      return `<div class="stock-card broker" style="--ac:${meta.color}">
+        <span class="sc-name">A${area} ${meta.name}</span>
+        <span class="sc-price">${meta.stockPrice}G / 持株 ${have}</span>
+        <div class="sc-actions">
+          <button class="btn tiny" data-buy="${area}">買う</button>
+          <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
+        </div>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="stock-list">${rows}</div>
-      <p class="hint">${pass ? '通過ボーナス：好きなエリアを1種類だけ購入できます（見送り可）' : '枚数はダイアログで指定。盤面確認は「隠す／端へ」'}</p>`;
+    body.innerHTML = `<div class="stock-grid">${rows}</div>
+      <p class="hint">枚数はダイアログで指定</p>`;
     $('#btn-end-choice').hidden = false;
-    $('#btn-skip-choice').hidden = !pass;
-    if (pass) $('#btn-skip-choice').textContent = '買わずに進む';
+    $('#btn-skip-choice').hidden = true;
 
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.buy);
-        const count = Number(prompt('何枚買いますか？（1〜99）', pass ? '10' : '10')) || 0;
+        const price = g.areas[area].stockPrice;
+        const max = Math.floor((p?.cash || 0) / price);
+        const count = Number(prompt(`何枚買いますか？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
       };
     });

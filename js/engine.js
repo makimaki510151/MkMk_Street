@@ -226,9 +226,7 @@ function onPassThrough(g, p, nodeId) {
     p.marks[nd.mark] = true;
     addLog(g, `${p.name} が通過で ${SUIT_LABELS[nd.mark]} を入手！`, 'mark');
   }
-  if (nd.type === 'bank' && nodeId !== g.move?.startPos) {
-    handleBank(g, p, false);
-  }
+  // 銀行処理は advanceMove / resolveLanding 側で一度だけ行う
 }
 
 function setForkPending(g, p, options) {
@@ -299,6 +297,22 @@ export function advanceMove(g) {
   }
   if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: nextId };
 
+  // 銀行を通過（まだ歩数が残る）→ 昇進 → 株1種 → 進行方向
+  if (nextId === g.startId && from !== g.startId) {
+    const interrupted = beginBankVisit(g, p, { landed: false, resumeMove: true });
+    if (interrupted) {
+      return {
+        ok: true,
+        stepped: true,
+        from,
+        to: nextId,
+        done: false,
+        bankInterrupt: true,
+        state: serializeState(g),
+      };
+    }
+  }
+
   return {
     ok: true,
     stepped: true,
@@ -313,9 +327,14 @@ export function advanceMove(g) {
 /** 互換: 分岐か終了まで一気に進める（テスト用） */
 export function continueMove(g) {
   let last = { ok: true };
-  while (g.move && g.phase !== 'await_fork' && g.phase !== 'gameover') {
+  while (
+    g.move
+    && g.phase !== 'await_fork'
+    && g.phase !== 'await_choice'
+    && g.phase !== 'gameover'
+  ) {
     last = advanceMove(g);
-    if (!last.ok || last.done || last.forked) break;
+    if (!last.ok || last.done || last.forked || last.bankInterrupt) break;
   }
   return { ...last, state: serializeState(g) };
 }
@@ -339,6 +358,21 @@ export function chooseFork(g, nextId) {
     return { ok: true, stepped: true, from, to: nextId, done: true, state: serializeState(g) };
   }
   if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: nextId };
+
+  if (nextId === g.startId && from !== g.startId) {
+    const interrupted = beginBankVisit(g, p, { landed: false, resumeMove: true });
+    if (interrupted) {
+      return {
+        ok: true,
+        stepped: true,
+        from,
+        to: nextId,
+        done: false,
+        bankInterrupt: true,
+        state: serializeState(g),
+      };
+    }
+  }
 
   return {
     ok: true,
@@ -386,12 +420,14 @@ export function rollDice(g) {
 function resolveLanding(g, p, { passedBank }) {
   const landedOnBank = p.pos === g.startId;
 
-  // 銀行通過・到着での昇進 / 勝利判定
-  if (passedBank || landedOnBank) {
-    handleBank(g, p, landedOnBank);
-    if (g.phase === 'gameover') return;
-    // 通過時はあとで株を1種類買える
-    if (passedBank && !landedOnBank) p.flags.bankPassStock = true;
+  // 銀行にぴったり停止（通過割込み済みなら二重処理しない）
+  if (landedOnBank && !p.flags.bankVisitDone) {
+    beginBankVisit(g, p, { landed: true, resumeMove: false });
+    if (g.phase === 'gameover' || g.phase === 'await_choice') return;
+  } else if (passedBank && !landedOnBank && !p.flags.bankVisitDone) {
+    // 通過割込みなしで着地した場合のフォールバック
+    beginBankVisit(g, p, { landed: false, resumeMove: false });
+    if (g.phase === 'gameover' || g.phase === 'await_choice') return;
   }
 
   const sq = getNode(g, p.pos);
@@ -467,28 +503,22 @@ function resolveLanding(g, p, { passedBank }) {
     const ev = CHANCE_EVENTS[Math.floor(rngNext(g) * CHANCE_EVENTS.length)];
     const detail = ev.apply(g, p);
     addLog(g, `チャンス！ ${ev.label}（${detail}）`, 'event');
-    if (ev.id === 'warp_bank') handleBank(g, p, true);
-    if (g.phase === 'gameover') return;
+    if (ev.id === 'warp_bank' && !p.flags.bankVisitDone) {
+      beginBankVisit(g, p, { landed: true, resumeMove: false });
+      if (g.phase === 'gameover' || g.phase === 'await_choice') return;
+    }
     finishLanding(g, p);
     return;
   }
 
-  if (sq.type === 'stockbroker' || (sq.type === 'bank' && !passedBank)) {
+  if (sq.type === 'stockbroker') {
     g.phase = 'await_choice';
-    g.pending = { type: 'stock', playerId: p.id };
+    g.pending = { type: 'stock', playerId: p.id, broker: true };
     return;
   }
 
-  if (sq.type === 'bank') {
-    // 到着：昇進祝いがあれば先に、その後株取引
-    if (p.flags.pendingLevelUp) {
-      openLevelUp(g, p, { thenStock: true, atBank: true });
-      return;
-    }
-    g.phase = 'await_choice';
-    g.pending = { type: 'stock', playerId: p.id, atBank: true };
-    return;
-  }
+  // 銀行マス着地は beginBankVisit 済み
+  if (sq.type === 'bank') return;
 
   if (sq.type === 'shop') {
     resolveShop(g, p, sq);
@@ -498,30 +528,48 @@ function resolveLanding(g, p, { passedBank }) {
   finishLanding(g, p);
 }
 
-/** 着地後の共通締め：昇進祝い → 銀行通過の株1種 → ターン終了 */
+/** 着地後の共通締め */
 function finishLanding(g, p) {
   if (g.phase === 'gameover') return;
-  if (p.flags.pendingLevelUp) {
-    openLevelUp(g, p, { thenBankPassStock: !!p.flags.bankPassStock });
-    return;
-  }
-  if (p.flags.bankPassStock) {
-    openBankPassStock(g, p);
-    return;
-  }
+  if (g.phase === 'await_choice') return;
   endTurn(g);
+}
+
+/**
+ * 銀行訪問フロー。
+ * resumeMove: 通過中（歩数残りあり）→ 昇進 → 株1種 → 進行方向選択 → 移動再開
+ * landed: 銀行に停止 → 昇進 → 株1種（持ち金の限り）→ ターン終了
+ */
+function beginBankVisit(g, p, { landed, resumeMove }) {
+  if (p.flags.bankVisitDone) return false;
+  p.flags.bankVisitDone = true;
+
+  handleBank(g, p, landed);
+  if (g.phase === 'gameover') return true;
+
+  const next = {
+    thenBankStock: true,
+    atBank: !!landed,
+    resumeMove: !!resumeMove,
+  };
+
+  if (p.flags.pendingLevelUp) {
+    openLevelUp(g, p, next);
+    return true;
+  }
+  openBankStock(g, p, next);
+  return true;
 }
 
 function openLevelUp(g, p, next = {}) {
   const info = p.flags.pendingLevelUp;
   if (!info) {
-    if (next.thenStock) {
-      g.phase = 'await_choice';
-      g.pending = { type: 'stock', playerId: p.id, atBank: !!next.atBank };
+    if (next.thenBankStock) {
+      openBankStock(g, p, next);
       return;
     }
-    if (next.thenBankPassStock || p.flags.bankPassStock) {
-      openBankPassStock(g, p);
+    if (next.resumeMove) {
+      resumeMoveAfterBank(g, p);
       return;
     }
     endTurn(g);
@@ -535,23 +583,53 @@ function openLevelUp(g, p, next = {}) {
     from: info.from,
     to: info.to,
     bonus: info.bonus,
-    thenStock: !!next.thenStock,
+    thenBankStock: next.thenBankStock !== false,
     atBank: !!next.atBank,
-    thenBankPassStock: !!next.thenBankPassStock || !!p.flags.bankPassStock,
+    resumeMove: !!next.resumeMove,
   };
 }
 
-function openBankPassStock(g, p) {
+/** 銀行：株を1種類・持ち金の限り購入 */
+function openBankStock(g, p, next = {}) {
   p.flags.bankPassStock = false;
   g.phase = 'await_choice';
   g.pending = {
     type: 'stock',
     playerId: p.id,
-    bankPass: true,
+    atBank: !!next.atBank,
+    bankVisit: true,
     maxBuys: 1,
     buysUsed: 0,
+    resumeMove: !!next.resumeMove,
   };
-  addLog(g, `${p.name} は銀行通過で株を1種類だけ買えます`, 'stock');
+  addLog(
+    g,
+    next.resumeMove
+      ? `${p.name} は銀行通過 — 株を1種類（持ち金の限り）買えます`
+      : `${p.name} は銀行 — 株を1種類（持ち金の限り）買えます`,
+    'stock',
+  );
+}
+
+/** 銀行通過後：進行方向を選んで移動再開 */
+function resumeMoveAfterBank(g, p) {
+  if (!g.move || g.move.stepsLeft <= 0) {
+    g.move = null;
+    endTurn(g);
+    return;
+  }
+  const options = getForwardNexts(g, p.pos, p.prevPos);
+  if (options.length === 0) {
+    finishMove(g, p);
+    return;
+  }
+  if (options.length > 1) {
+    setForkPending(g, p, options);
+    addLog(g, `${p.name} は銀行を出てどちらへ進む？`, 'dice');
+    return;
+  }
+  g.phase = 'moving';
+  g.pending = null;
 }
 
 function handleBank(g, p, landed) {
@@ -827,20 +905,18 @@ export function applyChoice(g, choice) {
   }
 
   if (pending.type === 'level_up') {
-    // 祝い確認後の続き
-    const thenStock = pending.thenStock;
-    const atBank = pending.atBank;
-    const thenBankPass = pending.thenBankPassStock;
+    const resumeMove = !!pending.resumeMove;
+    const thenBankStock = pending.thenBankStock !== false;
+    const atBank = !!pending.atBank;
     g.pending = null;
     p.flags.pendingLevelUp = null;
-    if (thenStock) {
-      g.phase = 'await_choice';
-      g.pending = { type: 'stock', playerId: p.id, atBank: !!atBank };
+    if (thenBankStock) {
+      openBankStock(g, p, { atBank, resumeMove });
       return { ok: true, celebrated: true, state: serializeState(g) };
     }
-    if (thenBankPass) {
-      openBankPassStock(g, p);
-      return { ok: true, celebrated: true, state: serializeState(g) };
+    if (resumeMove) {
+      resumeMoveAfterBank(g, p);
+      return { ok: true, celebrated: true, resumeMove: true, state: serializeState(g) };
     }
     endTurn(g);
     return { ok: true, celebrated: true, state: serializeState(g) };
@@ -848,17 +924,21 @@ export function applyChoice(g, choice) {
 
   if (pending.type === 'stock') {
     const maxBuys = pending.maxBuys;
+    const bankVisit = !!pending.bankVisit || !!pending.bankPass;
+    const resumeMove = !!pending.resumeMove;
+
     if (choice.action === 'buy') {
       if (maxBuys != null && (pending.buysUsed || 0) >= maxBuys) {
         return { ok: false, error: 'buy_limit' };
       }
       const area = Number(choice.area);
-      // 銀行通過は「1種類」＝1エリアをまとめて買う
-      const count = pending.bankPass
-        ? Math.max(1, Math.min(99, Number(choice.count) || 1))
-        : Math.max(1, Math.min(99, Number(choice.count) || 1));
       if (!g.areas[area]) return { ok: false, error: 'bad_area' };
-      const cost = g.areas[area].stockPrice * count;
+      const price = g.areas[area].stockPrice;
+      const maxAfford = Math.floor(p.cash / price);
+      // 銀行は持ち金の限り。証券は従来どおり上限99
+      const hardCap = bankVisit ? Math.max(1, maxAfford) : 99;
+      const count = Math.max(1, Math.min(hardCap, Number(choice.count) || 1));
+      const cost = price * count;
       if (p.cash < cost) return { ok: false, error: 'insufficient' };
       p.cash -= cost;
       p.stocks[area] = (p.stocks[area] || 0) + count;
@@ -871,12 +951,16 @@ export function applyChoice(g, choice) {
         pending.buysUsed = (pending.buysUsed || 0) + 1;
         if (pending.buysUsed >= maxBuys) {
           g.pending = null;
+          if (resumeMove) {
+            resumeMoveAfterBank(g, p);
+            return { ok: true, resumeMove: true, state: serializeState(g) };
+          }
           endTurn(g);
           return { ok: true, state: serializeState(g) };
         }
       }
     } else if (choice.action === 'sell') {
-      if (pending.bankPass) return { ok: false, error: 'pass_buy_only' };
+      if (bankVisit) return { ok: false, error: 'bank_buy_only' };
       const area = Number(choice.area);
       const have = p.stocks[area] || 0;
       const count = Math.max(1, Math.min(have, Number(choice.count) || 1));
@@ -892,6 +976,10 @@ export function applyChoice(g, choice) {
     }
     if (choice.action === 'done' || choice.action === 'skip') {
       g.pending = null;
+      if (resumeMove) {
+        resumeMoveAfterBank(g, p);
+        return { ok: true, resumeMove: true, state: serializeState(g) };
+      }
       endTurn(g);
     }
     return { ok: true, state: serializeState(g) };
@@ -939,16 +1027,11 @@ function endTurn(g) {
   if (g.phase === 'gameover') return;
 
   const p = currentPlayer(g);
-  if (p?.flags?.pendingLevelUp) {
-    openLevelUp(g, p, { thenBankPassStock: !!p.flags.bankPassStock });
-    return;
+  if (p) {
+    p.lucky = false;
+    p.flags.bankVisitDone = false;
+    p.flags.bankPassStock = false;
   }
-  if (p?.flags?.bankPassStock) {
-    openBankPassStock(g, p);
-    return;
-  }
-
-  if (p) p.lucky = false;
 
   // 生存プレイヤーへ
   const alive = g.players.filter((pl) => !pl.bankrupt);
@@ -1033,14 +1116,14 @@ export function cpuAct(g) {
     if (pend.type === 'stock') {
       const ownedAreas = [...new Set(g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.area))];
       const areas = ownedAreas.length ? ownedAreas : Object.keys(g.areas).map(Number);
+      const bankVisit = !!pend.bankVisit || !!pend.bankPass;
       if (areas.length && p.cash > 200) {
         const a = areas[0];
         const price = g.areas[a].stockPrice;
-        const budget = pend.bankPass ? p.cash * 0.35 : p.cash * 0.25;
-        const count = Math.min(pend.bankPass ? 30 : 20, Math.floor(budget / price));
+        const budget = bankVisit ? p.cash : p.cash * 0.25;
+        const count = Math.floor(budget / price);
         if (count > 0) {
-          const bought = applyChoice(g, { action: 'buy', area: a, count });
-          if (pend.bankPass || bought?.state?.pending == null) return bought;
+          return applyChoice(g, { action: 'buy', area: a, count });
         }
       }
       return applyChoice(g, { action: 'done' });

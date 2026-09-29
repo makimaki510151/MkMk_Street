@@ -581,7 +581,55 @@ button:disabled { opacity: .45; cursor: default; }
   0% { transform: scale(0.85); filter: brightness(1.4); }
   100% { transform: scale(1); filter: brightness(1); }
 }
-.stock-list { display: grid; gap: 0.4rem; max-height: 40vh; overflow: auto; }
+/* 株UI：モーダル本体だけスクロール（二重スクロール回避） */
+.modal-card.stock-modal {
+  width: min(480px, 100%);
+  max-height: min(78vh, 640px);
+  overflow: hidden;
+  grid-template-rows: auto auto 1fr auto;
+}
+.modal-card.stock-modal #modal-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+}
+.stock-list { display: grid; gap: 0.4rem; }
+.stock-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+.stock-card {
+  display: grid;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ac) 45%, transparent);
+  background: color-mix(in srgb, var(--ac) 16%, rgba(0,0,0,0.28));
+  color: #fffef8;
+  cursor: pointer;
+  font: inherit;
+}
+.stock-card:disabled { opacity: 0.45; cursor: not-allowed; }
+.stock-card.selected {
+  outline: 2px solid #ffe08a;
+  background: color-mix(in srgb, var(--ac) 28%, rgba(0,0,0,0.2));
+}
+.stock-card.broker { cursor: default; }
+.sc-name { font-weight: 800; font-size: 0.82rem; }
+.sc-price { font-size: 0.78rem; color: var(--gold); font-weight: 700; }
+.sc-max, .sc-have { font-size: 0.72rem; color: var(--muted); }
+.sc-actions { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
+.stock-buy-panel {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+  align-items: end;
+  padding-top: 0.2rem;
+}
 .stock-row {
   display: grid;
   grid-template-columns: 1.3fr 0.7fr 0.8fr auto auto;
