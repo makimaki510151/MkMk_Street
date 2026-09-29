@@ -827,6 +827,8 @@ button:disabled { opacity: .45; cursor: default; }
   overflow: auto;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
   gap: 0.4rem;
   max-height: min(52vh, 380px);
   padding-right: 2px;
@@ -841,7 +843,8 @@ button:disabled { opacity: .45; cursor: default; }
     linear-gradient(160deg, color-mix(in srgb, var(--eb) 30%, #102428), rgba(10, 28, 32, 0.9));
   border: 2px solid color-mix(in srgb, var(--eb) 72%, #fff);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
-  animation: stampIn 0.14s ease-out both;
+  /* 上から下へ流れ込む */
+  animation: stampIn 0.16s ease-out both;
 }
 .event-stamp[data-mine="1"] {
   border-width: 2.5px;
@@ -869,7 +872,7 @@ button:disabled { opacity: .45; cursor: default; }
   line-height: 1.3;
 }
 @keyframes stampIn {
-  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  from { opacity: 0; transform: translateY(-12px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
