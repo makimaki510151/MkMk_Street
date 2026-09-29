@@ -180,4 +180,61 @@ describe('MkMk Street engine', () => {
     assert.ok(assets.shopAsset === shop.price);
     assert.ok(assets.stockAsset === g.areas[area].stockPrice * 10);
   });
+
+  it('places suit marks at the four corners', () => {
+    const board = buildBoard();
+    const marks = board.nodes.filter((n) => n.type === 'mark');
+    assert.equal(marks.length, 4);
+    const corners = new Set(marks.map((m) => `${m.col},${m.row}`));
+    assert.ok(corners.has('0,0'));
+    assert.ok(corners.has('10,0'));
+    assert.ok(corners.has('0,10'));
+    assert.ok(corners.has('10,10'));
+    const hubs = board.nodes.filter((n) =>
+      (n.col === 5 && n.row === 0) ||
+      (n.col === 10 && n.row === 5) ||
+      (n.col === 5 && n.row === 10) ||
+      (n.col === 0 && n.row === 5)
+    );
+    assert.equal(hubs.length, 4);
+    assert.ok(hubs.every((h) => h.type !== 'mark'));
+    assert.ok(hubs.some((h) => h.type === 'rest'));
+    assert.ok(hubs.some((h) => h.type === 'holiday'));
+    assert.ok(hubs.some((h) => h.type === 'event'));
+  });
+
+  it('opens event-table scratch when landing on a mark', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+    });
+    assert.ok(g.players[0].eventTable);
+    assert.equal(g.players[0].eventTable.cells.length, 100);
+    const mark = g.map.find((n) => n.type === 'mark');
+    g.players[0].pos = mark.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: g.startId };
+    const r = advanceMove(g);
+    assert.equal(r.ok, true);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'scratch');
+    assert.equal(g.players[0].marks[mark.mark], true);
+    const cellId = g.pending.openIds[0];
+    const scratched = applyChoice(g, { action: 'scratch', cellId });
+    assert.equal(scratched.ok, true);
+    assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
+  });
+
+  it('shop holiday zeroes toll for one turn', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 8,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    g.players[0].shopsClosed = true;
+    assert.equal(calcToll(g, shop), 0);
+    g.players[0].shopsClosed = false;
+    assert.ok(calcToll(g, shop) > 0);
+  });
 });
