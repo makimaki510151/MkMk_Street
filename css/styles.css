@@ -430,6 +430,64 @@ button:disabled { opacity: .45; cursor: default; }
   pointer-events: none;
 }
 #modal[hidden] { display: none !important; }
+#modal.floating {
+  display: block;
+  background: transparent;
+  padding: 0;
+  inset: 0;
+}
+#modal.floating .modal-card {
+  pointer-events: auto;
+  z-index: 31;
+}
+.modal-drag-handle { cursor: grab; user-select: none; touch-action: none; }
+.modal-drag-handle:active { cursor: grabbing; }
+.modal-card.fork-hint-only {
+  width: min(360px, 92vw);
+}
+#fork-rails {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 32;
+}
+#fork-rails[hidden] { display: none !important; }
+.fork-rail {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  pointer-events: auto;
+  max-width: min(168px, 28vw);
+}
+.fork-rail-left {
+  left: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.fork-rail-right {
+  right: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.fork-rail-up {
+  top: 3.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  max-width: min(420px, 92vw);
+}
+.fork-rail-down {
+  bottom: 5.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  max-width: min(420px, 92vw);
+}
+.fork-pill {
+  min-width: 7.2rem;
+  box-shadow: var(--shadow);
+}
 #modal.docked {
   place-items: end center;
   background: transparent;
@@ -526,6 +584,21 @@ button:disabled { opacity: .45; cursor: default; }
 .scratch-cell.done {
   opacity: 0.72;
   cursor: default;
+}
+.scratch-cell.by-player {
+  opacity: 1;
+  background: color-mix(in srgb, var(--pc) 52%, rgba(0,0,0,0.35));
+  border: 2px solid color-mix(in srgb, var(--pc) 85%, #fff);
+  color: #fffef8;
+  position: relative;
+}
+.scratch-owner {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 0.55rem;
+  font-weight: 900;
+  opacity: 0.9;
 }
 .scratch-cell.reveal {
   animation: scratchPop 0.35s ease;

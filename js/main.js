@@ -15,6 +15,7 @@ import {
   calcToll,
   getRemainingInvest,
   getNode,
+  getSharedEventTable,
   PLAYER_COLORS,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
@@ -47,11 +48,44 @@ const app = {
   lastTurnKey: null,
   modalMode: 'center', // center | docked | hidden
   modalActive: false,
+  /** @type {{x:number,y:number}|null} */
+  modalDrag: null,
   inspectedId: null,
   restSkipTimer: null,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
+
+function saveRejoinSession() {
+  if (app.mode === 'local' || !app.net?.roomCode) return;
+  try {
+    sessionStorage.setItem('mkmk_rejoin', JSON.stringify({
+      room: app.net.roomCode,
+      name: app.localName,
+      seat: app.localSeat,
+    }));
+  } catch (_) { /* ignore */ }
+}
+
+function readRejoinSession(roomCode) {
+  try {
+    const raw = sessionStorage.getItem('mkmk_rejoin');
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (j?.room === roomCode) return j;
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+function findRejoinSeat(g, name, rejoinSeat) {
+  const nm = String(name || '').trim();
+  if (!nm) return -1;
+  if (typeof rejoinSeat === 'number' && rejoinSeat >= 0 && rejoinSeat < g.players.length) {
+    const p = g.players[rejoinSeat];
+    if (p && !p.isCPU && p.name === nm && (p.offline || !p.peerId)) return rejoinSeat;
+  }
+  return g.players.findIndex((p) => !p.isCPU && p.name === nm && (p.offline || !p.peerId));
+}
 
 function showScreen(id) {
   $$('.screen').forEach((el) => el.classList.toggle('active', el.id === id));
@@ -191,7 +225,13 @@ async function openLobby(role) {
         renderLobbyPlayers();
         app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
       } else {
-        app.net.sendToHost({ type: 'hello', name, peerId: info.peerId });
+        const rejoin = readRejoinSession(roomInput);
+        app.net.sendToHost({
+          type: 'hello',
+          name,
+          peerId: info.peerId,
+          rejoinSeat: rejoin?.seat,
+        });
       }
     } catch (e) {
       setStatus(e.message || String(e), 'error');
@@ -213,6 +253,7 @@ async function openLobby(role) {
     app.localSeat = 0;
     app.net.broadcast({ type: 'game_start', state: serializeState(app.game), seatMap: players.map((p) => p.peerId) });
     enterGame();
+    saveRejoinSession();
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -259,6 +300,22 @@ function handleNetEvent({ from, data }) {
         return;
       }
       if (app.game) {
+        const seat = findRejoinSeat(app.game, data.name, data.rejoinSeat);
+        if (seat >= 0) {
+          const pl = app.game.players[seat];
+          pl.peerId = data.peerId || from;
+          pl.offline = false;
+          app.game.logs.unshift({ text: `${pl.name} が再接続`, kind: 'system' });
+          if (app.game.logs.length > 30) app.game.logs.length = 30;
+          app.net.sendTo(from, {
+            type: 'game_rejoin',
+            state: serializeState(app.game),
+            seat,
+          });
+          syncState();
+          refreshGameUI();
+          return;
+        }
         app.net.sendTo(from, { type: 'game_already' });
         return;
       }
@@ -276,10 +333,25 @@ function handleNetEvent({ from, data }) {
       handleHostAction(from, data);
       return;
     }
-    if (data.type === 'peer_left' && !app.game) {
-      app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
-      renderLobbyPlayers();
-      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+    if (data.type === 'peer_left') {
+      if (!app.game) {
+        app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
+        renderLobbyPlayers();
+        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        return;
+      }
+      const seat = app.game.players.findIndex((p) => p.peerId === data.peerId);
+      if (seat >= 0) {
+        app.game.players[seat].offline = true;
+        app.game.players[seat].peerId = null;
+        app.game.logs.unshift({
+          text: `${app.game.players[seat].name} が切断（同じ名前で再接続できます）`,
+          kind: 'system',
+        });
+        if (app.game.logs.length > 30) app.game.logs.length = 30;
+        syncState();
+        refreshGameUI();
+      }
     }
   }
 
@@ -293,12 +365,24 @@ function handleNetEvent({ from, data }) {
       toast('部屋が満員です');
       return;
     }
-    if (data.type === 'game_start') {
+    if (data.type === 'game_start' || data.type === 'game_rejoin') {
       app.game = restoreState(data.state);
       const myPeer = app.net.peerId;
-      app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
-      if (app.localSeat < 0) app.localSeat = 0;
+      if (data.type === 'game_rejoin' && typeof data.seat === 'number') {
+        app.localSeat = data.seat;
+        app.game.players[app.localSeat].peerId = myPeer;
+        app.game.players[app.localSeat].offline = false;
+      } else {
+        app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
+        if (app.localSeat < 0) app.localSeat = 0;
+      }
       enterGame();
+      if (data.type === 'game_rejoin') toast('再接続しました');
+      saveRejoinSession();
+      return;
+    }
+    if (data.type === 'game_already') {
+      toast('進行中のゲームがあります。同じ名前で再接続を試してください');
       return;
     }
     if (data.type === 'fx') {
@@ -413,7 +497,9 @@ function enterGame() {
   };
   bindGameControls();
   bindModalTools();
+  bindModalDrag();
   app.lastTurnKey = null;
+  saveRejoinSession();
   app.inspectedId = app.game.startId;
   updateInspectPanel();
   refreshGameUI();
@@ -493,6 +579,7 @@ function bindGameControls() {
 function bindModalTools() {
   $('#btn-modal-dock').onclick = () => {
     app.modalMode = app.modalMode === 'docked' ? 'center' : 'docked';
+    app.modalDrag = null;
     applyModalMode();
     audio.sfx.click();
   };
@@ -509,10 +596,28 @@ function bindModalTools() {
   };
 }
 
+function applyModalPosition() {
+  const card = $('#modal-card');
+  if (!card) return;
+  if (app.modalDrag) {
+    card.style.position = 'fixed';
+    card.style.left = `${app.modalDrag.x}px`;
+    card.style.top = `${app.modalDrag.y}px`;
+    card.style.margin = '0';
+  } else {
+    card.style.position = '';
+    card.style.left = '';
+    card.style.top = '';
+    card.style.margin = '';
+  }
+}
+
 function applyModalMode() {
   const modal = $('#modal');
   const restore = $('#btn-modal-restore');
-  modal.classList.toggle('docked', app.modalMode === 'docked');
+  modal.classList.toggle('docked', app.modalMode === 'docked' && !app.modalDrag);
+  modal.classList.toggle('floating', !!app.modalDrag);
+  applyModalPosition();
   if (app.modalMode === 'hidden') {
     modal.hidden = true;
     restore.hidden = !app.modalActive;
@@ -523,6 +628,86 @@ function applyModalMode() {
     restore.hidden = true;
   }
   $('#btn-modal-dock').textContent = app.modalMode === 'docked' ? '中央へ' : '端へ';
+}
+
+function bindModalDrag() {
+  const card = $('#modal-card');
+  const handle = card?.querySelector('.modal-drag-handle');
+  if (!handle || handle.dataset.dragBound) return;
+  handle.dataset.dragBound = '1';
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let origX = 0;
+  let origY = 0;
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    handle.style.cursor = 'grabbing';
+    const rect = card.getBoundingClientRect();
+    app.modalDrag = app.modalDrag || { x: rect.left, y: rect.top };
+    origX = app.modalDrag.x;
+    origY = app.modalDrag.y;
+    startX = e.clientX;
+    startY = e.clientY;
+    $('#modal')?.classList.add('floating');
+    applyModalMode();
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging || !app.modalDrag) return;
+    const w = card.offsetWidth || 320;
+    const h = card.offsetHeight || 200;
+    app.modalDrag.x = Math.max(8, Math.min(window.innerWidth - w - 8, origX + e.clientX - startX));
+    app.modalDrag.y = Math.max(52, Math.min(window.innerHeight - h - 8, origY + e.clientY - startY));
+    applyModalPosition();
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.cursor = 'grab';
+    try { handle.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+  handle.style.cursor = 'grab';
+}
+
+function hideForkRails() {
+  const rails = $('#fork-rails');
+  if (rails) rails.hidden = true;
+}
+
+function renderForkRails(pend) {
+  let rails = $('#fork-rails');
+  if (!rails) {
+    rails = document.createElement('div');
+    rails.id = 'fork-rails';
+    rails.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(rails);
+  }
+  rails.hidden = false;
+  const mkBtn = (o) => `<button type="button" class="btn primary fork-btn fork-pill" data-next="${o.id}">
+    ${o.label}<br><small>${escapeHtml(o.dest)}</small>
+  </button>`;
+  const bySide = (s) => pend.options.filter((o) => o.side === s).map(mkBtn).join('');
+  rails.innerHTML = `
+    <div class="fork-rail fork-rail-left">${bySide('left')}</div>
+    <div class="fork-rail fork-rail-right">${bySide('right')}</div>
+    <div class="fork-rail fork-rail-up">${bySide('up')}</div>
+    <div class="fork-rail fork-rail-down">${bySide('down')}</div>
+  `;
+  rails.querySelectorAll('[data-next]').forEach((btn) => {
+    btn.onclick = () => {
+      hideForkRails();
+      hideModal();
+      sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
+    };
+  });
 }
 
 function sendAction(action) {
@@ -1203,27 +1388,18 @@ function showChoiceModal(g) {
   $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
   $('#modal-card').classList.remove('stock-modal');
+  hideForkRails();
 
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
+    $('#modal-card').classList.add('fork-hint-only');
     body.innerHTML = `
-      <p class="hint">マスをクリック／下のボタン。「隠す」「端へ」で盤面を確認できます</p>
-      <div class="modal-actions fork-actions">
-        ${pend.options.map((o) => `
-          <button class="btn primary fork-btn" data-next="${o.id}">
-            ${o.label}<br><small>${o.dest}</small>
-          </button>
-        `).join('')}
-      </div>`;
+      <p class="hint">左右（上下）の端に進路があります。盤面のマスをクリックしても選べます。タイトルバーをドラッグでウィンドウを移動できます。</p>`;
     $('#btn-skip-choice').hidden = true;
-    body.querySelectorAll('[data-next]').forEach((btn) => {
-      btn.onclick = () => {
-        hideModal();
-        sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
-      };
-    });
+    renderForkRails(pend);
     return;
   }
+  $('#modal-card').classList.remove('fork-hint-only');
 
   if (pend.type === 'buy_shop') {
     const sq = getNode(g, pend.shopId);
@@ -1431,8 +1607,11 @@ function showChoiceModal(g) {
 
   if (pend.type === 'scratch') {
     const p = g.players[pend.playerId];
-    const table = p?.eventTable;
-    title.textContent = 'イベント表スクラッチ（1〜200）';
+    const table = getSharedEventTable(g);
+    const canPick = app.mode === 'local'
+      ? !p?.isCPU
+      : pend.playerId === app.localSeat;
+    title.textContent = '共通イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     if (!table) {
@@ -1443,22 +1622,30 @@ function showChoiceModal(g) {
       `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
-      const color = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
+      const sealColor = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
-        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">
-          <small>#${c.eventId}</small><span>${c.shortLabel || c.label}</span>
+        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
+        const pc = scratcher?.color || '#888';
+        const who = scratcher ? escapeHtml(scratcher.name) : '';
+        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+          <span class="scratch-owner" aria-hidden="true">${who ? who.slice(0, 1) : '·'}</span>
+          <small>#${c.eventId}</small><span>${escapeHtml(c.shortLabel || c.label)}</span>
         </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="イベントマス">?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${sealColor}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">1マススクラッチ。縦・横・斜めに同じ色が3つ以上そろうと、その色のプレイヤーに ${MATCH_BONUS_PER}G×数</p>
+      <p class="hint">全員共通の表です。すでにめくられたマスは選べません（めくった人の色で表示）。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
     `;
+    if (!canPick) {
+      body.querySelector('.hint')?.insertAdjacentHTML('afterend', '<p class="hint">他のプレイヤーが選ぶのを待っています…</p>');
+    }
     body.querySelectorAll('[data-cell]').forEach((btn) => {
       btn.onclick = () => {
+        if (!canPick) return;
         body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
         const cellId = Number(btn.dataset.cell);
         const cell = table.cells[cellId];
@@ -1485,6 +1672,8 @@ function hideModal() {
   app.modalActive = false;
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
+  hideForkRails();
+  $('#modal-card')?.classList.remove('fork-hint-only');
   app.renderer?.clearStockHighlight();
 }
 
