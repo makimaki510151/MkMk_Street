@@ -48,7 +48,7 @@ const app = {
   modalActive: false,
   /** @type {{x:number,y:number}|null} */
   modalDrag: null,
-  feedPinnedTop: true,
+  feedPinnedBottom: true,
   inspectedId: null,
   restSkipTimer: null,
 };
@@ -467,6 +467,9 @@ function enterGame() {
   audio.startBgm();
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
+  app.feedPinnedBottom = true;
+  const feed = $('#event-feed');
+  if (feed) feed.innerHTML = '';
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
@@ -588,7 +591,8 @@ function bindModalTools() {
   };
   const feed = $('#event-feed');
   feed?.addEventListener('scroll', () => {
-    app.feedPinnedTop = feed.scrollTop < 24;
+    const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 28;
+    app.feedPinnedBottom = nearBottom;
   }, { passive: true });
 }
 
@@ -611,7 +615,10 @@ function applyModalPosition() {
 function applyModalMode() {
   const modal = $('#modal');
   const restore = $('#btn-modal-restore');
+  const card = $('#modal-card');
+  const centered = !!card?.classList.contains('scratch-modal') && !app.modalDrag;
   modal.classList.toggle('floating', !!app.modalDrag);
+  modal.classList.toggle('centered', centered);
   applyModalPosition();
   if (app.modalMode === 'hidden') {
     modal.hidden = true;
@@ -1088,14 +1095,17 @@ function refreshGameUI() {
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
 
-  const logLines = g.logs.slice(0, 24).map((l) => {
+  // 上→下（古い→新しい）。内部配列は newest-first のため表示時に反転
+  const logLines = g.logs.slice(0, 24).reverse().map((l) => {
     let text = l.text;
     if (app.hideDiceResult && l.kind === 'dice' && /サイコロ\s*→\s*\d/.test(text)) {
       text = text.replace(/サイコロ\s*→\s*\d+/, 'サイコロ → ？');
     }
     return `<div class="log-line ${l.kind || ''}">${escapeHtml(text)}</div>`;
   });
-  $('#log').innerHTML = logLines.join('');
+  const logEl = $('#log');
+  logEl.innerHTML = logLines.join('');
+  logEl.scrollTop = logEl.scrollHeight;
 
   const diceEl = $('#dice-face');
   if (app.hideDiceResult) {
@@ -1315,7 +1325,7 @@ function enqueueBanner(payload) {
   pushEventStamp(payload);
 }
 
-/** 左上フィードへ即時スタンプ追加（待ちなし・さかのぼり可） */
+/** 左上フィードへ即時スタンプ追加（上→下・さかのぼり可） */
 function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
   const feed = $('#event-feed');
   if (!feed) return;
@@ -1330,10 +1340,19 @@ function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
     <div class="eb-title">${escapeHtml(title || '')}</div>
     ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
   `;
-  feed.prepend(stamp);
+  // 時系列は上（古い）→下（新しい）。新しいスタンプは末尾へ追加
+  feed.appendChild(stamp);
 
-  while (feed.children.length > 40) feed.lastElementChild?.remove();
-  if (app.feedPinnedTop !== false) feed.scrollTop = 0;
+  while (feed.children.length > 40) feed.firstElementChild?.remove();
+
+  // 未オーバーフロー時は先頭（上）を見せて積み下がりを確認。溢れたら下端追従
+  const overflowing = feed.scrollHeight > feed.clientHeight + 2;
+  if (!overflowing) {
+    feed.scrollTop = 0;
+    app.feedPinnedBottom = true;
+  } else if (app.feedPinnedBottom !== false) {
+    feed.scrollTop = feed.scrollHeight;
+  }
 
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
 }
@@ -1366,6 +1385,7 @@ function showChoiceModal(g) {
   $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
   $('#modal-card').classList.remove('stock-modal');
+  $('#modal-card').classList.remove('scratch-modal');
   hideForkRails();
 
   if (pend.type === 'fork') {
@@ -1590,7 +1610,10 @@ function showChoiceModal(g) {
       : pend.playerId === app.localSeat;
     title.textContent = '共通イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
-    $('#modal-card').classList.add('wide');
+    // スクラッチは中央に大きく表示（ドラッグ位置はリセット）
+    app.modalDrag = null;
+    $('#modal-card').classList.add('wide', 'scratch-modal');
+    applyModalMode();
     if (!table) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
@@ -1604,15 +1627,16 @@ function showChoiceModal(g) {
         const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
         const pc = scratcher?.color || '#888';
         const who = scratcher ? escapeHtml(scratcher.name) : '';
-        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+        // マス内は色＋番号のみ（イベント名は title に）
+        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc};--sc:${sealColor}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+          <span class="scratch-num">${c.eventId}</span>
           <span class="scratch-owner" aria-hidden="true">${who ? who.slice(0, 1) : '·'}</span>
-          <small>#${c.eventId}</small><span>${escapeHtml(c.shortLabel || c.label)}</span>
         </button>`;
       }
       return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${sealColor}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">全員共通の表です。すでにめくられたマスは選べません（めくった人の色で表示）。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
+      <p class="hint">全員共通の表です。めくると色と番号だけ表示（イベント名はホバーで確認）。めくった人の色で縁取り。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
@@ -1626,9 +1650,15 @@ function showChoiceModal(g) {
         body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
         const cellId = Number(btn.dataset.cell);
         const cell = table.cells[cellId];
+        const sealColor = GROUP_COLORS[cell?.color] || GROUP_COLORS[cell?.group] || '#888';
+        const actor = g.players[pend.playerId];
         btn.classList.remove('sealed');
-        btn.classList.add('reveal');
-        btn.innerHTML = `<small>#${cell?.eventId ?? ''}</small><span>${cell?.shortLabel || cell?.label || '!'}</span>`;
+        btn.classList.add('reveal', 'done', 'by-player');
+        btn.style.setProperty('--pc', actor?.color || '#888');
+        btn.style.setProperty('--sc', sealColor);
+        btn.title = cell?.label || '';
+        btn.innerHTML = `<span class="scratch-num">${cell?.eventId ?? ''}</span>
+          <span class="scratch-owner" aria-hidden="true">${(actor?.name || '·').slice(0, 1)}</span>`;
         const resultEl = $('#scratch-result');
         if (resultEl) {
           resultEl.hidden = false;
@@ -1652,7 +1682,9 @@ function hideModal() {
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
-  $('#modal-card')?.classList.remove('fork-hint-only');
+  const card = $('#modal-card');
+  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'wide');
+  $('#modal')?.classList.remove('centered');
   app.renderer?.clearStockHighlight();
 }
 

@@ -430,9 +430,19 @@ button:disabled { opacity: .45; cursor: default; }
   pointer-events: none;
 }
 #modal[hidden] { display: none !important; }
+#modal.centered {
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 12, 14, 0.42);
+}
+#modal.centered .modal-card.scratch-modal {
+  width: min(520px, 96vw);
+  max-height: min(86vh, 720px);
+}
 #modal.floating {
   display: block;
   padding: 0;
+  background: transparent;
 }
 #modal.floating .modal-card {
   pointer-events: auto;
@@ -545,19 +555,23 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .scratch-cell {
   aspect-ratio: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
   border: none;
   border-radius: 4px;
-  font-size: clamp(0.45rem, 1.6vw, 0.62rem);
   font-weight: 800;
-  line-height: 1.05;
-  padding: 1px;
+  line-height: 1;
+  padding: 0;
   cursor: pointer;
   color: #fffef8;
   background: color-mix(in srgb, var(--sc, #888) 78%, #111);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
   display: grid;
   place-items: center;
-  gap: 1px;
+  overflow: hidden;
+  position: relative;
+  container-type: size;
 }
 .scratch-cell.sealed {
   background: linear-gradient(160deg, #3a4a55, #243038);
@@ -569,23 +583,42 @@ button:disabled { opacity: .45; cursor: default; }
   color: #ffe08a;
 }
 .scratch-cell.done {
-  opacity: 0.72;
+  opacity: 0.95;
   cursor: default;
+  /* マスのイベント色をベースに、めくった人の色で縁取り */
+  background: color-mix(in srgb, var(--sc, #888) 72%, #111);
+  border: 2px solid color-mix(in srgb, var(--pc, #fff) 88%, #111);
+  color: #fffef8;
 }
 .scratch-cell.by-player {
   opacity: 1;
-  background: color-mix(in srgb, var(--pc) 52%, rgba(0,0,0,0.35));
-  border: 2px solid color-mix(in srgb, var(--pc) 85%, #fff);
-  color: #fffef8;
-  position: relative;
+}
+.scratch-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  /* マスサイズを変えず、1〜3桁が収まるようセル幅基準 */
+  font-size: clamp(0.55rem, 2.6vw, 0.95rem);
+  font-size: clamp(0.55rem, 42cqw, 1.05rem);
+  line-height: 1;
+  max-width: 92%;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none;
 }
 .scratch-owner {
   position: absolute;
-  top: 2px;
-  right: 3px;
-  font-size: 0.55rem;
+  top: 1px;
+  right: 2px;
+  font-size: clamp(0.4rem, 1.6vw, 0.58rem);
+  font-size: clamp(0.4rem, 22cqw, 0.62rem);
   font-weight: 900;
-  opacity: 0.9;
+  opacity: 0.95;
+  color: var(--pc, #fff);
+  text-shadow: 0 0 2px #000;
+  line-height: 1;
+  pointer-events: none;
 }
 .scratch-cell.reveal {
   animation: scratchPop 0.35s ease;
@@ -609,14 +642,6 @@ button:disabled { opacity: .45; cursor: default; }
   border-radius: 999px;
   background: color-mix(in srgb, var(--sc) 35%, #111);
   color: #fff;
-}
-.scratch-cell small {
-  font-size: 0.55rem;
-  opacity: 0.85;
-}
-.scratch-cell span {
-  font-size: clamp(0.4rem, 1.4vw, 0.58rem);
-  line-height: 1.05;
 }
 .levelup-hero {
   text-align: center;
@@ -812,6 +837,8 @@ button:disabled { opacity: .45; cursor: default; }
   overflow: auto;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
   gap: 0.4rem;
   max-height: min(52vh, 380px);
   padding-right: 2px;
@@ -826,7 +853,8 @@ button:disabled { opacity: .45; cursor: default; }
     linear-gradient(160deg, color-mix(in srgb, var(--eb) 30%, #102428), rgba(10, 28, 32, 0.9));
   border: 2px solid color-mix(in srgb, var(--eb) 72%, #fff);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
-  animation: stampIn 0.14s ease-out both;
+  /* 上から下へ流れ込む */
+  animation: stampIn 0.16s ease-out both;
 }
 .event-stamp[data-mine="1"] {
   border-width: 2.5px;
@@ -854,8 +882,8 @@ button:disabled { opacity: .45; cursor: default; }
   line-height: 1.3;
 }
 @keyframes stampIn {
-  from { opacity: 0; transform: translateX(-18px) scale(0.94); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
+  from { opacity: 0; transform: translateY(-12px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* volume dock — いつでも操作可 */
