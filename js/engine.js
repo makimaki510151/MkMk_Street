@@ -728,6 +728,20 @@ function payToll(g, payer, sq) {
   const owner = g.players[sq.owner];
   let toll = calcToll(g, sq);
 
+  // スクラッチ等の通行守り
+  if (payer.flags?.tollShield) {
+    payer.flags.tollShield = false;
+    addLog(g, `${payer.name} の通行守りで買い物料0！`, 'event');
+    endTurn(g);
+    return;
+  }
+  // 家主側の買い物料アップ
+  if (owner?.flags?.tollBoost) {
+    owner.flags.tollBoost = false;
+    toll = Math.floor(toll * 1.5);
+    addLog(g, `${owner.name} の家主印章で買い物料アップ！`, 'event');
+  }
+
   // 配当（銀行から株保有者へ）
   const holders = g.players.filter((pl) => !pl.bankrupt && (pl.stocks[sq.area] || 0) > 0);
   let divTotal = 0;

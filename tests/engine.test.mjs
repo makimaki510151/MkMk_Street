@@ -15,7 +15,7 @@ import {
   updateAreaStockPrices,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
-import { unscratchedIds } from '../js/eventTable.js';
+import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -225,6 +225,17 @@ describe('MkMk Street engine', () => {
     assert.equal(scratched.ok, true);
     assert.equal(g.sharedEventTable.cells[cellId].scratched, true);
     assert.equal(g.sharedEventTable.cells[cellId].scratchedBy, 0);
+  });
+
+  it('keeps scratch event catalog diverse (not mostly cash)', () => {
+    assert.equal(EVENT_CATALOG.length, EVENT_COUNT);
+    const cashOnly = EVENT_CATALOG.filter((e) => e.effect === 'cash').length;
+    assert.ok(cashOnly <= 40, `too many cash-only events: ${cashOnly}`);
+    const kinds = new Set(EVENT_CATALOG.map((e) => e.effect || e.kind));
+    assert.ok(kinds.size >= 15, `expected many effect kinds, got ${kinds.size}`);
+    assert.ok(kinds.has('extra_roll') || kinds.has('grant_mark'));
+    assert.ok(kinds.has('warp_bank') || kinds.has('warp_random'));
+    assert.ok(kinds.has('stocks') || kinds.has('shop_boost'));
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {
