@@ -731,16 +731,17 @@ button:disabled { opacity: .45; cursor: default; }
 .sc-max, .sc-have { font-size: 0.72rem; color: var(--muted); }
 .sc-actions { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
 .stock-buy-panel {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
   align-items: end;
   padding-top: 0.2rem;
 }
-.stock-buy-panel .field { grid-column: 1 / -1; }
-@media (min-width: 420px) {
-  .stock-buy-panel .field { grid-column: auto; }
+.stock-buy-panel .field {
+  flex: 1 1 7rem;
+  margin: 0;
 }
+.stock-buy-panel .btn { flex: 0 0 auto; }
 .stock-row {
   display: grid;
   grid-template-columns: 1.3fr 0.7fr 0.8fr auto auto;
