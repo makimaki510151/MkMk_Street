@@ -20,7 +20,6 @@
       <button class="btn large" id="btn-join">部屋に入る（ゲスト）</button>
       <button class="btn large" id="btn-local">ローカル / CPU対戦</button>
       <button class="btn ghost" id="btn-howto">遊び方</button>
-      <p class="hint-mini">PeerJS の無料ブローカー経由でブラウザ同士が直接通信します</p>
     </div>
   </section>
 
@@ -32,8 +31,8 @@
         <li>自分の番に<strong>サイコロ</strong>を振り、マスを進みます。マップは分岐路で、交差点では<strong>進む方向を選択</strong>します。</li>
         <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
         <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
-        <li>♠♥♦♣ のマークを集めて銀行に戻ると<strong>昇進ボーナス</strong>。</li>
-        <li>銀行や証券マスで<strong>株</strong>を売買。総資産（現金＋店＋株）が目標に達し、<strong>銀行に止まると勝利</strong>。</li>
+        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まると</strong>10×10イベント表を1マススクラッチできます。</li>
+        <li>マークを集めて銀行に戻ると<strong>昇進ボーナス</strong>。銀行・証券で<strong>株</strong>を売買し、目標資産で銀行に止まると勝利。</li>
         <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。</li>
       </ol>
       <div class="row-actions">
@@ -103,6 +102,12 @@
     <div class="board-wrap">
       <canvas id="board"></canvas>
       <div id="inspect">マスをタップして詳細を表示</div>
+      <div id="dice-overlay" hidden>
+        <div class="dice-stage">
+          <div id="dice-overlay-face">?</div>
+          <div id="dice-overlay-label">サイコロ…</div>
+        </div>
+      </div>
     </div>
     <aside class="side">
       <div id="players-panel"></div>
@@ -119,8 +124,14 @@
   </section>
 
   <div id="modal" hidden>
-    <div class="modal-card">
-      <h3 id="modal-title">選択</h3>
+    <div class="modal-card" id="modal-card">
+      <div class="modal-toolbar">
+        <h3 id="modal-title">選択</h3>
+        <div class="modal-tools">
+          <button type="button" class="btn tiny ghost" id="btn-modal-dock" title="端へ寄せる">端へ</button>
+          <button type="button" class="btn tiny ghost" id="btn-modal-hide" title="一時的に隠す">隠す</button>
+        </div>
+      </div>
       <div id="modal-body"></div>
       <div class="row-actions">
         <button class="btn" id="btn-skip-choice">やめる</button>
@@ -128,6 +139,7 @@
       </div>
     </div>
   </div>
+  <button type="button" id="btn-modal-restore" hidden>選択を再表示</button>
 
   <div id="winner" hidden>
     <div class="winner-card">
@@ -138,6 +150,13 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="vol-dock" aria-label="音量">
+    <button type="button" id="btn-mute" class="btn tiny" title="ミュート">🔊</button>
+    <label class="vol-label">全体<input type="range" id="vol-master" min="0" max="1" step="0.01" /></label>
+    <label class="vol-label">BGM<input type="range" id="vol-bgm" min="0" max="1" step="0.01" /></label>
+    <label class="vol-label">SE<input type="range" id="vol-se" min="0" max="1" step="0.01" /></label>
+  </div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

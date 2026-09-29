@@ -7,6 +7,7 @@ import {
   getTollMulti,
   getPlayerAssets,
   rollDice,
+  advanceMove,
   applyChoice,
   chooseFork,
   getForwardNexts,
@@ -99,9 +100,11 @@ describe('MkMk Street engine', () => {
       players: [{ name: 'A' }, { name: 'B', isCPU: true }],
       seed: 99,
     });
-    // 銀行は4方向なので最初の一歩で分岐する
     const result = rollDice(g);
     assert.equal(result.ok, true);
+    assert.equal(result.needsAdvance, true);
+    const step = advanceMove(g);
+    assert.equal(step.forked, true);
     assert.equal(g.phase, 'await_fork');
     assert.equal(g.pending?.type, 'fork');
     assert.ok(g.pending.options.length >= 2);
@@ -113,12 +116,25 @@ describe('MkMk Street engine', () => {
       seed: 11,
     });
     rollDice(g);
+    advanceMove(g);
     assert.equal(g.phase, 'await_fork');
     const nextId = g.pending.options[0].id;
     const stepsBefore = g.move.stepsLeft;
     const result = chooseFork(g, nextId);
     assert.equal(result.ok, true);
-    assert.ok(g.players[0].pos === nextId || g.move === null || g.phase !== 'await_fork' || g.move.stepsLeft < stepsBefore);
+    assert.equal(g.players[0].pos, nextId);
+    assert.ok(!g.move || g.move.stepsLeft < stepsBefore);
+  });
+
+  it('continueMove reaches fork or landing', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    rollDice(g);
+    const r = continueMove(g);
+    assert.equal(r.ok, true);
+    assert.ok(r.forked || r.done || g.phase === 'await_choice' || g.phase === 'await_roll' || g.phase === 'gameover' || g.phase === 'await_fork');
   });
 
   it('filters reverse direction from forward nexts', () => {
@@ -163,5 +179,62 @@ describe('MkMk Street engine', () => {
     assert.equal(assets.total, assets.cash + assets.shopAsset + assets.stockAsset);
     assert.ok(assets.shopAsset === shop.price);
     assert.ok(assets.stockAsset === g.areas[area].stockPrice * 10);
+  });
+
+  it('places suit marks at the four corners', () => {
+    const board = buildBoard();
+    const marks = board.nodes.filter((n) => n.type === 'mark');
+    assert.equal(marks.length, 4);
+    const corners = new Set(marks.map((m) => `${m.col},${m.row}`));
+    assert.ok(corners.has('0,0'));
+    assert.ok(corners.has('10,0'));
+    assert.ok(corners.has('0,10'));
+    assert.ok(corners.has('10,10'));
+    const hubs = board.nodes.filter((n) =>
+      (n.col === 5 && n.row === 0) ||
+      (n.col === 10 && n.row === 5) ||
+      (n.col === 5 && n.row === 10) ||
+      (n.col === 0 && n.row === 5)
+    );
+    assert.equal(hubs.length, 4);
+    assert.ok(hubs.every((h) => h.type !== 'mark'));
+    assert.ok(hubs.some((h) => h.type === 'rest'));
+    assert.ok(hubs.some((h) => h.type === 'holiday'));
+    assert.ok(hubs.some((h) => h.type === 'event'));
+  });
+
+  it('opens event-table scratch when landing on a mark', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+    });
+    assert.ok(g.players[0].eventTable);
+    assert.equal(g.players[0].eventTable.cells.length, 100);
+    const mark = g.map.find((n) => n.type === 'mark');
+    g.players[0].pos = mark.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: g.startId };
+    const r = advanceMove(g);
+    assert.equal(r.ok, true);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'scratch');
+    assert.equal(g.players[0].marks[mark.mark], true);
+    const cellId = g.pending.openIds[0];
+    const scratched = applyChoice(g, { action: 'scratch', cellId });
+    assert.equal(scratched.ok, true);
+    assert.equal(g.players[0].eventTable.cells[cellId].scratched, true);
+  });
+
+  it('shop holiday zeroes toll for one turn', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 8,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    g.players[0].shopsClosed = true;
+    assert.equal(calcToll(g, shop), 0);
+    g.players[0].shopsClosed = false;
+    assert.ok(calcToll(g, shop) > 0);
   });
 });
