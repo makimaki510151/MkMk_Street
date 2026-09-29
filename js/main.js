@@ -16,6 +16,7 @@ import {
   getRemainingInvest,
   getNode,
   PLAYER_COLORS,
+  continueMove,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import { GROUP_COLORS, TABLE_SIZE } from './eventTable.js';
