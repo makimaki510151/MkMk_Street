@@ -18,7 +18,7 @@ import {
   PLAYER_COLORS,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { GROUP_COLORS, TABLE_SIZE } from './eventTable.js';
+import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER } from './eventTable.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
@@ -47,6 +47,8 @@ const app = {
   lastTurnKey: null,
   modalMode: 'center', // center | docked | hidden
   modalActive: false,
+  inspectedId: null,
+  restSkipTimer: null,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
@@ -374,9 +376,15 @@ function enterGame() {
   window.addEventListener('resize', () => app.renderer?.resize());
   app.renderer.startLoop(() => app.game);
   canvas.onclick = (e) => {
-    if (!app.game || app.busy) return;
+    if (!app.game) return;
     const hit = app.renderer.hitTest(app.game, e.clientX, e.clientY);
     if (!hit) return;
+
+    // マス情報は演出中でも常に更新
+    app.inspectedId = hit.id;
+    updateInspectPanel();
+
+    if (app.busy) return;
 
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
@@ -384,18 +392,58 @@ function enterGame() {
         : app.game.pending.playerId === app.localSeat;
       if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
         sendAction({ type: 'choice', choice: { nextId: hit.id } });
-        return;
       }
     }
-
-    $('#inspect').textContent = shopTooltip(app.game, hit);
   };
   bindGameControls();
   bindModalTools();
   app.lastTurnKey = null;
+  app.inspectedId = app.game.startId;
+  updateInspectPanel();
   refreshGameUI();
   maybeYourTurnChime();
+  maybeAutoSkipRest();
   scheduleCpu();
+}
+
+function updateInspectPanel() {
+  const el = $('#inspect');
+  if (!el || !app.game) return;
+  const sq = app.inspectedId != null ? getNode(app.game, app.inspectedId) : null;
+  if (!sq) {
+    el.innerHTML = '<strong>マス情報</strong><span class="inspect-sub">マスをクリックして詳細を固定表示</span>';
+    return;
+  }
+  el.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(app.game, sq))}</span>`;
+}
+
+/** 休み中は自動スキップ（人間がNPCのダイスを振らされるのを防ぐ） */
+function maybeAutoSkipRest() {
+  clearTimeout(app.restSkipTimer);
+  if (!app.game || app.busy || app.mode === 'guest') return;
+  if (app.game.phase !== 'await_roll') return;
+  const cur = currentPlayer(app.game);
+  if (!cur?.resting || cur.bankrupt) return;
+
+  // 人間プレイヤーが休みのときも自動で進める
+  app.restSkipTimer = setTimeout(async () => {
+    if (!app.game || app.busy || app.game.phase !== 'await_roll') return;
+    const p = currentPlayer(app.game);
+    if (!p?.resting) return;
+    enqueueBanner({
+      kicker: `${p.name} は休憩中`,
+      title: 'ターンスキップ',
+      detail: '休憩のためサイコロは振りません',
+      kind: 'system',
+      color: p.color,
+      mine: app.mode === 'local' ? !p.isCPU : p.id === app.localSeat,
+    });
+    const result = rollDice(app.game);
+    if (result.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
+    scheduleCpu();
+  }, 700);
 }
 
 function isMyTurn() {
@@ -840,11 +888,14 @@ function refreshGameUI() {
     diceEl.classList.remove('pop');
   }
 
-  const canRoll = !app.busy && g.phase === 'await_roll' && (app.mode === 'local' ? !cur?.isCPU : isMyTurn());
+  const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
+  const canRoll = !app.busy && g.phase === 'await_roll' && humanTurn && !cur?.resting;
   $('#btn-roll').disabled = !canRoll;
   $('#btn-roll').textContent = app.busy
     ? '演出中…'
-    : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…'));
+    : (cur?.resting && humanTurn
+      ? '休憩中（自動スキップ）…'
+      : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
@@ -886,8 +937,10 @@ function refreshGameUI() {
   }
 
   renderStockPanel(g);
+  updateInspectPanel();
   maybeYourTurnChime();
   announceNewLogs(g);
+  maybeAutoSkipRest();
 }
 
 function pendingStatusLabel(pend) {
@@ -896,8 +949,9 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'five_buy': return '5倍買いを検討中';
-    case 'stock': return '株を取引中';
+    case 'stock': return pend.bankPass ? '銀行通過の株購入中' : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
+    case 'level_up': return '昇進を祝っている';
     default: return '選択中';
   }
 }
@@ -1100,6 +1154,7 @@ function showChoiceModal(g) {
   applyModalMode();
   $('#btn-end-choice').hidden = true;
   $('#btn-skip-choice').hidden = false;
+  $('#btn-skip-choice').textContent = 'やめる';
   $('#modal-card').classList.remove('wide');
 
   if (pend.type === 'fork') {
@@ -1175,8 +1230,42 @@ function showChoiceModal(g) {
     return;
   }
 
+  if (pend.type === 'level_up') {
+    const p = g.players[pend.playerId];
+    title.textContent = '昇進おめでとう！';
+    $('#btn-skip-choice').hidden = true;
+    body.innerHTML = `
+      <div class="levelup-hero" style="--pc:${p?.color || '#ffe08a'}">
+        <div class="levelup-badge">LEVEL UP</div>
+        <p class="modal-lead"><strong>${escapeHtml(p?.name || '')}</strong></p>
+        <p class="levelup-levels">Lv.${pend.from} → <strong>Lv.${pend.to}</strong></p>
+        <p class="levelup-bonus">昇進賞金 <strong>+${Number(pend.bonus || 0).toLocaleString()}G</strong></p>
+        <p class="hint">マークを揃えて銀行へ到達！</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn primary large" id="m-levelup">お祝いする</button>
+      </div>`;
+    audio.sfx.levelUp?.() || audio.sfx.win();
+    enqueueBanner({
+      kicker: '昇進！',
+      title: `Lv.${pend.to}`,
+      detail: `${p?.name || ''} +${pend.bonus}G`,
+      kind: 'level',
+      color: p?.color,
+      mine: true,
+    });
+    $('#m-levelup').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'celebrate' } });
+    };
+    return;
+  }
+
   if (pend.type === 'stock') {
-    title.textContent = pend.atBank ? '銀行 — 株取引' : '証券マス — 株取引';
+    const pass = !!pend.bankPass;
+    title.textContent = pass
+      ? '銀行通過 — 株を1種類だけ購入'
+      : (pend.atBank ? '銀行 — 株取引' : '証券マス — 株取引');
     const rows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
@@ -1186,18 +1275,19 @@ function showChoiceModal(g) {
         <span class="sr-price">${meta.stockPrice}G</span>
         <span class="sr-have">持株 ${have}</span>
         <button class="btn tiny" data-buy="${area}">買う</button>
-        <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
+        ${pass ? '' : `<button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>`}
       </div>`;
     }).join('');
     body.innerHTML = `<div class="stock-list">${rows}</div>
-      <p class="hint">枚数はダイアログで指定。盤面確認は「隠す／端へ」</p>`;
+      <p class="hint">${pass ? '通過ボーナス：好きなエリアを1種類だけ購入できます（見送り可）' : '枚数はダイアログで指定。盤面確認は「隠す／端へ」'}</p>`;
     $('#btn-end-choice').hidden = false;
-    $('#btn-skip-choice').hidden = true;
+    $('#btn-skip-choice').hidden = !pass;
+    if (pass) $('#btn-skip-choice').textContent = '買わずに進む';
 
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.buy);
-        const count = Number(prompt('何枚買いますか？（1〜99）', '10')) || 0;
+        const count = Number(prompt('何枚買いますか？（1〜99）', pass ? '10' : '10')) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
       };
     });
@@ -1214,22 +1304,28 @@ function showChoiceModal(g) {
   if (pend.type === 'scratch') {
     const p = g.players[pend.playerId];
     const table = p?.eventTable;
-    title.textContent = 'イベント表スクラッチ';
+    title.textContent = 'イベント表スクラッチ（1〜200）';
     $('#btn-skip-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     if (!table) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
     }
+    const legend = GROUP_COLORS.map((c, i) =>
+      `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
+    ).join('');
     const cells = table.cells.map((c) => {
-      const color = GROUP_COLORS[c.group] || '#888';
+      const color = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
-        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">${c.label}</button>`;
+        return `<button type="button" class="scratch-cell done" style="--sc:${color}" disabled title="${c.label}">
+          <small>#${c.eventId}</small><span>${c.shortLabel || c.label}</span>
+        </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="マス${c.id + 1}">?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${color}" aria-label="イベントマス">?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">未公開のマスを1つ選んでスクラッチ。縦横が揃うとボーナス！</p>
+      <p class="hint">1マススクラッチ。縦・横・斜めに同じ色が3つ以上そろうと、その色のプレイヤーに ${MATCH_BONUS_PER}G×数</p>
+      <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
     `;
@@ -1240,7 +1336,7 @@ function showChoiceModal(g) {
         const cell = table.cells[cellId];
         btn.classList.remove('sealed');
         btn.classList.add('reveal');
-        btn.textContent = cell?.label || '!';
+        btn.innerHTML = `<small>#${cell?.eventId ?? ''}</small><span>${cell?.shortLabel || cell?.label || '!'}</span>`;
         const resultEl = $('#scratch-result');
         if (resultEl) {
           resultEl.hidden = false;
