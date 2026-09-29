@@ -1408,6 +1408,7 @@ function showChoiceModal(g) {
   $('#modal-card').classList.remove('wide');
   $('#modal-card').classList.remove('stock-modal');
   $('#modal-card').classList.remove('scratch-modal');
+  $('#modal-card').classList.remove('raise-modal');
   hideForkRails();
 
   if (pend.type === 'fork') {
@@ -1491,6 +1492,7 @@ function showChoiceModal(g) {
     }[pend.reason] || '資金調達';
     title.textContent = '資金調達';
     $('#modal-card').classList.add('wide');
+    $('#modal-card').classList.add('raise-modal');
     const stockRows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const have = p?.stocks[area] || 0;

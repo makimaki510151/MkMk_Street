@@ -506,6 +506,17 @@ button:disabled { opacity: .45; cursor: default; }
   width: min(360px, calc(100vw - 320px));
   max-height: min(58vh, 520px);
 }
+#modal .modal-card.raise-modal {
+  width: min(420px, calc(100vw - 320px));
+  max-height: min(70vh, 620px);
+}
+#modal .modal-card.raise-modal .modal-actions {
+  position: sticky;
+  bottom: -0.2rem;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, transparent, #143238 28%);
+  z-index: 2;
+}
 .modal-card {
   pointer-events: auto;
   width: min(420px, 100%);
