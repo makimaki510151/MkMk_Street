@@ -1211,20 +1211,34 @@ export function applyChoice(g, choice) {
   return { ok: false, error: 'unknown_pending' };
 }
 
-/** ターン開始前に株売却できる */
+const STOCK_SELL_PHASES = new Set(['await_roll', 'await_choice', 'await_fork']);
+
+/** 自分のターン中（移動演出以外）に株を売れるか */
+export function canSellStockOnTurn(g, playerId) {
+  if (!g || g.phase === 'gameover') return false;
+  if (!STOCK_SELL_PHASES.has(g.phase)) return false;
+  if (g.currentPlayerIdx !== playerId) return false;
+  const p = g.players[playerId];
+  if (!p || p.bankrupt || p.resting) return false;
+  return Object.values(p.stocks || {}).some((n) => (n || 0) > 0);
+}
+
+/** 自分のターン中いつでも株売却できる（サイコロ前・選択中・分岐中） */
 export function preTurnSell(g, playerId, area, count) {
-  if (g.phase !== 'await_roll') return { ok: false, error: 'bad_phase' };
+  if (!STOCK_SELL_PHASES.has(g.phase)) return { ok: false, error: 'bad_phase' };
   if (g.currentPlayerIdx !== playerId) return { ok: false, error: 'not_your_turn' };
   const p = g.players[playerId];
-  const have = p.stocks[area] || 0;
-  const n = Math.max(1, Math.min(have, count));
-  if (n <= 0) return { ok: false, error: 'no_stock' };
-  const got = g.areas[area].stockPrice * n;
-  p.stocks[area] -= n;
+  if (!p || p.bankrupt) return { ok: false, error: 'bankrupt' };
+  const a = Number(area);
+  const have = p.stocks[a] || 0;
+  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
+  const got = g.areas[a].stockPrice * n;
+  p.stocks[a] -= n;
   p.cash += got;
-  if (n >= 10) g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * 0.93));
+  if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
-  addLog(g, `${p.name} が A${area}株×${n} 売却（+${got}G）`, 'stock');
+  addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
 }
 
