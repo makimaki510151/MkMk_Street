@@ -12,6 +12,7 @@ import {
   cpuAct,
   currentPlayer,
   getPlayerAssets,
+  getLiquidatableValue,
   calcToll,
   getRemainingInvest,
   getNode,
@@ -417,6 +418,7 @@ function playRemoteFx(data) {
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
+  if (data.kind === 'fiveBuy') audio.sfx.fiveBuy();
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
@@ -764,7 +766,18 @@ async function applyLocalAction(action) {
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
-    if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    if (result.fiveBuy) {
+      audio.sfx.fiveBuy();
+      broadcastFx({ kind: 'fiveBuy' });
+      enqueueBanner({
+        kicker: '衝撃！',
+        title: '5倍買い！',
+        detail: 'お店を奪取した！',
+        kind: 'shop',
+        color: currentPlayer(app.game)?.color || '#ffe08a',
+        mine: true,
+      });
+    }
     if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -958,6 +971,10 @@ async function handleHostAction(from, data) {
     }
     const result = applyChoice(app.game, action.choice);
     if (result.state) app.game = restoreState(result.state);
+    if (result.fiveBuy) {
+      audio.sfx.fiveBuy();
+      broadcastFx({ kind: 'fiveBuy' });
+    }
     syncState();
     refreshGameUI();
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
@@ -1083,7 +1100,7 @@ function refreshGameUI() {
     return `
       <div class="player-card ${active} ${me}" style="--pc:${p.color}">
         <div class="pc-head"><span class="pc-dot"></span><strong>${p.name}</strong><span class="pc-lv">Lv.${p.level}</span></div>
-        <div class="pc-money">${a.cash.toLocaleString()}G</div>
+        <div class="pc-money${a.cash < 0 ? ' debt' : ''}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
         <div class="pc-marks">${marks}${status}</div>
@@ -1184,6 +1201,7 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'five_buy': return '5倍買いを検討中';
+    case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
       ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
       : '株を取引中';
@@ -1441,16 +1459,108 @@ function showChoiceModal(g) {
   if (pend.type === 'five_buy') {
     const sq = getNode(g, pend.shopId);
     const owner = g.players[sq.owner];
+    const p = g.players[pend.playerId];
+    const short = (p?.cash || 0) < pend.price;
+    const canRaise = getLiquidatableValue(g, p) >= pend.price;
     title.textContent = '5倍買い？';
     body.innerHTML = `
-      <p class="modal-lead"><strong>${sq.label}</strong>（${owner?.name || ''}の店）</p>
+      <p class="modal-lead"><strong>${escapeHtml(sq.label)}</strong>（${escapeHtml(owner?.name || '')}の店）</p>
       <p>価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
+      <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G${short ? ' — 不足分は株や物件を売って調達できます' : ''}</p>
       <div class="modal-actions">
-        <button class="btn danger" id="m-five">5倍買いする</button>
+        <button class="btn danger" id="m-five" ${!canRaise ? 'disabled' : ''}>
+          ${short ? '資金を調達して5倍買い' : '5倍買いする'}
+        </button>
       </div>`;
     $('#m-five').onclick = () => {
       hideModal();
       sendAction({ type: 'choice', choice: { action: 'buy' } });
+    };
+    return;
+  }
+
+  if (pend.type === 'raise_funds') {
+    const p = g.players[pend.playerId];
+    const target = Number(pend.targetCash) || 0;
+    const short = Math.max(0, target - (p?.cash || 0));
+    const reasonLabel = {
+      toll: '買い物料の支払い後',
+      five_buy: '5倍買いのため',
+      buy_shop: 'お店購入のため',
+      invest: '増資のため',
+    }[pend.reason] || '資金調達';
+    title.textContent = '資金調達';
+    $('#modal-card').classList.add('wide');
+    const stockRows = Object.keys(g.areas).map((a) => {
+      const area = Number(a);
+      const have = p?.stocks[area] || 0;
+      if (!have) return '';
+      const price = g.areas[area].stockPrice;
+      return `<div class="raise-row" style="--ac:${g.areas[area].color}">
+        <span>A${area} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
+        <label class="field tiny">枚数
+          <input type="number" min="1" max="${have}" value="${Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))))}" data-sell-stock="${area}" />
+        </label>
+        <button type="button" class="btn tiny" data-do-sell-stock="${area}">売る</button>
+      </div>`;
+    }).join('');
+    const shopRows = g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((sq) => {
+      const got = Math.floor(sq.price * 0.5);
+      return `<div class="raise-row" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <span>${escapeHtml(sq.label)}（売却見込 ${got.toLocaleString()}G）</span>
+        <button type="button" class="btn tiny" data-do-sell-shop="${sq.id}">物件を売る</button>
+      </div>`;
+    }).join('');
+    const canContinue = (p?.cash || 0) >= target;
+    const canExec = canContinue && pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
+    const execLabel = {
+      five_buy: '調達完了 — 5倍買いする',
+      buy_shop: '調達完了 — 購入する',
+      invest: '調達完了 — 増資する',
+    }[pend.resume?.type] || '調達完了 — 実行する';
+    body.innerHTML = `
+      <p class="modal-lead">${reasonLabel}</p>
+      <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
+        ／ 目標 <strong>${target.toLocaleString()}G</strong>
+        ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。</p>
+      <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
+      <div class="raise-section"><h4>物件（半額売却）</h4>${shopRows || '<p class="hint">売却できる物件がありません</p>'}</div>
+      <div class="modal-actions">
+        <button class="btn primary" id="m-raise-go" ${canContinue ? '' : 'disabled'}>
+          ${canExec ? execLabel : '調達完了'}
+        </button>
+        <button class="btn ghost" id="m-raise-cancel">やめる（ターン終了）</button>
+        <button class="btn danger ghost" id="m-raise-bankrupt">破産を宣言</button>
+      </div>`;
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    body.querySelectorAll('[data-do-sell-stock]').forEach((btn) => {
+      btn.onclick = () => {
+        const area = Number(btn.dataset.doSellStock);
+        const input = body.querySelector(`input[data-sell-stock="${area}"]`);
+        const count = Math.max(1, Number(input?.value) || 1);
+        sendAction({ type: 'choice', choice: { action: 'sell_stock', area, count } });
+      };
+    });
+    body.querySelectorAll('[data-do-sell-shop]').forEach((btn) => {
+      btn.onclick = () => {
+        sendAction({ type: 'choice', choice: { action: 'sell_shop', shopId: Number(btn.dataset.doSellShop) } });
+      };
+    });
+    $('#m-raise-go').onclick = () => {
+      if (!canContinue) return;
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'continue', execute: !!canExec } });
+    };
+    $('#m-raise-cancel').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'cancel' } });
+    };
+    $('#m-raise-bankrupt').onclick = () => {
+      if (!confirm('破産すると店も株も失います。よろしいですか？')) return;
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'bankrupt' } });
     };
     return;
   }
