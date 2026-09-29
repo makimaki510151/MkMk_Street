@@ -612,14 +612,26 @@ button:disabled { opacity: .45; cursor: default; }
   color: #fffef8;
   cursor: pointer;
   font: inherit;
+  position: relative;
 }
 .stock-card:disabled { opacity: 0.45; cursor: not-allowed; }
-.stock-card.selected {
+.stock-card.selected,
+.stock-card.broker.focus {
   outline: 2px solid #ffe08a;
   background: color-mix(in srgb, var(--ac) 28%, rgba(0,0,0,0.2));
 }
 .stock-card.broker { cursor: default; }
-.sc-name { font-weight: 800; font-size: 0.82rem; }
+.sc-swatch {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 3px;
+  background: var(--ac);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+}
+.sc-name { font-weight: 800; font-size: 0.82rem; padding-right: 1rem; }
 .sc-price { font-size: 0.78rem; color: var(--gold); font-weight: 700; }
 .sc-max, .sc-have { font-size: 0.72rem; color: var(--muted); }
 .sc-actions { display: flex; gap: 0.3rem; margin-top: 0.25rem; }

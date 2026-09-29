@@ -28,6 +28,9 @@ export function createRenderer(canvas) {
   };
   let raf = 0;
   let layout = { size: 40, ox: 0, oy: 0 };
+  /** 株購入中に盤面で強調するエリア番号（null=強調なし / 'all'=全店にA番号） */
+  let stockHighlightArea = null;
+  let stockHighlightMode = false;
 
   function resize() {
     const parent = canvas.parentElement;
@@ -167,6 +170,14 @@ export function createRenderer(canvas) {
       else if (n.type === 'junction') fill = '#5a4a3a';
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
+      const stockMode = stockHighlightMode || (g.phase === 'await_choice' && g.pending?.type === 'stock');
+      const areaHot = stockMode && n.type === 'shop' && (
+        stockHighlightArea == null
+          ? true
+          : Number(stockHighlightArea) === Number(n.area)
+      );
+      const areaDim = stockMode && n.type === 'shop' && stockHighlightArea != null
+        && Number(stockHighlightArea) !== Number(n.area);
 
       ctx.fillStyle = fill;
       ctx.fill();
@@ -176,8 +187,38 @@ export function createRenderer(canvas) {
         fillShopPattern(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r, meta);
       }
 
-      ctx.strokeStyle = forkOpt ? '#ffe08a' : stroke;
-      ctx.lineWidth = forkOpt ? 4 : (owner ? 3.5 : 1.5);
+      // 株購入中：対象外エリアを暗く
+      if (areaDim) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 12, 16, 0.55)';
+        roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 株購入中：エリア色の縁取り（全体表示 or 選択/ホバー中を強調）
+      if (areaHot && n.type === 'shop') {
+        ctx.save();
+        const selected = stockHighlightArea != null;
+        const glow = selected
+          ? 0.4 + Math.sin(anim.pulse) * 0.25
+          : 0.22 + Math.sin(anim.pulse) * 0.08;
+        ctx.globalAlpha = glow;
+        ctx.strokeStyle = AREA_META[n.area]?.patternInk || AREA_META[n.area]?.color || '#ffe08a';
+        ctx.lineWidth = selected ? 4.5 : 2.5;
+        roundRect(ctx, x + pad - 1, y + pad - 1, size - pad * 2 + 2, size - pad * 2 + 2, r + 1);
+        ctx.stroke();
+        if (selected) {
+          ctx.globalAlpha = 0.24 + Math.sin(anim.pulse) * 0.12;
+          ctx.fillStyle = AREA_META[n.area]?.color || '#ffe08a';
+          roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      ctx.strokeStyle = forkOpt ? '#ffe08a' : (areaHot && stockHighlightArea != null ? '#fffef5' : stroke);
+      ctx.lineWidth = forkOpt ? 4 : (areaHot && stockHighlightArea != null ? 3.5 : (owner ? 3.5 : 1.5));
       roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
       ctx.stroke();
 
@@ -227,11 +268,21 @@ export function createRenderer(canvas) {
       ctx.textBaseline = 'middle';
 
       if (n.type === 'shop') {
-        ctx.font = `700 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
-        ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.02);
-        ctx.font = `600 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
-        ctx.fillText(`${n.price}G`, x + size / 2, y + size / 2 + size * 0.24);
+        if (stockMode) {
+          // 株購入中はエリア番号を大きく表示
+          ctx.font = `900 ${Math.max(11, size * 0.28)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.35)' : '#ffe08a';
+          ctx.fillText(`A${n.area}`, x + size / 2, y + size / 2 - size * 0.12);
+          ctx.font = `700 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.95)';
+          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 + size * 0.16);
+        } else {
+          ctx.font = `700 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.02);
+          ctx.font = `600 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.fillText(`${n.price}G`, x + size / 2, y + size / 2 + size * 0.24);
+        }
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
         ctx.fillText(SUIT_LABELS[n.mark], x + size / 2, y + size / 2);
@@ -321,7 +372,18 @@ export function createRenderer(canvas) {
     return null;
   }
 
-  return { resize, draw, startLoop, stop, hitTest, animateToken };
+  /** @param {number|null} area 強調するエリア。null で解除。mode=true で株UI中のA番号表示 */
+  function setStockHighlight(area, mode = true) {
+    stockHighlightMode = !!mode;
+    stockHighlightArea = area == null ? null : Number(area);
+  }
+
+  function clearStockHighlight() {
+    stockHighlightMode = false;
+    stockHighlightArea = null;
+  }
+
+  return { resize, draw, startLoop, stop, hitTest, animateToken, setStockHighlight, clearStockHighlight };
 }
 
 function fillShopPattern(ctx, x, y, w, h, r, meta) {

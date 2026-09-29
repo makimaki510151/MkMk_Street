@@ -1294,12 +1294,26 @@ function showChoiceModal(g) {
 
   if (pend.type === 'stock') {
     const bankVisit = !!pend.bankVisit || !!pend.bankPass || !!pend.atBank;
-    const broker = !!pend.broker;
     const p = currentPlayer(g);
     title.textContent = bankVisit
       ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
       : '証券マス — 株取引';
     $('#modal-card').classList.add('stock-modal');
+    // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
+    app.renderer?.setStockHighlight(null, true);
+    app.modalMode = app.modalMode === 'center' ? 'docked' : app.modalMode;
+    applyModalMode();
+
+    const bindAreaHighlight = (root) => {
+      root.querySelectorAll('[data-area]').forEach((el) => {
+        const area = Number(el.dataset.area);
+        el.addEventListener('pointerenter', () => app.renderer?.setStockHighlight(area, true));
+        el.addEventListener('pointerleave', () => {
+          const sel = root.querySelector('.stock-card.selected, .stock-card.broker.focus');
+          app.renderer?.setStockHighlight(sel ? Number(sel.dataset.area) : null, true);
+        });
+      });
+    };
 
     if (bankVisit) {
       const cards = Object.keys(g.areas).map((a) => {
@@ -1309,6 +1323,7 @@ function showChoiceModal(g) {
         const max = Math.floor((p?.cash || 0) / price);
         const have = p?.stocks[area] || 0;
         return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max="${max}" ${max < 1 ? 'disabled' : ''}>
+          <span class="sc-swatch" aria-hidden="true"></span>
           <span class="sc-name">A${area} ${meta.name}</span>
           <span class="sc-price">${price}G</span>
           <span class="sc-max">${max < 1 ? '資金不足' : `最大 ${max}枚`}</span>
@@ -1316,7 +1331,7 @@ function showChoiceModal(g) {
         </button>`;
       }).join('');
       body.innerHTML = `
-        <p class="hint">1種類だけ、持ち金の限り購入できます（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
+        <p class="hint">カードに触れると盤面の同じエリア店が光ります。1種類だけ持ち金の限り購入（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
         <div class="stock-grid">${cards}</div>
         <div id="stock-buy-panel" class="stock-buy-panel" hidden>
           <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
@@ -1327,11 +1342,13 @@ function showChoiceModal(g) {
       $('#btn-skip-choice').textContent = pend.resumeMove ? '買わずに進む方向を選ぶ' : '買わずに終了';
 
       let selected = null;
+      bindAreaHighlight(body);
       body.querySelectorAll('.stock-card').forEach((btn) => {
         btn.onclick = () => {
           body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
           btn.classList.add('selected');
           selected = Number(btn.dataset.area);
+          app.renderer?.setStockHighlight(selected, true);
           const max = Number(btn.dataset.max) || 1;
           const panel = $('#stock-buy-panel');
           const input = $('#m-stock-count');
@@ -1350,12 +1367,13 @@ function showChoiceModal(g) {
       return;
     }
 
-    // 証券マス：従来の売買（コンパクトグリッド・二重スクロール回避）
+    // 証券マス：売買＋エリアハイライト
     const rows = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
       const have = p?.stocks[area] || 0;
-      return `<div class="stock-card broker" style="--ac:${meta.color}">
+      return `<div class="stock-card broker" style="--ac:${meta.color}" data-area="${area}">
+        <span class="sc-swatch" aria-hidden="true"></span>
         <span class="sc-name">A${area} ${meta.name}</span>
         <span class="sc-price">${meta.stockPrice}G / 持株 ${have}</span>
         <div class="sc-actions">
@@ -1364,23 +1382,30 @@ function showChoiceModal(g) {
         </div>
       </div>`;
     }).join('');
-    body.innerHTML = `<div class="stock-grid">${rows}</div>
-      <p class="hint">枚数はダイアログで指定</p>`;
+    body.innerHTML = `<p class="hint">カードに触れると盤面のエリア店が光ります</p>
+      <div class="stock-grid">${rows}</div>`;
     $('#btn-end-choice').hidden = false;
     $('#btn-skip-choice').hidden = true;
+    bindAreaHighlight(body);
 
+    body.querySelectorAll('.stock-card.broker').forEach((card) => {
+      card.addEventListener('pointerenter', () => card.classList.add('focus'));
+      card.addEventListener('pointerleave', () => card.classList.remove('focus'));
+    });
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.buy);
+        app.renderer?.setStockHighlight(area, true);
         const price = g.areas[area].stockPrice;
         const max = Math.floor((p?.cash || 0) / price);
-        const count = Number(prompt(`何枚買いますか？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
+        const count = Number(prompt(`A${area} を何枚？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
       };
     });
     body.querySelectorAll('[data-sell]').forEach((btn) => {
       btn.onclick = () => {
         const area = Number(btn.dataset.sell);
+        app.renderer?.setStockHighlight(area, true);
         const count = Number(prompt('何枚売りますか？', '10')) || 0;
         if (count > 0) sendAction({ type: 'choice', choice: { action: 'sell', area, count } });
       };
@@ -1444,6 +1469,7 @@ function hideModal() {
   app.modalActive = false;
   $('#modal').hidden = true;
   $('#btn-modal-restore').hidden = true;
+  app.renderer?.clearStockHighlight();
 }
 
 function showWinner(g) {
