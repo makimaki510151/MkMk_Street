@@ -726,7 +726,29 @@ function applyEventDef(g, player, def, messages) {
   }
 }
 
-/** 縦・横・斜めに同じ色が3つ以上（スクラッチ済み）そろえば、その色のプレイヤーに報酬 */
+/**
+ * 一直線上で、同じ色が隣接して続くランを列挙する。
+ * とびとび（間に別色・未開封がある）は別ランになる。
+ */
+function contiguousColorRuns(lineCells, table, color) {
+  /** @type {number[][]} */
+  const runs = [];
+  /** @type {number[]} */
+  let cur = [];
+  for (const id of lineCells) {
+    const cell = table.cells[id];
+    if (cell?.scratched && cell.color === color) {
+      cur.push(id);
+    } else if (cur.length) {
+      runs.push(cur);
+      cur = [];
+    }
+  }
+  if (cur.length) runs.push(cur);
+  return runs;
+}
+
+/** 縦・横・斜めに同じ色が隣接して3つ以上そろえば、その色のプレイヤーに報酬 */
 function checkColorMatches(g, table, cellId, messages) {
   const size = table.size;
   const row = Math.floor(cellId / size);
@@ -749,14 +771,11 @@ function checkColorMatches(g, table, cellId, messages) {
   if (!table.claimedMatches) table.claimedMatches = {};
 
   for (const line of lines) {
-    const counts = [0, 0, 0, 0];
-    for (const id of line.cells) {
-      const cell = table.cells[id];
-      if (cell.scratched) counts[cell.color] += 1;
-    }
     for (let color = 0; color < 4; color++) {
-      const n = counts[color];
-      if (n < 3) continue;
+      const runs = contiguousColorRuns(line.cells, table, color).filter((r) => r.length >= 3);
+      if (!runs.length) continue;
+      const cellIds = runs.flat();
+      const n = cellIds.length;
       const claimKey = `${line.key}-c${color}-n${n}`;
       const prevKey = Object.keys(table.claimedMatches).find((k) => k.startsWith(`${line.key}-c${color}-`));
       if (prevKey && table.claimedMatches[prevKey] >= n) continue;
@@ -770,10 +789,6 @@ function checkColorMatches(g, table, cellId, messages) {
       if (beneficiary && !beneficiary.bankrupt) {
         beneficiary.cash += bonus;
         total += bonus;
-        const cellIds = line.cells.filter((id) => {
-          const cell = table.cells[id];
-          return cell?.scratched && cell.color === color;
-        });
         matches.push({
           lineKey: line.key,
           color,
