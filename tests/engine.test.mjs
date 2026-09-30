@@ -547,6 +547,26 @@ describe('MkMk Street engine', () => {
     assert.ok(g.players[1].cash > beforeB, 'other player got participation');
     assert.ok(g.players[0].cash >= beforeA, 'actor cash not reduced');
     assert.equal(g.pending, null);
+    assert.ok(r.reveal, 'reveal payload for FX');
+    assert.equal(r.reveal.game, 'coin');
+    assert.ok(r.reveal.outcome?.face);
+    assert.ok(r.reveal.title);
+  });
+
+  it('slot minigame reveal includes symbols and tier', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 42,
+      cash: 1000,
+    });
+    g.phase = 'await_choice';
+    g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+    const r = applyChoice(g, { action: 'spin' });
+    assert.equal(r.ok, true);
+    assert.equal(r.reveal.game, 'slot');
+    assert.equal(r.reveal.outcome.symbols.length, 3);
+    assert.ok(['jackpot', 'pair', 'miss'].includes(r.reveal.tier));
+    assert.ok(r.reveal.detail);
   });
 
   it('scratch all_cash / minigame catalog entries apply correctly', () => {

@@ -416,6 +416,13 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
+  if (data.kind === 'minigameReveal' && data.reveal) {
+    app.busy = true;
+    playMinigameReveal(data.reveal).finally(() => {
+      app.busy = false;
+      refreshGameUI();
+    });
+  }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
@@ -463,13 +470,20 @@ function maybeDemoLanding() {
     refreshGameUI();
     return;
   }
-  if (demo === 'minigame') {
+  if (demo === 'minigame' || demo === 'slot' || demo === 'coin' || demo === 'high_low') {
+    const game = demo === 'minigame' ? 'guess_dice' : demo;
+    const labels = {
+      guess_dice: 'サイコロ当て',
+      slot: 'スロット',
+      coin: 'コイントス',
+      high_low: 'ハイ＆ロー',
+    };
     app.game.phase = 'await_choice';
     app.game.pending = {
       type: 'minigame',
       playerId: p.id,
-      game: 'guess_dice',
-      label: 'サイコロ当て',
+      game,
+      label: labels[game] || 'ミニゲーム',
     };
     app.game.move = null;
     refreshGameUI();
@@ -791,7 +805,9 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
-    if (result.minigame && result.messages) {
+    if (result.reveal) {
+      await presentMinigameResult(result);
+    } else if (result.minigame && result.messages) {
       if (result.win) audio.sfx.levelUp();
       else audio.sfx.buy();
       enqueueBanner({
@@ -961,6 +977,194 @@ async function playDiceOverlay(face, remote = false) {
   overlay.hidden = true;
 }
 
+const SLOT_SYMS = ['★', '♪', 'G', '♦', '♣'];
+
+async function presentMinigameResult(result) {
+  const reveal = result.reveal;
+  if (!reveal) return;
+  app.busy = true;
+  broadcastFx({ kind: 'minigameReveal', reveal });
+  await playMinigameReveal(reveal);
+  const color = reveal.playerColor || '#ffe08a';
+  enqueueBanner({
+    kicker: reveal.label || 'ミニゲーム',
+    title: reveal.title || (reveal.win ? '当たり！' : '結果発表'),
+    detail: (reveal.messages || result.messages || []).join(' / '),
+    kind: 'event',
+    color,
+    mine: true,
+  });
+  broadcastFx({
+    kind: 'banner',
+    payload: {
+      kicker: reveal.label || 'ミニゲーム',
+      title: reveal.title || (reveal.win ? '当たり！' : '結果発表'),
+      detail: (reveal.messages || result.messages || []).join(' / '),
+      kind: 'event',
+      color,
+    },
+  });
+  app.busy = false;
+}
+
+async function playMinigameReveal(reveal) {
+  const overlay = $('#minigame-overlay');
+  const body = $('#mg-body');
+  const title = $('#mg-title');
+  const detail = $('#mg-detail');
+  const kicker = $('#mg-kicker');
+  if (!overlay || !body) return;
+
+  overlay.hidden = false;
+  overlay.classList.remove('show-result', 'tier-jackpot', 'tier-exact', 'tier-pair', 'tier-near', 'tier-win', 'tier-miss');
+  if (reveal.tier) overlay.classList.add(`tier-${reveal.tier}`);
+  kicker.textContent = `${reveal.playerName || ''} の${reveal.label || 'ミニゲーム'}`;
+  title.textContent = '';
+  detail.textContent = '';
+  body.innerHTML = '';
+  audio.sfx.minigameDrum();
+
+  const game = reveal.game || 'slot';
+  if (game === 'slot') {
+    await animateSlotReveal(body, reveal);
+  } else if (game === 'guess_dice') {
+    await animateDiceGuessReveal(body, reveal);
+  } else if (game === 'high_low') {
+    await animateHighLowReveal(body, reveal);
+  } else if (game === 'coin') {
+    await animateCoinReveal(body, reveal);
+  } else {
+    body.innerHTML = `<div class="mg-hl-card landed">?</div>`;
+    await wait(400);
+  }
+
+  title.textContent = reveal.title || (reveal.win ? '当たり！' : '結果発表');
+  detail.textContent = reveal.detail || (reveal.messages || []).join(' / ');
+  overlay.classList.add('show-result');
+
+  if (reveal.tier === 'jackpot' || reveal.tier === 'exact') audio.sfx.slotWin(true);
+  else if (reveal.win) audio.sfx.slotWin(false);
+  else audio.sfx.buy();
+
+  await wait(reveal.tier === 'jackpot' ? 1600 : 1100);
+  overlay.hidden = true;
+  overlay.classList.remove('show-result');
+  body.innerHTML = '';
+}
+
+async function animateSlotReveal(body, reveal) {
+  const finals = reveal.outcome?.symbols || ['★', '♪', 'G'];
+  body.innerHTML = `
+    <div class="mg-slot">
+      ${[0, 1, 2].map((i) => `<div class="mg-reel spinning" data-i="${i}"><span>${SLOT_SYMS[i]}</span></div>`).join('')}
+    </div>`;
+  const reels = [...body.querySelectorAll('.mg-reel')];
+  const spans = reels.map((r) => r.querySelector('span'));
+  let spinning = true;
+  const spinLoop = (async () => {
+    while (spinning) {
+      spans.forEach((sp, i) => {
+        if (reels[i].classList.contains('spinning')) {
+          sp.textContent = SLOT_SYMS[Math.floor(Math.random() * SLOT_SYMS.length)];
+        }
+      });
+      audio.sfx.slotSpin();
+      await wait(70);
+    }
+  })();
+
+  await wait(500);
+  for (let i = 0; i < 3; i++) {
+    await wait(380 + i * 120);
+    reels[i].classList.remove('spinning');
+    reels[i].classList.add('stopped');
+    spans[i].textContent = finals[i];
+    audio.sfx.slotStop();
+  }
+  spinning = false;
+  await spinLoop;
+
+  const [a, b, c] = finals;
+  if (a === b && b === c) reels.forEach((r) => r.classList.add('hit'));
+  else {
+    if (a === b) { reels[0].classList.add('hit'); reels[1].classList.add('hit'); }
+    if (b === c) { reels[1].classList.add('hit'); reels[2].classList.add('hit'); }
+    if (a === c && a !== b) { reels[0].classList.add('hit'); reels[2].classList.add('hit'); }
+  }
+  await wait(350);
+}
+
+async function animateDiceGuessReveal(body, reveal) {
+  const pick = reveal.outcome?.pick ?? reveal.pick ?? '?';
+  const roll = reveal.outcome?.roll ?? 1;
+  body.innerHTML = `
+    <div class="mg-dice-row">
+      <div class="mg-dice-col"><small>予想</small><div class="mg-die">${pick}</div></div>
+      <div class="mg-vs">VS</div>
+      <div class="mg-dice-col"><small>出目</small><div class="mg-die rolling" id="mg-roll-die">?</div></div>
+    </div>`;
+  const die = body.querySelector('#mg-roll-die');
+  audio.sfx.dice();
+  const start = performance.now();
+  while (performance.now() - start < 1000) {
+    die.textContent = String(1 + Math.floor(Math.random() * 6));
+    await wait(70);
+  }
+  die.textContent = String(roll);
+  die.classList.remove('rolling');
+  die.classList.add('landed');
+  audio.sfx.diceLand(roll);
+  await wait(450);
+}
+
+async function animateHighLowReveal(body, reveal) {
+  const secret = reveal.outcome?.secret ?? 1;
+  const band = reveal.outcome?.band === 'high' ? 'ハイ' : 'ロー';
+  const pickLabel = reveal.outcome?.pick === 'high' || reveal.pick === 'high' ? 'ハイ' : 'ロー';
+  body.innerHTML = `
+    <div>
+      <div class="mg-hl-card spinning" id="mg-hl-num">?</div>
+      <div class="mg-hl-band">予想：${pickLabel}</div>
+    </div>`;
+  const card = body.querySelector('#mg-hl-num');
+  audio.sfx.minigameDrum();
+  const start = performance.now();
+  while (performance.now() - start < 900) {
+    card.textContent = String(1 + Math.floor(Math.random() * 10));
+    await wait(65);
+  }
+  card.textContent = String(secret);
+  card.classList.remove('spinning');
+  card.classList.add('landed');
+  const bandEl = body.querySelector('.mg-hl-band');
+  if (bandEl) bandEl.textContent = `${secret} は ${band}`;
+  audio.sfx.diceLand(Math.min(6, secret));
+  await wait(450);
+}
+
+async function animateCoinReveal(body, reveal) {
+  const face = reveal.outcome?.face === 'tails' ? 'tails' : 'heads';
+  const faceLabel = face === 'heads' ? 'おもて' : 'うら';
+  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'tails' ? 'うら' : 'おもて';
+  body.innerHTML = `
+    <div>
+      <div class="mg-coin flipping" id="mg-coin">？</div>
+      <div class="mg-hl-band">予想：${pickLabel}</div>
+    </div>`;
+  const coin = body.querySelector('#mg-coin');
+  const labels = ['おもて', 'うら'];
+  for (let i = 0; i < 12; i++) {
+    coin.textContent = labels[i % 2];
+    audio.sfx.coinFlip();
+    await wait(90);
+  }
+  coin.textContent = faceLabel;
+  coin.classList.remove('flipping');
+  coin.classList.add('landed');
+  audio.sfx.coinLand();
+  await wait(450);
+}
+
 async function handleHostAction(from, data) {
   if (app.busy) {
     app.net.sendTo(from, { type: 'reject', reason: '演出中です' });
@@ -1009,7 +1213,9 @@ async function handleHostAction(from, data) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
     }
-    if (result.minigame && result.messages) {
+    if (result.reveal) {
+      await presentMinigameResult(result);
+    } else if (result.minigame && result.messages) {
       if (result.win) audio.sfx.levelUp();
       else audio.sfx.buy();
       broadcastFx({
@@ -1112,6 +1318,9 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
+      if (result?.reveal) {
+        await presentMinigameResult(result);
+      }
       syncState();
       refreshGameUI();
       if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
