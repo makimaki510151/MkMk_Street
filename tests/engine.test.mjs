@@ -16,7 +16,7 @@ import {
   updateAreaStockPrices,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
-import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT } from '../js/eventTable.js';
+import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT, applyAllCash, scratchCell } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -237,6 +237,12 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('extra_roll') || kinds.has('grant_mark'));
     assert.ok(kinds.has('warp_bank') || kinds.has('warp_random'));
     assert.ok(kinds.has('stocks') || kinds.has('shop_boost'));
+    assert.ok(kinds.has('all_cash'), 'expected all-player cash events');
+    assert.ok(kinds.has('minigame'), 'expected minigame events');
+    const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
+    const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
+    assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
+    assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {
@@ -467,5 +473,69 @@ describe('MkMk Street engine', () => {
     assert.equal(done.ok, true);
     assert.equal(done.fiveBuy, true);
     assert.equal(shop.owner, 0);
+  });
+
+  it('all_cash event gives money to every living player', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C', isCPU: true }],
+      seed: 77,
+      cash: 1000,
+    });
+    g.players[2].bankrupt = true;
+    const before = g.players.map((p) => p.cash);
+    const msgs = [];
+    applyAllCash(g, 80, msgs);
+    assert.equal(g.players[0].cash, before[0] + 80);
+    assert.equal(g.players[1].cash, before[1] + 80);
+    assert.equal(g.players[2].cash, before[2], 'bankrupt unchanged');
+    assert.match(msgs.join(''), /全員/);
+  });
+
+  it('minigame pending pays participation cash to everyone', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 88,
+      cash: 1000,
+    });
+    g.phase = 'await_choice';
+    g.pending = { type: 'minigame', playerId: 0, game: 'coin', label: 'コイントス' };
+    const beforeA = g.players[0].cash;
+    const beforeB = g.players[1].cash;
+    const r = applyChoice(g, { action: 'pick', value: 'heads' });
+    assert.equal(r.ok, true);
+    assert.equal(r.minigame, true);
+    // 当たりでも外れでも相手（と自分）に参加賞が入る
+    assert.ok(g.players[1].cash > beforeB, 'other player got participation');
+    assert.ok(g.players[0].cash >= beforeA, 'actor cash not reduced');
+    assert.equal(g.pending, null);
+  });
+
+  it('scratch all_cash / minigame catalog entries apply correctly', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 99,
+      cash: 1500,
+    });
+    const allCashId = EVENT_CATALOG.findIndex((e) => e.effect === 'all_cash');
+    assert.ok(allCashId >= 0);
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = allCashId + 1;
+    cell.label = EVENT_CATALOG[allCashId].label;
+    cell.scratched = false;
+    const beforeB = g.players[1].cash;
+    const scratched = scratchCell(g, g.players[0], 0);
+    assert.equal(scratched.ok, true);
+    assert.ok(g.players[1].cash > beforeB);
+
+    const miniId = EVENT_CATALOG.findIndex((e) => e.effect === 'minigame' && e.game === 'guess_dice');
+    assert.ok(miniId >= 0);
+    const cell2 = g.sharedEventTable.cells[1];
+    cell2.eventId = miniId + 1;
+    cell2.label = EVENT_CATALOG[miniId].label;
+    cell2.scratched = false;
+    g.players[0].flags = {};
+    const scratched2 = scratchCell(g, g.players[0], 1);
+    assert.equal(scratched2.ok, true);
+    assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
   });
 });
