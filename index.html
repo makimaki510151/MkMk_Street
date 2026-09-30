@@ -12,13 +12,14 @@
   <section id="screen-title" class="screen active">
     <div id="title-field" aria-hidden="true"></div>
     <div class="title-brand">
+      <p class="brand-eyebrow">P2P BOARD GAME</p>
       <div class="brand-mark">MkMk Street</div>
-      <p class="brand-sub">お店を買い、株を持ち、買い物料を集めて目標資産へ。ブラウザ同士でつながるP2Pマルチプレイすごろく。</p>
+      <p class="brand-sub">お店を買い、株を持ち、買い物料を集めて目標資産へ。</p>
     </div>
     <div class="title-actions">
-      <button class="btn primary large" id="btn-host">部屋を作る（ホスト）</button>
-      <button class="btn large" id="btn-join">部屋に入る（ゲスト）</button>
-      <button class="btn large" id="btn-local">ローカル / CPU対戦</button>
+      <button class="btn primary large" id="btn-host">部屋を作る</button>
+      <button class="btn large" id="btn-join">部屋に入る</button>
+      <button class="btn large" id="btn-local">ローカル / CPU</button>
       <button class="btn ghost" id="btn-howto">遊び方</button>
     </div>
   </section>
@@ -32,11 +33,10 @@
         <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
         <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
         <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が3つ以上そろうとセルが回り、<strong>そろった枚数×50G</strong>がその色のプレイヤーへ。</li>
-        <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。銀行・証券でも<strong>一度に買える株は1種類</strong>で、枚数はゲーム内の入力欄で指定します。右側の<strong>株の所持</strong>表と各プレイヤーカードで、全員の持ち株をいつでも確認できます。自分のターン中は右側から<strong>いつでも株を売却</strong>できます（移動演出中を除く）。目標資産で銀行に止まると勝利。</li>
-        <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続すると復帰できます。</li>
-        <li>イベント表スクラッチは<strong>全員共通</strong>。すでにめくられたマスは触れず、<strong>開けた人の色で塗られます</strong>。同じ色がそろえばその色のプレイヤーにボーナス。<strong>給料日・景気刺激</strong>など全員の持ち金が増えるイベントや、<strong>サイコロ当て／ハイ＆ロー／コイントス／スロット</strong>などのミニゲーム（外れても参加賞）もあります。盤面の東は<strong>サイコロ</strong>、南は<strong>スロット</strong>の専用ミニゲームマスです（内容は必ず別）。CPU対戦では各CPUに<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
-        <li>選択ウィンドウは<strong>右下（ログの左）</strong>に出ます。「隠す」で一時退避できます。分岐は左／右の端に表示。</li>
-        <li>出来事は画面<strong>左上</strong>にスタンプが<strong>上から下</strong>へ流れ、スクロールでさかのぼれます。</li>
+        <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。右側のタブから<strong>株の所持</strong>と<strong>売却</strong>、<strong>記録</strong>を切り替えられます。目標資産で銀行に止まると勝利。</li>
+        <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。</li>
+        <li>イベント表スクラッチは<strong>全員共通</strong>。開けた人の色で塗られ、同じ色がそろえばボーナス。東は<strong>サイコロ</strong>、南は<strong>スロット</strong>のミニゲームマスです。CPUには<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
+        <li>選択は必要時に表示。「隠す」で一時退避。分岐は盤の端。出来事は左上のフィード（開閉可）。</li>
       </ol>
       <div class="row-actions">
         <button class="btn primary" id="btn-howto-back">戻る</button>
@@ -95,13 +95,16 @@
 
   <!-- GAME -->
   <section id="screen-game" class="screen">
-    <div class="topbar">
+    <header class="topbar">
       <span class="brand-mini">MkMk Street</span>
-      <span class="chip" id="goal-chip">目標</span>
-      <span class="chip" id="turn-chip">ターン</span>
-      <span class="chip" id="phase-chip">phase</span>
+      <div class="topbar-meta">
+        <span class="chip" id="goal-chip">目標</span>
+        <span class="chip" id="turn-chip">ターン</span>
+        <span class="chip" id="phase-chip">phase</span>
+      </div>
       <span id="current-name"></span>
-    </div>
+    </header>
+
     <div class="board-wrap">
       <canvas id="board"></canvas>
       <div id="inspect">マスをタップして詳細を表示</div>
@@ -127,24 +130,40 @@
           <div class="mg-detail" id="mg-detail"></div>
         </div>
       </div>
-      <div id="event-feed-wrap" aria-live="polite">
+      <div id="event-feed-wrap" class="feed-collapsed" aria-live="polite">
+        <button type="button" id="btn-feed-toggle" class="feed-toggle" title="出来事フィード">出来事</button>
         <div id="status-chip" hidden>
           <span id="status-chip-text"></span>
         </div>
         <div id="event-feed"></div>
       </div>
     </div>
+
     <aside class="side">
-      <div id="players-panel"></div>
-      <div class="controls">
-        <div class="dice-row">
-          <div id="dice-face">·</div>
-          <button class="btn primary" id="btn-roll" style="flex:1">サイコロを振る</button>
+      <nav class="side-tabs" role="tablist" aria-label="サイドパネル">
+        <button type="button" class="side-tab active" data-side-tab="turn" role="tab" aria-selected="true">手番</button>
+        <button type="button" class="side-tab" data-side-tab="holdings" role="tab" aria-selected="false">所持</button>
+        <button type="button" class="side-tab" data-side-tab="log" role="tab" aria-selected="false">記録</button>
+      </nav>
+
+      <div class="side-pane active" data-pane="turn" role="tabpanel">
+        <div id="players-panel"></div>
+        <div class="controls">
+          <div class="dice-row">
+            <div id="dice-face">·</div>
+            <button class="btn primary" id="btn-roll">サイコロを振る</button>
+          </div>
+          <div id="wait-hint" hidden></div>
         </div>
-        <div id="stocks-panel"></div>
-        <div id="wait-hint" hidden></div>
       </div>
-      <div id="log"></div>
+
+      <div class="side-pane" data-pane="holdings" role="tabpanel" hidden>
+        <div id="stocks-panel"></div>
+      </div>
+
+      <div class="side-pane" data-pane="log" role="tabpanel" hidden>
+        <div id="log"></div>
+      </div>
     </aside>
   </section>
 
@@ -169,17 +188,20 @@
     <div class="winner-card">
       <h2 id="winner-name">勝利</h2>
       <p id="winner-sub"></p>
-      <button class="btn primary large" id="btn-again" style="margin-top:1rem">もう一度</button>
+      <button class="btn primary large" id="btn-again">もう一度</button>
     </div>
   </div>
 
   <div id="toast"></div>
 
-  <div id="vol-dock" aria-label="音量">
-    <button type="button" id="btn-mute" class="btn tiny" title="ミュート">🔊</button>
-    <label class="vol-label">全体<input type="range" id="vol-master" min="0" max="1" step="0.01" /></label>
-    <label class="vol-label">BGM<input type="range" id="vol-bgm" min="0" max="1" step="0.01" /></label>
-    <label class="vol-label">SE<input type="range" id="vol-se" min="0" max="1" step="0.01" /></label>
+  <div id="vol-dock" class="vol-collapsed" aria-label="音量">
+    <button type="button" id="btn-mute" class="btn tiny" title="ミュート">音</button>
+    <button type="button" id="btn-vol-expand" class="btn tiny ghost" title="音量を開く">⋯</button>
+    <div class="vol-sliders">
+      <label class="vol-label">全体<input type="range" id="vol-master" min="0" max="1" step="0.01" /></label>
+      <label class="vol-label">BGM<input type="range" id="vol-bgm" min="0" max="1" step="0.01" /></label>
+      <label class="vol-label">SE<input type="range" id="vol-se" min="0" max="1" step="0.01" /></label>
+    </div>
   </div>
 
   <script type="module" src="./js/main.js"></script>
