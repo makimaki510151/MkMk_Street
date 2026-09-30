@@ -20,6 +20,13 @@ import {
   getSharedEventTable,
   PLAYER_COLORS,
   getCpuPersonality,
+  hasAreaMonopoly,
+  getTollMulti,
+  getAreaShops,
+  getPlayerAreaCount,
+  getAreaMonopolyRate,
+  getMaxExtraInvest,
+  investMultiByMonopolyRate,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -464,11 +471,41 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
+  if (data.kind === 'warp' && data.warp) {
+    app.busy = true;
+    presentWarpFx([data.warp], { remote: true }).finally(() => {
+      app.busy = false;
+      refreshGameUI();
+    });
+  }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
   if (data.kind === 'fiveBuy') audio.sfx.fiveBuy();
+  if (data.kind === 'monopoly') {
+    audio.sfx.monopoly();
+    if (data.payload) enqueueBanner(data.payload);
+  }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
+}
+
+function presentMonopolyFx(result) {
+  if (!result?.monopoly || !app.game) return;
+  const who = app.game.players.find((p) => p.flags?.monopolyBonusClaimed?.[result.area])
+    || currentPlayer(app.game);
+  const areaName = result.areaName || app.game.areas[result.area]?.name || `エリア${result.area}`;
+  const bonus = result.bonus || 0;
+  audio.sfx.monopoly();
+  const payload = {
+    kicker: 'エリア独占！',
+    title: areaName,
+    detail: bonus ? `独占ボーナス +${bonus.toLocaleString()}G` : 'エリアを完全支配！',
+    kind: 'level',
+    color: who?.color || '#ffe08a',
+    mine: who && (app.mode === 'local' ? !who.isCPU : who.id === app.localSeat),
+  };
+  broadcastFx({ kind: 'monopoly', payload, area: result.area, bonus });
+  enqueueBanner(payload);
 }
 
 function startLocal(seats) {
@@ -515,6 +552,30 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'warp') {
+    const shops = app.game.map.filter((n) => n.type === 'shop');
+    const from = shops[2] || shops[0] || app.game.map[0];
+    const to = app.game.map.find((n) => n.type === 'bank') || shops[5] || app.game.map[1];
+    p.pos = to.id;
+    refreshGameUI();
+    setTimeout(() => {
+      presentWarpFx([{ pid: p.id, from: from.id, to: to.id }]);
+    }, 400);
+    return;
+  }
+  if (demo === 'monopoly') {
+    const area = Number(Object.keys(app.game.areas)[0]);
+    const shops = getAreaShops(app.game, area);
+    for (let i = 0; i < shops.length - 1; i++) shops[i].owner = p.id;
+    const last = shops[shops.length - 1];
+    p.cash = Math.max(p.cash, last.price + 1000);
+    p.pos = last.id;
+    app.game.phase = 'await_choice';
+    app.game.pending = { type: 'buy_shop', playerId: p.id, shopId: last.id, price: last.price };
+    refreshGameUI();
+    setTimeout(() => sendAction({ type: 'choice', choice: { action: 'buy' } }), 700);
     return;
   }
   if (demo === 'stock') {
@@ -868,8 +929,10 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchMatches(result);
+      await presentWarpFx(result.warps);
     }
     if (result.reveal) {
       await presentMinigameResult(result);
@@ -997,6 +1060,7 @@ async function continueAdvancing() {
 
     if (result.done) {
       onLandingSfx();
+      if (result.warps?.length) await presentWarpFx(result.warps);
       syncState();
       refreshGameUI();
       return;
@@ -1058,6 +1122,69 @@ async function presentScratchMatches(result) {
   await playScratchMatchReveal(matches, result.messages || [], { banner: true });
   hideModal();
   app.busy = false;
+}
+
+function nodeLabel(g, id) {
+  const n = getNode(g, id);
+  if (!n) return '？';
+  return n.label || TYPE_LABEL(n) || String(id);
+}
+
+function TYPE_LABEL(n) {
+  if (n.type === 'bank') return '銀行';
+  if (n.type === 'mark') return SUIT_LABELS[n.mark] || 'マーク';
+  if (n.type === 'shop') return n.label || 'お店';
+  if (n.type === 'chance') return 'チャンス';
+  if (n.type === 'scratch') return 'スクラッチ';
+  return n.type;
+}
+
+async function presentWarpFx(warps, { remote = false } = {}) {
+  if (!warps?.length || !app.game) return;
+  const wasBusy = app.busy;
+  app.busy = true;
+  for (const w of warps) {
+    if (w.from === w.to) continue;
+    const who = app.game.players[w.pid];
+    const fromLabel = nodeLabel(app.game, w.from);
+    const toLabel = nodeLabel(app.game, w.to);
+    if (!remote) broadcastFx({ kind: 'warp', warp: w });
+    showWarpOverlay(who, fromLabel, toLabel);
+    app.renderer?.animateWarp(w.pid, w.from, w.to, 1200, who?.color);
+    audio.sfx.warp();
+    enqueueBanner({
+      kicker: who ? `${who.name} のワープ` : 'ワープ',
+      title: toLabel,
+      detail: `${fromLabel} → ${toLabel}`,
+      kind: 'event',
+      color: who?.color || '#c4a574',
+      mine: who && (app.mode === 'local' ? !who.isCPU : who.id === app.localSeat),
+    });
+    app.inspectedId = w.to;
+    updateInspectPanel();
+    await wait(1280);
+    hideWarpOverlay();
+  }
+  if (!wasBusy) app.busy = false;
+}
+
+function showWarpOverlay(who, fromLabel, toLabel) {
+  const overlay = $('#warp-overlay');
+  if (!overlay) return;
+  $('#warp-kicker').textContent = who ? `${who.name} がワープ` : 'ワープ';
+  $('#warp-from').textContent = fromLabel;
+  $('#warp-to').textContent = toLabel;
+  overlay.style.setProperty('--wc', who?.color || '#c4a574');
+  overlay.hidden = false;
+  overlay.classList.remove('landed');
+  requestAnimationFrame(() => overlay.classList.add('landed'));
+}
+
+function hideWarpOverlay() {
+  const overlay = $('#warp-overlay');
+  if (!overlay) return;
+  overlay.hidden = true;
+  overlay.classList.remove('landed');
 }
 
 function mountScratchMatchOverlay(matches) {
@@ -1387,8 +1514,10 @@ async function handleHostAction(from, data) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
     }
+    if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchMatches(result);
+      await presentWarpFx(result.warps);
     }
     if (result.reveal) {
       await presentMinigameResult(result);
@@ -1495,8 +1624,14 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
+      if (result?.fiveBuy) {
+        audio.sfx.fiveBuy();
+        broadcastFx({ kind: 'fiveBuy' });
+      }
+      if (result?.monopoly) presentMonopolyFx(result);
       if (result?.scratched) {
         await presentScratchMatches(result);
+        await presentWarpFx(result.warps);
       }
       if (result?.reveal) {
         await presentMinigameResult(result);
@@ -1659,6 +1794,7 @@ function pendingStatusLabel(pend) {
     case 'fork': return '分岐を選択中';
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
+    case 'pick_invest': return 'イベント増資する店を選択中';
     case 'five_buy': return '5倍買いを検討中';
     case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
@@ -1901,19 +2037,57 @@ function showChoiceModal(g) {
   if (pend.type === 'invest') {
     const sq = getNode(g, pend.shopId);
     const rem = getRemainingInvest(g, sq);
+    const maxInv = getMaxExtraInvest(g, sq);
+    const owned = getPlayerAreaCount(g, pend.playerId, sq.area);
+    const total = getAreaShops(g, sq.area).length;
+    const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
+    const multi = investMultiByMonopolyRate(rate);
+    const pct = Math.round(rate * 100);
     title.textContent = '増資する？';
     body.innerHTML = `
       <p class="modal-lead"><strong>${sq.label}</strong></p>
-      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り ${rem.toLocaleString()}G</p>
-      <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" /></label>
+      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
+      <p class="hint">独占率 ${owned}/${total}（${pct}%）→ 上限倍率×${multi}（上限 ${maxInv.toLocaleString()}G）</p>
+      <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" ${rem <= 0 ? 'disabled' : ''} /></label>
       <div class="modal-actions">
-        <button class="btn primary" id="m-inv">増資する</button>
+        <button class="btn primary" id="m-inv" ${rem <= 0 ? 'disabled' : ''}>${rem <= 0 ? '増資上限です' : '増資する'}</button>
       </div>`;
     $('#m-inv').onclick = () => {
       const amount = Number($('#m-amt').value) || 0;
       hideModal();
       sendAction({ type: 'choice', choice: { action: 'invest', amount } });
     };
+    return;
+  }
+
+  if (pend.type === 'pick_invest') {
+    const amount = pend.amount || 80;
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    title.textContent = '増資するお店を選ぶ';
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const rem = getRemainingInvest(g, sq);
+      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G · 増資枠 ${rem.toLocaleString()}G</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <p class="modal-lead">無料で <strong>+${amount.toLocaleString()}G</strong> 増資できます</p>
+      <p class="hint">自分の店舗から1つ選んでください</p>
+      <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+    $$('.pick-invest-shop').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'invest', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) skip.textContent = 'おまかせ';
     return;
   }
 

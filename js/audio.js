@@ -112,6 +112,15 @@ export function createAudio() {
       tone(220, 0.05, 'triangle', 0.05);
       noiseBurst(0.03, 0.04);
     },
+    /** ワープ移動 */
+    warp() {
+      noiseBurst(0.1, 0.07);
+      tone(180, 0.18, 'sawtooth', 0.06);
+      tone(320, 0.22, 'triangle', 0.07, 0.08);
+      tone(520, 0.28, 'sine', 0.08, 0.2);
+      tone(780, 0.35, 'sine', 0.06, 0.38);
+      tone(240, 0.2, 'triangle', 0.05, 0.7);
+    },
     yourTurn() {
       tone(523, 0.12, 'sine', 0.1);
       tone(659, 0.14, 'sine', 0.1, 0.1);
@@ -121,6 +130,24 @@ export function createAudio() {
       tone(523, 0.08, 'triangle', 0.08);
       tone(659, 0.1, 'triangle', 0.08, 0.08);
       tone(784, 0.16, 'triangle', 0.1, 0.16);
+    },
+    /** エリア独占 — 盛大なファンファーレ */
+    monopoly() {
+      noiseBurst(0.18, 0.16);
+      tone(98, 0.5, 'sawtooth', 0.1);
+      tone(130, 0.4, 'square', 0.08, 0.06);
+      // 上昇アルペジオ
+      [262, 330, 392, 523, 659, 784, 1046].forEach((f, i) => {
+        tone(f, 0.28, i < 3 ? 'square' : 'triangle', 0.11 - i * 0.008, 0.2 + i * 0.09);
+      });
+      // 決めの和音
+      tone(523, 0.55, 'triangle', 0.1, 0.9);
+      tone(659, 0.55, 'triangle', 0.09, 0.92);
+      tone(784, 0.7, 'sine', 0.11, 0.95);
+      tone(1046, 0.85, 'sine', 0.1, 1.05);
+      tone(1318, 0.9, 'triangle', 0.08, 1.2);
+      noiseBurst(0.12, 0.1);
+      tone(196, 0.6, 'sine', 0.07, 1.35);
     },
     /** 5倍買い — 衝撃的な奪取ファンファーレ（長め・派手） */
     fiveBuy() {

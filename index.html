@@ -31,11 +31,11 @@
       <ol>
         <li>自分の番に<strong>サイコロ</strong>を振り、マスを進みます。マップは分岐路で、交差点では<strong>進む方向を選択</strong>します。</li>
         <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
-        <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
-        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が3つ以上そろうとセルが回り、<strong>そろった枚数×50G</strong>がその色のプレイヤーへ。</li>
+        <li>同じエリアの店を集めるほど買い物料が跳ね上がります。<strong>エリア内をすべて独占</strong>すると倍率最大＋店価合計の15%を独占ボーナスとして獲得し、株価も少し上がります。自分の店では<strong>増資</strong>も可能ですが、<strong>エリア独占率</strong>に応じて増資上限が決まります（例: 4軒中1軒→元本の0.5倍、半分→1倍、75%→3倍、独占→9倍）。スクラッチには<strong>好きな自分の店へ無料増資</strong>できるイベントもあります。</li>
+        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が<strong>隣接して</strong>3つ以上そろうとセルが回り、<strong>そろった枚数×50G</strong>がその色のプレイヤーへ（とびとびは無効）。</li>
         <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。右側のタブから<strong>株の所持</strong>と<strong>売却</strong>、<strong>記録</strong>を切り替えられます。目標資産で銀行に止まると勝利。</li>
         <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。</li>
-        <li>イベント表スクラッチは<strong>全員共通</strong>。開けた人の色で塗られ、同じ色がそろえばボーナス。東は<strong>サイコロ</strong>、南は<strong>スロット</strong>のミニゲームマスです。CPUには<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
+        <li>イベント表スクラッチは<strong>全員共通</strong>。開けた人の色で塗られ、同じ色が<strong>隣り合って</strong>そろえばボーナス。東は<strong>サイコロ</strong>、南は<strong>スロット</strong>のミニゲームマスです。CPUには<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
         <li>選択は必要時に表示。「隠す」で一時退避。分岐は盤の端。出来事は左上のフィード（開閉可）。</li>
       </ol>
       <div class="row-actions">
@@ -128,6 +128,16 @@
           <div class="mg-body" id="mg-body"></div>
           <div class="mg-title" id="mg-title"></div>
           <div class="mg-detail" id="mg-detail"></div>
+        </div>
+      </div>
+      <div id="warp-overlay" hidden>
+        <div class="warp-stage">
+          <div class="warp-kicker" id="warp-kicker">ワープ</div>
+          <div class="warp-path">
+            <span class="warp-place" id="warp-from">出発</span>
+            <span class="warp-arrow" aria-hidden="true">→</span>
+            <span class="warp-place to" id="warp-to">到着</span>
+          </div>
         </div>
       </div>
       <div id="event-feed-wrap" class="feed-collapsed" aria-live="polite">

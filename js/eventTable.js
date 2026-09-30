@@ -1,5 +1,7 @@
 /** MkMk Street — 10×10 イベント表（1〜200番をランダム配置） */
 
+import { remainingInvest } from './investLimits.js';
+
 export const TABLE_SIZE = 10;
 export const EVENT_COUNT = 200;
 /** 同じ色が3つ以上そろったときの1マスあたりボーナス */
@@ -8,6 +10,19 @@ export const MATCH_BONUS_PER = 50;
 /** プレイヤー色インデックスと対応（あか/あお/きいろ/みどり） */
 export const COLOR_LABELS = ['あか', 'あお', 'きいろ', 'みどり'];
 export const GROUP_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
+
+/** ワープ演出用。serializeState には含めず、UIが takeWarpFx で取り出す */
+export function recordWarp(g, pid, from, to) {
+  if (from == null || to == null || from === to) return;
+  if (!g.warpFx) g.warpFx = [];
+  g.warpFx.push({ pid, from, to });
+}
+
+export function takeWarpFx(g) {
+  const warps = g.warpFx ? [...g.warpFx] : [];
+  g.warpFx = null;
+  return warps;
+}
 
 /**
  * 1〜200 のユニークイベント定義。
@@ -53,6 +68,16 @@ function buildCatalog() {
     ['supply_deal', '仕入れ特約', 60], ['grand_reopen', 'リニューアル祝', 70],
     ['area_banner', 'エリア横断幕', 35], ['staff_cheer', '店員の応援', 40],
   ].forEach(([k, l, shopBoost]) => push(k, l, { shopBoost, effect: 'shop_boost' }));
+
+  // ── 好きな自分の店へ無料増資（選択）────────────────────────
+  [
+    ['free_remodel', '好きなお店を改装', 80],
+    ['owner_choice_boost', '店主の采配', 70],
+    ['pick_renovation', '改装オーダー', 90],
+    ['my_shop_glowup', '推し店を磨こう', 60],
+    ['selective_invest', '一点集中投資', 100],
+    ['spotlight_shop', 'スポットライト改装', 75],
+  ].forEach(([k, l, amount]) => push(k, l, { effect: 'pick_invest', amount }));
 
   // ── サイコロ・移動 ───────────────────────────────────────
   [
@@ -232,6 +257,7 @@ function buildCatalog() {
     { effect: 'grant_mark', grantMark: true },
     { effect: 'stocks', stocks: 5 },
     { effect: 'shop_boost', shopBoost: 30 },
+    { effect: 'pick_invest', amount: 55 },
     { effect: 'invest_coupon' },
     { effect: 'toll_shield' },
     { effect: 'bump_area_stock', amount: 1.08 },
@@ -333,6 +359,7 @@ export function scratchCell(g, player, cellId) {
   applyEventDef(g, player, def, messages);
 
   const match = checkColorMatches(g, table, cellId, messages);
+  const warps = takeWarpFx(g);
 
   return {
     ok: true,
@@ -340,6 +367,7 @@ export function scratchCell(g, player, cellId) {
     matchBonus: match.total,
     matches: match.matches,
     messages,
+    warps,
   };
 }
 
@@ -373,16 +401,36 @@ function applyStocks(g, player, count, messages) {
   messages.push(`A${a}株 +${count}`);
 }
 
+function areaOwnedTotal(g, pid, area) {
+  const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+  const owned = shops.filter((s) => s.owner === pid).length;
+  return { owned, total: shops.length };
+}
+
+/** 独占率に応じた増資枠内だけで店価値を上げる */
+function boostShopCapped(g, sq, amount) {
+  const { owned, total } = areaOwnedTotal(g, sq.owner, sq.area);
+  const add = Math.max(0, Math.min(Math.floor(amount), remainingInvest(sq.basePrice, sq.extraInvest || 0, owned, total)));
+  if (add <= 0) return 0;
+  sq.extraInvest = (sq.extraInvest || 0) + add;
+  sq.price += add;
+  return add;
+}
+
 function applyShopBoost(g, player, amount, messages) {
   const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
   if (!shops.length) {
     messages.push('所持店なし（効果なし）');
     return;
   }
-  const sq = pickRandom(shops);
-  sq.extraInvest = (sq.extraInvest || 0) + amount;
-  sq.price += amount;
-  messages.push(`「${sq.label}」価値 +${amount}`);
+  const pool = shops.filter((sq) => {
+    const { owned, total } = areaOwnedTotal(g, player.id, sq.area);
+    return remainingInvest(sq.basePrice, sq.extraInvest || 0, owned, total) > 0;
+  });
+  const sq = pickRandom(pool.length ? pool : shops);
+  const add = boostShopCapped(g, sq, amount);
+  if (add > 0) messages.push(`「${sq.label}」価値 +${add}`);
+  else messages.push(`増資上限のため効果なし（独占率を上げよう）`);
 }
 
 function applyEventDef(g, player, def, messages) {
@@ -421,6 +469,18 @@ function applyEventDef(g, player, def, messages) {
     case 'shop_boost':
       applyShopBoost(g, player, def.shopBoost || 30, messages);
       break;
+    case 'pick_invest': {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
+      const amount = Math.max(20, Math.floor(def.amount || def.shopBoost || 80));
+      if (!shops.length) {
+        player.flags.investCoupon = true;
+        messages.push('所持店なし → 増資半額券');
+        break;
+      }
+      player.flags.pendingPickInvest = { amount };
+      messages.push(`好きな自分の店を選んで +${amount}G 増資！`);
+      break;
+    }
     case 'shop_and_stock':
       applyShopBoost(g, player, def.shopBoost || 30, messages);
       applyStocks(g, player, def.stocks || 5, messages);
@@ -437,6 +497,7 @@ function applyEventDef(g, player, def, messages) {
     case 'bank_warp':
     case 'taxi_voucher':
     case 'home_portal':
+      recordWarp(g, player.id, player.pos, g.startId);
       player.pos = g.startId;
       player.prevPos = null;
       messages.push('銀行へ移動');
@@ -445,6 +506,7 @@ function applyEventDef(g, player, def, messages) {
     case 'warp_mark': {
       const mark = pickRandom(g.map.filter((n) => n.type === 'mark'));
       if (mark) {
+        recordWarp(g, player.id, player.pos, mark.id);
         player.prevPos = player.pos;
         player.pos = mark.id;
         messages.push(`${mark.label || 'マーク'}マスへ移動`);
@@ -457,6 +519,7 @@ function applyEventDef(g, player, def, messages) {
     case 'warp_vacant_shop': {
       const vacant = pickRandom(g.map.filter((n) => n.type === 'shop' && n.owner < 0));
       if (vacant) {
+        recordWarp(g, player.id, player.pos, vacant.id);
         player.prevPos = player.pos;
         player.pos = vacant.id;
         messages.push(`空き店「${vacant.label}」へ`);
@@ -469,6 +532,7 @@ function applyEventDef(g, player, def, messages) {
       const walkable = g.map.filter((n) => n.type !== 'junction');
       const dest = pickRandom(walkable);
       if (dest) {
+        recordWarp(g, player.id, player.pos, dest.id);
         player.prevPos = player.pos;
         player.pos = dest.id;
         messages.push(`「${dest.label || dest.type}」へワープ`);
@@ -591,9 +655,12 @@ function applyEventDef(g, player, def, messages) {
         messages.push('もう一度サイコロ！');
         break;
       }
-      const tmp = player.pos;
-      player.pos = other.pos;
-      other.pos = tmp;
+      const aFrom = player.pos;
+      const bFrom = other.pos;
+      recordWarp(g, player.id, aFrom, bFrom);
+      recordWarp(g, other.id, bFrom, aFrom);
+      player.pos = bFrom;
+      other.pos = aFrom;
       player.prevPos = null;
       other.prevPos = null;
       messages.push(`${other.name} と場所交換`);
@@ -619,12 +686,15 @@ function applyEventDef(g, player, def, messages) {
       const a = pickRandom(areas);
       const amt = def.amount || 20;
       let n = 0;
+      let gained = 0;
       for (const sq of g.map.filter((s) => s.type === 'shop' && s.area === a && s.owner === player.id)) {
-        sq.extraInvest = (sq.extraInvest || 0) + amt;
-        sq.price += amt;
-        n++;
+        const add = boostShopCapped(g, sq, amt);
+        if (add > 0) {
+          n++;
+          gained += add;
+        }
       }
-      messages.push(n ? `A${a} の自分の店×${n} 価値+${amt}` : `A${a} に自分の店なし`);
+      messages.push(n ? `A${a} の自分の店×${n} 価値+${gained}（枠内）` : `A${a} に自分の店なし／増資枠なし`);
       if (!n) applyStocks(g, player, 5, messages);
       break;
     }
@@ -636,11 +706,16 @@ function applyEventDef(g, player, def, messages) {
         messages.push('所持店なし → 増資半額券');
         break;
       }
+      let gained = 0;
+      let hit = 0;
       for (const sq of shops) {
-        sq.extraInvest = (sq.extraInvest || 0) + amt;
-        sq.price += amt;
+        const add = boostShopCapped(g, sq, amt);
+        if (add > 0) {
+          hit++;
+          gained += add;
+        }
       }
-      messages.push(`全店の価値 +${amt}（${shops.length}店）`);
+      messages.push(hit ? `全店の価値 +${gained}（${hit}/${shops.length}店・増資枠内）` : '増資上限のため効果なし');
       break;
     }
     case 'trim_stocks': {
@@ -726,7 +801,29 @@ function applyEventDef(g, player, def, messages) {
   }
 }
 
-/** 縦・横・斜めに同じ色が3つ以上（スクラッチ済み）そろえば、その色のプレイヤーに報酬 */
+/**
+ * 一直線上で、同じ色が隣接して続くランを列挙する。
+ * とびとび（間に別色・未開封がある）は別ランになる。
+ */
+function contiguousColorRuns(lineCells, table, color) {
+  /** @type {number[][]} */
+  const runs = [];
+  /** @type {number[]} */
+  let cur = [];
+  for (const id of lineCells) {
+    const cell = table.cells[id];
+    if (cell?.scratched && cell.color === color) {
+      cur.push(id);
+    } else if (cur.length) {
+      runs.push(cur);
+      cur = [];
+    }
+  }
+  if (cur.length) runs.push(cur);
+  return runs;
+}
+
+/** 縦・横・斜めに同じ色が隣接して3つ以上そろえば、その色のプレイヤーに報酬 */
 function checkColorMatches(g, table, cellId, messages) {
   const size = table.size;
   const row = Math.floor(cellId / size);
@@ -749,14 +846,11 @@ function checkColorMatches(g, table, cellId, messages) {
   if (!table.claimedMatches) table.claimedMatches = {};
 
   for (const line of lines) {
-    const counts = [0, 0, 0, 0];
-    for (const id of line.cells) {
-      const cell = table.cells[id];
-      if (cell.scratched) counts[cell.color] += 1;
-    }
     for (let color = 0; color < 4; color++) {
-      const n = counts[color];
-      if (n < 3) continue;
+      const runs = contiguousColorRuns(line.cells, table, color).filter((r) => r.length >= 3);
+      if (!runs.length) continue;
+      const cellIds = runs.flat();
+      const n = cellIds.length;
       const claimKey = `${line.key}-c${color}-n${n}`;
       const prevKey = Object.keys(table.claimedMatches).find((k) => k.startsWith(`${line.key}-c${color}-`));
       if (prevKey && table.claimedMatches[prevKey] >= n) continue;
@@ -770,10 +864,6 @@ function checkColorMatches(g, table, cellId, messages) {
       if (beneficiary && !beneficiary.bankrupt) {
         beneficiary.cash += bonus;
         total += bonus;
-        const cellIds = line.cells.filter((id) => {
-          const cell = table.cells[id];
-          return cell?.scratched && cell.color === color;
-        });
         matches.push({
           lineKey: line.key,
           color,
