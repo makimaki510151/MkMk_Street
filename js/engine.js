@@ -6,6 +6,78 @@ import { createEventTable, scratchCell, unscratchedIds, applyAllCash } from './e
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
 
+/** CPU個性（席順でローテ。明示指定も可） */
+export const CPU_PERSONALITY_KEYS = ['tycoon', 'broker', 'magnate', 'gambler'];
+export const CPU_PERSONALITIES = {
+  tycoon: {
+    label: '店舗王',
+    shopBuy: 1.25,
+    fiveBuy: 0.72,
+    investRate: 0.55,
+    stockBudget: 0.35,
+    vacant: 2.6,
+    ownArea: 2.0,
+    enemyToll: -1.6,
+    bank: 0.55,
+    mark: 0.7,
+    stockbroker: 0.35,
+    scratch: 0.45,
+    minigame: 0.5,
+  },
+  broker: {
+    label: '株マニア',
+    shopBuy: 0.65,
+    fiveBuy: 0.28,
+    investRate: 0.22,
+    stockBudget: 0.92,
+    vacant: 1.0,
+    ownArea: 1.3,
+    enemyToll: -2.2,
+    bank: 1.6,
+    mark: 0.55,
+    stockbroker: 2.6,
+    scratch: 0.5,
+    minigame: 0.45,
+  },
+  magnate: {
+    label: '独占屋',
+    shopBuy: 1.1,
+    fiveBuy: 0.88,
+    investRate: 0.68,
+    stockBudget: 0.5,
+    vacant: 1.7,
+    ownArea: 3.2,
+    enemyToll: -1.1,
+    bank: 0.9,
+    mark: 1.0,
+    stockbroker: 0.9,
+    scratch: 0.85,
+    minigame: 0.6,
+  },
+  gambler: {
+    label: '勝負師',
+    shopBuy: 0.8,
+    fiveBuy: 0.55,
+    investRate: 0.32,
+    stockBudget: 0.42,
+    vacant: 1.2,
+    ownArea: 1.0,
+    enemyToll: -1.0,
+    bank: 0.6,
+    mark: 2.1,
+    stockbroker: 0.45,
+    scratch: 2.3,
+    minigame: 2.1,
+  },
+};
+
+export function getCpuPersonality(p) {
+  const key = p?.personality && CPU_PERSONALITIES[p.personality]
+    ? p.personality
+    : CPU_PERSONALITY_KEYS[(p?.id || 0) % CPU_PERSONALITY_KEYS.length];
+  return { key, ...CPU_PERSONALITIES[key] };
+}
+
 const TOLL_MULTI = [1, 1, 1.25, 2.5, 5, 6, 6.75];
 const MAX_INVEST_RATE = [0, 0.5, 1, 3, 9, 11, 13];
 
@@ -78,25 +150,35 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
   const rng = mulberry32(seed);
 
-  const plist = players.map((pl, i) => ({
-    id: i,
-    peerId: pl.peerId || null,
-    name: pl.name || PLAYER_NAMES_DEFAULT[i] || `P${i + 1}`,
-    color: pl.color || PLAYER_COLORS[i % PLAYER_COLORS.length],
-    isCPU: !!pl.isCPU,
-    cash: initialCash,
-    pos: board.startId,
-    prevPos: null,
-    marks: [false, false, false, false],
-    level: 1,
-    stocks: {},
-    lucky: false,
-    resting: false,
-    shopsClosed: false,
-    bankrupt: false,
-    offline: false,
-    flags: {},
-  }));
+  let cpuOrd = 0;
+  const plist = players.map((pl, i) => {
+    const isCPU = !!pl.isCPU;
+    const personality = isCPU
+      ? (pl.personality && CPU_PERSONALITIES[pl.personality]
+        ? pl.personality
+        : CPU_PERSONALITY_KEYS[cpuOrd++ % CPU_PERSONALITY_KEYS.length])
+      : null;
+    return {
+      id: i,
+      peerId: pl.peerId || null,
+      name: pl.name || PLAYER_NAMES_DEFAULT[i] || `P${i + 1}`,
+      color: pl.color || PLAYER_COLORS[i % PLAYER_COLORS.length],
+      isCPU,
+      personality,
+      cash: initialCash,
+      pos: board.startId,
+      prevPos: null,
+      marks: [false, false, false, false],
+      level: 1,
+      stocks: {},
+      lucky: false,
+      resting: false,
+      shopsClosed: false,
+      bankrupt: false,
+      offline: false,
+      flags: {},
+    };
+  });
 
   return {
     map: board.nodes,
@@ -1237,16 +1319,23 @@ export function applyChoice(g, choice) {
     const msg = result.messages?.join(' / ') || result.cell.label;
     addLog(g, `${p.name} スクラッチ → ${result.cell.label}（${msg}）`, 'event');
     g.pending = null;
+    const matchPayload = {
+      scratched: true,
+      cell: result.cell,
+      matchBonus: result.matchBonus || 0,
+      matches: result.matches || [],
+      messages: result.messages || [],
+    };
     if (maybeOpenMinigame(g, p)) {
-      return { ok: true, scratched: true, cell: result.cell, minigame: true, state: serializeState(g) };
+      return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
     }
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
-      return { ok: true, scratched: true, cell: result.cell, state: serializeState(g) };
+      return { ok: true, ...matchPayload, state: serializeState(g) };
     }
     endTurn(g);
-    return { ok: true, scratched: true, cell: result.cell, state: serializeState(g) };
+    return { ok: true, ...matchPayload, state: serializeState(g) };
   }
 
   if (pending.type === 'minigame') {
@@ -1280,84 +1369,138 @@ function resolveMinigame(g, p, pending, choice) {
   const messages = [];
   let win = false;
   let detail = '';
+  let tier = 'miss';
+  let title = '結果発表';
+  /** @type {Record<string, unknown>} */
+  const outcome = {};
+  let pick = choice?.value;
 
   if (game === 'guess_dice') {
-    const pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
+    pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
     const roll = Math.floor(rngNext(g) * 6) + 1;
     const diff = Math.abs(pick - roll);
+    outcome.roll = roll;
+    outcome.pick = pick;
     if (diff === 0) {
       win = true;
+      tier = 'exact';
+      title = 'ぴったり！';
       const prize = 280 + p.level * 40;
       p.cash += prize;
       messages.push(`ぴったり！出目${roll} → +${prize}G`);
       payoutAll(g, 60, messages);
     } else if (diff === 1) {
+      win = true;
+      tier = 'near';
+      title = 'おしい！';
       const prize = 100 + p.level * 15;
       p.cash += prize;
       messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
       payoutAll(g, 40, messages);
     } else {
+      tier = 'miss';
+      title = 'ハズレ…';
       messages.push(`ハズレ…出目${roll}（予想${pick}）`);
       payoutAll(g, 25, messages);
     }
-    detail = `出目 ${roll}`;
+    detail = `予想 ${pick} → 出目 ${roll}`;
   } else if (game === 'high_low') {
-    const pick = choice.value === 'high' ? 'high' : 'low';
+    pick = choice.value === 'high' ? 'high' : 'low';
     const secret = Math.floor(rngNext(g) * 10) + 1; // 1-10
     const isHigh = secret >= 6;
     const ok = (pick === 'high' && isHigh) || (pick === 'low' && !isHigh);
+    outcome.secret = secret;
+    outcome.band = isHigh ? 'high' : 'low';
+    outcome.pick = pick;
     if (ok) {
       win = true;
+      tier = 'win';
+      title = '正解！';
       const prize = 200 + p.level * 30;
       p.cash += prize;
       messages.push(`正解！数字は ${secret} → +${prize}G`);
       payoutAll(g, 70, messages);
     } else {
+      tier = 'miss';
+      title = '残念…';
       messages.push(`残念…数字は ${secret}`);
       payoutAll(g, 35, messages);
     }
-    detail = `数字 ${secret}`;
+    detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'} → ${secret}`;
   } else if (game === 'coin') {
-    const pick = choice.value === 'tails' ? 'tails' : 'heads';
+    pick = choice.value === 'tails' ? 'tails' : 'heads';
     const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
-    const label = face === 'heads' ? 'おもて' : 'うら';
+    const faceLabel = face === 'heads' ? 'おもて' : 'うら';
+    const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
+    outcome.face = face;
+    outcome.pick = pick;
     if (pick === face) {
       win = true;
+      tier = 'win';
+      title = '当たり！';
       const prize = 180 + p.level * 25;
       p.cash += prize;
-      messages.push(`当たり！${label} → +${prize}G`);
+      messages.push(`当たり！${faceLabel} → +${prize}G`);
       payoutAll(g, 55, messages);
     } else {
-      messages.push(`ハズレ…${label}`);
+      tier = 'miss';
+      title = 'ハズレ…';
+      messages.push(`ハズレ…${faceLabel}`);
       payoutAll(g, 30, messages);
     }
-    detail = label;
+    detail = `予想 ${pickLabel} → ${faceLabel}`;
   } else if (game === 'slot') {
     const syms = ['★', '♪', 'G', '♦', '♣'];
     const a = syms[Math.floor(rngNext(g) * syms.length)];
     const b = syms[Math.floor(rngNext(g) * syms.length)];
     const c = syms[Math.floor(rngNext(g) * syms.length)];
     const line = `${a}${b}${c}`;
+    outcome.symbols = [a, b, c];
     if (a === b && b === c) {
       win = true;
+      tier = 'jackpot';
+      title = 'ジャックポット！';
       const prize = 320 + p.level * 50;
       p.cash += prize;
       messages.push(`ジャックポット ${line}！ → +${prize}G`);
       payoutAll(g, 100, messages);
     } else if (a === b || b === c || a === c) {
+      win = true;
+      tier = 'pair';
+      title = '二つ揃い！';
       const prize = 120 + p.level * 20;
       p.cash += prize;
       messages.push(`二つ揃い ${line} → +${prize}G`);
       payoutAll(g, 50, messages);
     } else {
+      tier = 'miss';
+      title = 'バラバラ…';
       messages.push(`バラバラ ${line}`);
       payoutAll(g, 30, messages);
     }
     detail = line;
   } else {
+    tier = 'miss';
+    title = '参加賞';
     payoutAll(g, 40, messages);
     messages.push('参加賞');
+    detail = '参加賞';
   }
+
+  const reveal = {
+    game,
+    label: pending.label || 'ミニゲーム',
+    playerId: p.id,
+    playerName: p.name,
+    playerColor: p.color,
+    pick,
+    outcome,
+    tier,
+    win,
+    title,
+    detail,
+    messages: [...messages],
+  };
 
   addLog(g, `${p.name} の「${pending.label}」→ ${messages.join(' / ')}`, 'event');
   g.pending = null;
@@ -1368,6 +1511,7 @@ function resolveMinigame(g, p, pending, choice) {
     win,
     detail,
     messages,
+    reveal,
     state: serializeState(g),
   };
 }
@@ -1434,17 +1578,61 @@ function endTurn(g) {
   g.dice = null;
 }
 
-function cpuPickFork(g, options) {
-  // 自分の店が多い方面を優先、なければランダム
+function scoreNodeForCpu(g, p, node, traits) {
+  if (!node) return 0;
+  let s = 0;
+  if (node.type === 'shop') {
+    if (node.owner < 0) {
+      s += traits.vacant;
+      const cnt = getPlayerAreaCount(g, p.id, node.area);
+      s += cnt * 1.35 * traits.ownArea;
+      const vacantLeft = getAreaShops(g, node.area).filter((x) => x.owner < 0).length;
+      if (cnt >= 1 && vacantLeft <= 2) s += 1.2 * traits.ownArea;
+    } else if (node.owner === p.id) {
+      s += 1.1 * traits.ownArea;
+    } else {
+      const toll = calcToll(g, node);
+      s += traits.enemyToll * Math.min(3, toll / 120);
+    }
+  } else if (node.type === 'bank') s += traits.bank;
+  else if (node.type === 'mark') s += traits.mark;
+  else if (node.type === 'stockbroker') s += traits.stockbroker;
+  else if (node.type === 'scratch' || node.type === 'event') s += traits.scratch;
+  else if (node.type === 'minigame') s += traits.minigame;
+  return s;
+}
+
+function scoreForkPath(g, p, fromId, nextId, traits) {
+  let score = 0;
+  let cur = nextId;
+  let prev = fromId;
+  for (let depth = 0; depth < 4; depth++) {
+    const node = getNode(g, cur);
+    score += scoreNodeForCpu(g, p, node, traits) * (1 - depth * 0.14);
+    const nexts = getForwardNexts(g, cur, prev);
+    if (!nexts.length) break;
+    let best = nexts[0];
+    let bestS = -Infinity;
+    for (const nid of nexts) {
+      const sc = scoreNodeForCpu(g, p, getNode(g, nid), traits);
+      if (sc > bestS) {
+        bestS = sc;
+        best = nid;
+      }
+    }
+    prev = cur;
+    cur = best;
+  }
+  score += Math.random() * 0.4;
+  return score;
+}
+
+function cpuPickFork(g, p, options) {
+  const traits = getCpuPersonality(p);
   let best = options[0];
-  let bestScore = -1;
+  let bestScore = -Infinity;
   for (const opt of options) {
-    const to = getNode(g, opt.id);
-    let score = Math.random();
-    if (to?.type === 'shop' && to.owner < 0) score += 2;
-    if (to?.type === 'shop' && to.owner === g.currentPlayerIdx) score += 1.5;
-    if (to?.type === 'mark') score += 1.2;
-    if (to?.type === 'bank') score += 0.8;
+    const score = scoreForkPath(g, p, p.pos, opt.id, traits);
     if (score > bestScore) {
       bestScore = score;
       best = opt;
@@ -1453,10 +1641,127 @@ function cpuPickFork(g, options) {
   return best.id;
 }
 
-/** CPUの簡易行動（1アクション分。移動の連続はUI側） */
+function cpuShouldBuyShop(g, p, sq, traits) {
+  if (!sq || getLiquidatableValue(g, p) < sq.price) return false;
+  const assets = getPlayerAssets(g, p);
+  if (assets.total >= g.goal * 0.97) return false;
+  const areaCnt = getPlayerAreaCount(g, p.id, sq.area);
+  const vacantLeft = getAreaShops(g, sq.area).filter((x) => x.owner < 0).length;
+  let desire = traits.shopBuy + areaCnt * 0.38 * Math.min(1.4, traits.ownArea / 2);
+  if (areaCnt >= 1 && vacantLeft <= 2) desire += 0.45;
+  if (sq.price > p.cash && traits.shopBuy < 1) desire -= 0.25;
+  if (desire >= 1.15) return true;
+  if (desire < 0.55) return false;
+  return Math.random() < Math.min(0.92, desire * 0.62);
+}
+
+function cpuShouldFiveBuy(g, p, pend, traits) {
+  if (getLiquidatableValue(g, p) < pend.price) return false;
+  const sq = getNode(g, pend.shopId);
+  const areaCnt = sq ? getPlayerAreaCount(g, p.id, sq.area) : 0;
+  let chance = traits.fiveBuy + areaCnt * 0.12;
+  if (areaCnt >= 2) chance += 0.15;
+  return Math.random() < Math.min(0.95, chance);
+}
+
+function cpuPickStockArea(g, p, traits) {
+  const ownedAreas = [...new Set(
+    g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.area),
+  )];
+  const areas = ownedAreas.length ? ownedAreas : Object.keys(g.areas).map(Number);
+  let best = areas[0];
+  let bestScore = -Infinity;
+  for (const a of areas) {
+    const price = g.areas[a]?.stockPrice || 1;
+    let s = (p.stocks[a] || 0) * 0.08;
+    s += getPlayerAreaCount(g, p.id, a) * traits.ownArea * 0.55;
+    s += (price / 40) * traits.stockBudget;
+    s += Math.random() * 0.25;
+    if (s > bestScore) {
+      bestScore = s;
+      best = a;
+    }
+  }
+  return best;
+}
+
+function cpuRaiseFunds(g, p, target, traits) {
+  while (p.cash < target) {
+    const held = Object.keys(p.stocks || {}).map(Number).filter((a) => (p.stocks[a] || 0) > 0);
+    if (held.length) {
+      // 戦略的に薄いエリア／安値株から売る（株マニアはできるだけ温存）
+      held.sort((a, b) => {
+        const ownA = getPlayerAreaCount(g, p.id, a);
+        const ownB = getPlayerAreaCount(g, p.id, b);
+        const priceA = g.areas[a]?.stockPrice || 1;
+        const priceB = g.areas[b]?.stockPrice || 1;
+        if (traits.stockBudget > 0.7) return ownA - ownB || priceA - priceB;
+        return priceA - priceB || ownA - ownB;
+      });
+      const a = held[0];
+      const need = target - p.cash;
+      const price = g.areas[a].stockPrice || 1;
+      const count = Math.min(p.stocks[a], Math.max(1, Math.ceil(need / price)));
+      sellStockForCash(g, p, a, count);
+      continue;
+    }
+    const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+    if (!shops.length) break;
+    shops.sort((a, b) => {
+      const ca = getPlayerAreaCount(g, p.id, a.area);
+      const cb = getPlayerAreaCount(g, p.id, b.area);
+      // 独占屋はエリア核を残す
+      if (traits.ownArea > 2) return ca - cb || a.price - b.price;
+      return a.price - b.price || ca - cb;
+    });
+    sellShopForCash(g, p, shops[0].id);
+  }
+}
+
+function cpuPickScratchCell(g, p, openIds) {
+  const table = getSharedEventTable(g);
+  const traits = getCpuPersonality(p);
+  const myColor = PLAYER_COLORS.findIndex((c) => c.toLowerCase() === (p.color || '').toLowerCase());
+  const color = myColor >= 0 ? myColor : p.id % 4;
+  const size = table.size;
+  let best = openIds[0];
+  let bestScore = -Infinity;
+  for (const id of openIds) {
+    const row = Math.floor(id / size);
+    const col = id % size;
+    let mineRow = 0;
+    let mineCol = 0;
+    for (let c = 0; c < size; c++) {
+      const cell = table.cells[row * size + c];
+      if (cell?.scratched && cell.color === color) mineRow++;
+    }
+    for (let r = 0; r < size; r++) {
+      const cell = table.cells[r * size + col];
+      if (cell?.scratched && cell.color === color) mineCol++;
+    }
+    let s = Math.max(mineRow, mineCol) * traits.scratch * 0.55;
+    if (row === col) {
+      let d = 0;
+      for (let i = 0; i < size; i++) {
+        const cell = table.cells[i * size + i];
+        if (cell?.scratched && cell.color === color) d++;
+      }
+      s += d * 0.4 * traits.scratch;
+    }
+    s += Math.random() * (traits.key === 'gambler' ? 1.4 : 0.45);
+    if (s > bestScore) {
+      bestScore = s;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** CPUの個性付き行動（1アクション分。移動の連続はUI側） */
 export function cpuAct(g) {
   const p = currentPlayer(g);
   if (!p?.isCPU || p.bankrupt || g.phase === 'gameover') return null;
+  const traits = getCpuPersonality(p);
 
   if (g.phase === 'await_roll') {
     return rollDice(g);
@@ -1467,7 +1772,7 @@ export function cpuAct(g) {
   }
 
   if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
-    const nextId = cpuPickFork(g, g.pending.options);
+    const nextId = cpuPickFork(g, p, g.pending.options);
     return chooseFork(g, nextId);
   }
 
@@ -1478,41 +1783,23 @@ export function cpuAct(g) {
     }
     if (pend.type === 'buy_shop') {
       const sq = getNode(g, pend.shopId);
-      const assets = getPlayerAssets(g, p);
-      const buy = getLiquidatableValue(g, p) >= sq.price && assets.total < g.goal * 0.95;
+      const buy = cpuShouldBuyShop(g, p, sq, traits);
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
     }
     if (pend.type === 'invest') {
       const rem = pend.remaining || 0;
       const liq = getLiquidatableValue(g, p);
-      const amount = Math.min(rem, Math.floor(Math.max(0, liq) * 0.4));
+      const amount = Math.min(rem, Math.floor(Math.max(0, liq) * traits.investRate));
       if (amount >= 20) return applyChoice(g, { action: 'invest', amount });
       return applyChoice(g, { action: 'skip' });
     }
     if (pend.type === 'five_buy') {
-      const buy = getLiquidatableValue(g, p) >= pend.price && Math.random() > 0.4;
+      const buy = cpuShouldFiveBuy(g, p, pend, traits);
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
     }
     if (pend.type === 'raise_funds') {
       const target = Number(pend.targetCash) || 0;
-      // 株→店の順で目標まで売却
-      while (p.cash < target) {
-        const held = Object.keys(p.stocks || {}).map(Number).filter((a) => (p.stocks[a] || 0) > 0);
-        if (held.length) {
-          const a = held[0];
-          const need = target - p.cash;
-          const price = g.areas[a].stockPrice || 1;
-          const count = Math.min(p.stocks[a], Math.max(1, Math.ceil(need / price)));
-          sellStockForCash(g, p, a, count);
-          continue;
-        }
-        const shop = g.map.find((s) => s.type === 'shop' && s.owner === p.id);
-        if (shop) {
-          sellShopForCash(g, p, shop.id);
-          continue;
-        }
-        break;
-      }
+      cpuRaiseFunds(g, p, target, traits);
       if (p.cash >= target) {
         const exec = pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
         return applyChoice(g, { action: 'continue', execute: !!exec });
@@ -1520,13 +1807,15 @@ export function cpuAct(g) {
       return applyChoice(g, { action: 'bankrupt' });
     }
     if (pend.type === 'stock') {
-      const ownedAreas = [...new Set(g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.area))];
-      const areas = ownedAreas.length ? ownedAreas : Object.keys(g.areas).map(Number);
       const bankVisit = !!pend.bankVisit || !!pend.bankPass;
-      if (areas.length && p.cash > 200) {
-        const a = areas[0];
-        const price = g.areas[a].stockPrice;
-        const budget = bankVisit ? p.cash : p.cash * 0.25;
+      const minCash = traits.stockBudget > 0.7 ? 120 : 200;
+      if (p.cash > minCash) {
+        const a = cpuPickStockArea(g, p, traits);
+        const price = g.areas[a]?.stockPrice || 1;
+        const ratio = bankVisit
+          ? Math.min(1, traits.stockBudget + 0.15)
+          : Math.max(0.12, traits.stockBudget * 0.35);
+        const budget = Math.floor(p.cash * ratio);
         const count = Math.floor(budget / price);
         if (count > 0) {
           return applyChoice(g, { action: 'buy', area: a, count });
@@ -1541,12 +1830,16 @@ export function cpuAct(g) {
         endTurn(g);
         return { ok: true, state: serializeState(g) };
       }
-      const cellId = open[Math.floor(Math.random() * open.length)];
+      const cellId = cpuPickScratchCell(g, p, open);
       return applyChoice(g, { action: 'scratch', cellId });
     }
     if (pend.type === 'minigame') {
       if (pend.game === 'guess_dice') {
-        return applyChoice(g, { action: 'pick', value: 1 + Math.floor(Math.random() * 6) });
+        // 勝負師は端を避け中央寄り、他は広めに
+        const pick = traits.key === 'gambler'
+          ? 2 + Math.floor(Math.random() * 4)
+          : 1 + Math.floor(Math.random() * 6);
+        return applyChoice(g, { action: 'pick', value: pick });
       }
       if (pend.game === 'high_low') {
         return applyChoice(g, { action: 'pick', value: Math.random() < 0.5 ? 'low' : 'high' });

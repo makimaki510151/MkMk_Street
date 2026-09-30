@@ -155,6 +155,46 @@ export function createAudio() {
       tone(1568, 0.45, 'sine', 0.08, 0.7);
     },
     cancel() { tone(280, 0.08, 'triangle', 0.05); },
+    /** スクラッチ色そろい */
+    scratchMatch() {
+      noiseBurst(0.08, 0.08);
+      [392, 523, 659, 784, 988].forEach((f, i) => tone(f, 0.2, 'triangle', 0.1, i * 0.08));
+      tone(1175, 0.4, 'sine', 0.08, 0.45);
+    },
+    /** スロット回転中のカチカチ */
+    slotSpin() {
+      tone(180 + Math.random() * 40, 0.04, 'square', 0.035);
+      noiseBurst(0.02, 0.03);
+    },
+    /** リール停止 */
+    slotStop() {
+      tone(220, 0.07, 'triangle', 0.08);
+      tone(440, 0.1, 'sine', 0.06, 0.04);
+      noiseBurst(0.04, 0.05);
+    },
+    /** スロット当たり（ジャックポット寄り） */
+    slotWin(big = false) {
+      if (big) {
+        [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.28, 'triangle', 0.11, i * 0.1));
+        tone(1568, 0.55, 'sine', 0.09, 0.55);
+        noiseBurst(0.12, 0.1);
+      } else {
+        [392, 523, 659, 784].forEach((f, i) => tone(f, 0.18, 'triangle', 0.09, i * 0.09));
+      }
+    },
+    coinFlip() {
+      tone(480, 0.05, 'square', 0.05);
+      tone(620, 0.05, 'square', 0.04, 0.05);
+      noiseBurst(0.04, 0.05);
+    },
+    coinLand() {
+      tone(340, 0.1, 'triangle', 0.09);
+      tone(520, 0.16, 'sine', 0.07, 0.06);
+    },
+    minigameDrum() {
+      tone(160, 0.08, 'square', 0.06);
+      tone(220, 0.1, 'triangle', 0.05, 0.05);
+    },
   };
 
   /**

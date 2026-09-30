@@ -31,10 +31,10 @@
         <li>自分の番に<strong>サイコロ</strong>を振り、マスを進みます。マップは分岐路で、交差点では<strong>進む方向を選択</strong>します。</li>
         <li>空き店舗に止まると<strong>購入</strong>できます。他人の店なら<strong>買い物料</strong>を払います。</li>
         <li>同じエリアの店を集めるほど買い物料が跳ね上がります。自分の店では<strong>増資</strong>も可能。</li>
-        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が3つ以上そろえるとその色のプレイヤーがボーナス。</li>
+        <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が3つ以上そろうとセルが回り、<strong>そろった枚数×50G</strong>がその色のプレイヤーへ。</li>
         <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。銀行・証券でも<strong>一度に買える株は1種類</strong>で、枚数はゲーム内の入力欄で指定します。右側の<strong>株の所持</strong>表と各プレイヤーカードで、全員の持ち株をいつでも確認できます。自分のターン中は右側から<strong>いつでも株を売却</strong>できます（移動演出中を除く）。目標資産で銀行に止まると勝利。</li>
         <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続すると復帰できます。</li>
-        <li>イベント表スクラッチは<strong>全員共通</strong>。すでにめくられたマスは触れず、めくった人の色で表示されます。<strong>給料日・景気刺激</strong>など全員の持ち金が増えるイベントや、<strong>サイコロ当て／ハイ＆ロー／コイントス／スロット</strong>などのミニゲーム（外れても参加賞）もあります。盤面の東は<strong>サイコロ</strong>、南は<strong>スロット</strong>の専用ミニゲームマスです（内容は必ず別）。</li>
+        <li>イベント表スクラッチは<strong>全員共通</strong>。すでにめくられたマスは触れず、<strong>開けた人の色で塗られます</strong>。同じ色がそろえばその色のプレイヤーにボーナス。<strong>給料日・景気刺激</strong>など全員の持ち金が増えるイベントや、<strong>サイコロ当て／ハイ＆ロー／コイントス／スロット</strong>などのミニゲーム（外れても参加賞）もあります。盤面の東は<strong>サイコロ</strong>、南は<strong>スロット</strong>の専用ミニゲームマスです（内容は必ず別）。CPU対戦では各CPUに<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
         <li>選択ウィンドウは<strong>右下（ログの左）</strong>に出ます。「隠す」で一時退避できます。分岐は左／右の端に表示。</li>
         <li>出来事は画面<strong>左上</strong>にスタンプが<strong>上から下</strong>へ流れ、スクロールでさかのぼれます。</li>
       </ol>
@@ -109,6 +109,22 @@
         <div class="dice-stage">
           <div id="dice-overlay-face">?</div>
           <div id="dice-overlay-label">サイコロ…</div>
+        </div>
+      </div>
+      <div id="scratch-match-overlay" hidden>
+        <div class="sm-stage">
+          <div class="sm-kicker" id="sm-kicker">色そろい！</div>
+          <div class="sm-row" id="sm-row"></div>
+          <div class="sm-title" id="sm-title"></div>
+          <div class="sm-detail" id="sm-detail"></div>
+        </div>
+      </div>
+      <div id="minigame-overlay" hidden>
+        <div class="mg-stage">
+          <div class="mg-kicker" id="mg-kicker">ミニゲーム</div>
+          <div class="mg-body" id="mg-body"></div>
+          <div class="mg-title" id="mg-title"></div>
+          <div class="mg-detail" id="mg-detail"></div>
         </div>
       </div>
       <div id="event-feed-wrap" aria-live="polite">
