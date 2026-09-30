@@ -2,6 +2,12 @@
 
 import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
 import { createEventTable, scratchCell, unscratchedIds, applyAllCash, recordWarp, takeWarpFx } from './eventTable.js';
+import {
+  monopolyRate as monopolyRateOf,
+  investMultiByMonopolyRate,
+  maxExtraInvest as maxExtraInvestOf,
+  remainingInvest as remainingInvestOf,
+} from './investLimits.js';
 
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
@@ -89,10 +95,9 @@ const TOLL_MULTI_BY_AREA = {
   5: [1, 1, 1.25, 2, 3.25, 6],
   6: [1, 1, 1.25, 2, 2.75, 4.25, 6.75],
 };
-/** 増資限度倍率（所有軒数ベース・SP/GK系） */
-const MAX_INVEST_RATE = [0, 0.5, 1, 3, 9, 11, 13];
 /** 独占達成時：エリア店価合計に対する現金ボーナス率 */
 export const MONOPOLY_BONUS_RATE = 0.15;
+export { investMultiByMonopolyRate };
 
 function giveAllCash(g, amount) {
   const msgs = [];
@@ -248,6 +253,11 @@ export function hasAreaMonopoly(g, pid, area) {
   return shops.every((s) => s.owner === pid);
 }
 
+/** エリア独占率（0〜1） */
+export function getAreaMonopolyRate(g, pid, area) {
+  return monopolyRateOf(getPlayerAreaCount(g, pid, area), getAreaShops(g, area).length);
+}
+
 /**
  * 買い物料倍率。areaSize 省略時は4軒エリアとして扱う（後方互換）。
  * @param {number} owned 所有軒数
@@ -260,14 +270,31 @@ export function getTollMulti(owned, areaSize = 4) {
   return table[i] ?? 1;
 }
 
+/**
+ * 増資上限（追加投資の最大G）。エリア独占率で決まる。
+ * 空き店は増資不可（0）。
+ */
 export function getMaxExtraInvest(g, sq) {
-  if (sq.owner < 0) return Math.floor(sq.basePrice * 0.5);
-  const cnt = getPlayerAreaCount(g, sq.owner, sq.area);
-  return Math.floor(sq.basePrice * (MAX_INVEST_RATE[Math.min(cnt, 6)] || 0.5));
+  if (!sq || sq.type !== 'shop' || sq.owner < 0) return 0;
+  const total = getAreaShops(g, sq.area).length;
+  const owned = getPlayerAreaCount(g, sq.owner, sq.area);
+  return maxExtraInvestOf(sq.basePrice, owned, total);
 }
 
 export function getRemainingInvest(g, sq) {
-  return Math.max(0, getMaxExtraInvest(g, sq) - (sq.extraInvest || 0));
+  if (!sq || sq.type !== 'shop' || sq.owner < 0) return 0;
+  const total = getAreaShops(g, sq.area).length;
+  const owned = getPlayerAreaCount(g, sq.owner, sq.area);
+  return remainingInvestOf(sq.basePrice, sq.extraInvest || 0, owned, total);
+}
+
+/** イベント等の店価値アップを増資枠内に収める。実際に載った額を返す */
+export function applyCappedShopBoost(g, sq, amount) {
+  const add = Math.max(0, Math.min(Math.floor(Number(amount) || 0), getRemainingInvest(g, sq)));
+  if (add <= 0) return 0;
+  sq.extraInvest = (sq.extraInvest || 0) + add;
+  sq.price += add;
+  return add;
 }
 
 export function calcToll(g, sq) {
@@ -1428,7 +1455,7 @@ export function applyChoice(g, choice) {
   }
 
   if (pending.type === 'pick_invest') {
-    const amount = Math.max(20, Math.floor(Number(pending.amount) || 80));
+    const want = Math.max(20, Math.floor(Number(pending.amount) || 80));
     let sq = null;
     if (choice.action === 'invest' || choice.action === 'pick') {
       sq = getNode(g, Number(choice.shopId));
@@ -1436,9 +1463,11 @@ export function applyChoice(g, choice) {
         return { ok: false, error: 'bad_shop' };
       }
     } else if (choice.action === 'skip') {
-      // スキップ時は所持店からランダム適用（イベント効果を無駄にしない）
+      // スキップ時は増資枠がある店を優先してランダム適用
       const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
-      sq = shops[Math.floor(Math.random() * shops.length)] || null;
+      const withRoom = shops.filter((s) => getRemainingInvest(g, s) > 0);
+      const pool = withRoom.length ? withRoom : shops;
+      sq = pool[Math.floor(Math.random() * pool.length)] || null;
     } else {
       return { ok: false, error: 'bad_choice' };
     }
@@ -1447,10 +1476,15 @@ export function applyChoice(g, choice) {
       endTurn(g);
       return { ok: true, state: serializeState(g) };
     }
-    sq.extraInvest = (sq.extraInvest || 0) + amount;
-    sq.price += amount;
+    const amount = applyCappedShopBoost(g, sq, want);
     updateAreaStockPrices(g);
-    addLog(g, `${p.name} がイベント増資で「${sq.label}」+${amount}G`, 'shop');
+    addLog(
+      g,
+      amount > 0
+        ? `${p.name} がイベント増資で「${sq.label}」+${amount}G`
+        : `${p.name} は「${sq.label}」が増資上限のためイベント増資できず`,
+      'shop',
+    );
     g.pending = null;
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;

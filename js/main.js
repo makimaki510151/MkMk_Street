@@ -24,6 +24,9 @@ import {
   getTollMulti,
   getAreaShops,
   getPlayerAreaCount,
+  getAreaMonopolyRate,
+  getMaxExtraInvest,
+  investMultiByMonopolyRate,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -2034,13 +2037,20 @@ function showChoiceModal(g) {
   if (pend.type === 'invest') {
     const sq = getNode(g, pend.shopId);
     const rem = getRemainingInvest(g, sq);
+    const maxInv = getMaxExtraInvest(g, sq);
+    const owned = getPlayerAreaCount(g, pend.playerId, sq.area);
+    const total = getAreaShops(g, sq.area).length;
+    const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
+    const multi = investMultiByMonopolyRate(rate);
+    const pct = Math.round(rate * 100);
     title.textContent = '増資する？';
     body.innerHTML = `
       <p class="modal-lead"><strong>${sq.label}</strong></p>
-      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り ${rem.toLocaleString()}G</p>
-      <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" /></label>
+      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
+      <p class="hint">独占率 ${owned}/${total}（${pct}%）→ 上限倍率×${multi}（上限 ${maxInv.toLocaleString()}G）</p>
+      <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" ${rem <= 0 ? 'disabled' : ''} /></label>
       <div class="modal-actions">
-        <button class="btn primary" id="m-inv">増資する</button>
+        <button class="btn primary" id="m-inv" ${rem <= 0 ? 'disabled' : ''}>${rem <= 0 ? '増資上限です' : '増資する'}</button>
       </div>`;
     $('#m-inv').onclick = () => {
       const amount = Number($('#m-amt').value) || 0;
