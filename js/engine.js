@@ -99,6 +99,52 @@ const TOLL_MULTI_BY_AREA = {
 export const MONOPOLY_BONUS_RATE = 0.15;
 export { investMultiByMonopolyRate };
 
+/** プレイヤーごとの累積統計（終了画面用） */
+export function createEmptyStats() {
+  return {
+    rolls: 0,
+    diceTotal: 0,
+    tollEarned: 0,
+    tollPaid: 0,
+    dividendEarned: 0,
+    luckyIncome: 0,
+    shopsBought: 0,
+    shopsStolen: 0,
+    investTotal: 0,
+    salaryEarned: 0,
+    levelUps: 0,
+    monopolyCount: 0,
+    monopolyBonus: 0,
+    stockBought: 0,
+    stockSpent: 0,
+    stockSold: 0,
+    stockIncome: 0,
+    scratchCount: 0,
+    matchBonus: 0,
+    minigamePlays: 0,
+    minigameWins: 0,
+    minigamePrize: 0,
+  };
+}
+
+export function ensureStats(p) {
+  if (!p) return createEmptyStats();
+  if (!p.stats) p.stats = createEmptyStats();
+  else {
+    const base = createEmptyStats();
+    for (const k of Object.keys(base)) {
+      if (typeof p.stats[k] !== 'number') p.stats[k] = base[k];
+    }
+  }
+  return p.stats;
+}
+
+function bumpStat(p, key, n = 1) {
+  if (!p || !n) return;
+  const s = ensureStats(p);
+  s[key] = (s[key] || 0) + n;
+}
+
 function giveAllCash(g, amount) {
   const msgs = [];
   applyAllCash(g, amount, msgs);
@@ -200,6 +246,7 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
       bankrupt: false,
       offline: false,
       flags: {},
+      stats: createEmptyStats(),
     };
   });
 
@@ -324,6 +371,8 @@ export function tryGrantMonopolyBonus(g, p, area) {
   const value = shops.reduce((s, sq) => s + (sq.price || sq.basePrice || 0), 0);
   const bonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
   p.cash += bonus;
+  bumpStat(p, 'monopolyCount', 1);
+  bumpStat(p, 'monopolyBonus', bonus);
   p.flags.monopolyBonusClaimed[area] = true;
 
   if (g.areas[area]) {
@@ -369,6 +418,164 @@ export function getPlayerAssets(g, p) {
     .filter((s) => s.type === 'shop' && s.owner === p.id)
     .reduce((s, sq) => s + sq.price, 0);
   return { cash: p.cash, stockAsset, shopAsset, total: p.cash + stockAsset + shopAsset };
+}
+
+/** 終了画面用アワード定義 */
+const RESULT_AWARD_DEFS = [
+  {
+    id: 'landlord',
+    title: '土地王',
+    desc: 'もっとも多くのお店を所有',
+    metric: (row) => row.shopCount,
+    format: (v) => `${v}軒`,
+  },
+  {
+    id: 'toll_king',
+    title: '買い物料王',
+    desc: '買い物料収入 No.1',
+    metric: (row) => row.stats.tollEarned,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'stock_master',
+    title: '株の達人',
+    desc: '株式資産 No.1',
+    metric: (row) => row.assets.stockAsset,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'monopoly_king',
+    title: '独占王',
+    desc: 'エリア独占の達成回数',
+    metric: (row) => row.stats.monopolyCount,
+    format: (v) => `${v}回`,
+  },
+  {
+    id: 'investor',
+    title: '増資マニア',
+    desc: '増資総額 No.1',
+    metric: (row) => row.stats.investTotal,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'bank_fav',
+    title: '銀行の寵児',
+    desc: '昇進賞金の合計',
+    metric: (row) => row.stats.salaryEarned,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'scratch_king',
+    title: 'スクラッチ王',
+    desc: 'スクラッチ回数とそろい',
+    metric: (row) => row.stats.scratchCount * 10 + row.stats.matchBonus,
+    format: (_v, row) => `${row.stats.scratchCount}回 / そろい${Number(row.stats.matchBonus).toLocaleString()}G`,
+  },
+  {
+    id: 'minigame_king',
+    title: 'ミニゲーム王',
+    desc: 'ミニゲーム勝利数',
+    metric: (row) => row.stats.minigameWins,
+    format: (v) => `${v}勝`,
+  },
+  {
+    id: 'cash_rich',
+    title: '現金持ち',
+    desc: '手元の現金 No.1',
+    metric: (row) => Math.max(0, row.assets.cash),
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'five_buyer',
+    title: '5倍買い名人',
+    desc: '5倍買いで奪取した店',
+    metric: (row) => row.stats.shopsStolen,
+    format: (v) => `${v}軒`,
+  },
+  {
+    id: 'traveler',
+    title: '旅人',
+    desc: 'サイコロの出目合計',
+    metric: (row) => row.stats.diceTotal,
+    format: (v) => `${v}`,
+  },
+  {
+    id: 'dividend',
+    title: '配当長者',
+    desc: '株の配当収入 No.1',
+    metric: (row) => row.stats.dividendEarned,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+];
+
+/**
+ * 本家風の終了統計を組み立てる。
+ * @returns {{ winnerId: number|null, ranking: object[], awards: object[], maxTotal: number, goal: number, turn: number }}
+ */
+export function buildGameResults(g) {
+  const rows = (g.players || []).map((p) => {
+    const assets = getPlayerAssets(g, p);
+    const shopCount = g.map.filter((s) => s.type === 'shop' && s.owner === p.id).length;
+    const monopolyAreas = Object.keys(g.areas || {})
+      .map(Number)
+      .filter((a) => hasAreaMonopoly(g, p.id, a)).length;
+    return {
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      bankrupt: !!p.bankrupt,
+      level: p.level || 1,
+      assets,
+      shopCount,
+      monopolyAreas,
+      stats: { ...createEmptyStats(), ...(p.stats || {}) },
+      isWinner: g.winnerId === p.id,
+    };
+  });
+
+  rows.sort((a, b) => {
+    if (a.bankrupt !== b.bankrupt) return a.bankrupt ? 1 : -1;
+    if (b.assets.total !== a.assets.total) return b.assets.total - a.assets.total;
+    if (b.assets.cash !== a.assets.cash) return b.assets.cash - a.assets.cash;
+    return a.id - b.id;
+  });
+
+  const ranking = rows.map((row, i) => ({ ...row, rank: i + 1 }));
+  const maxTotal = Math.max(1, ...ranking.map((r) => Math.max(0, r.assets.total)));
+
+  const awards = [];
+  for (const def of RESULT_AWARD_DEFS) {
+    let best = null;
+    let bestVal = -Infinity;
+    for (const row of ranking) {
+      if (row.bankrupt) continue;
+      const v = Number(def.metric(row)) || 0;
+      if (v > bestVal) {
+        bestVal = v;
+        best = row;
+      }
+    }
+    if (!best || bestVal <= 0) continue;
+    awards.push({
+      id: def.id,
+      title: def.title,
+      desc: def.desc,
+      playerId: best.id,
+      playerName: best.name,
+      playerColor: best.color,
+      value: bestVal,
+      valueLabel: def.format(bestVal, best),
+    });
+  }
+
+  return {
+    winnerId: g.winnerId,
+    ranking,
+    awards,
+    maxTotal,
+    goal: g.goal,
+    turn: g.turn || 1,
+  };
 }
 
 /** 店を半分価格で売却したときの合計 */
@@ -439,7 +646,9 @@ export function getSharedEventTable(g) {
 }
 
 export function restoreState(data) {
-  return { ...data };
+  const g = { ...data };
+  for (const p of g.players || []) ensureStats(p);
+  return g;
 }
 
 /** 後退を除いた前進候補。行き止まりなら全方向を許可。 */
@@ -652,6 +861,8 @@ export function rollDice(g) {
   g.dice = d;
   g.phase = 'moving';
   g.move = { stepsLeft: d, path: [], passedBank: false, startPos: p.pos };
+  bumpStat(p, 'rolls', 1);
+  bumpStat(p, 'diceTotal', d);
   // 出目数値は演出後に UI が表示。ログも演出中のネタバレを避けるため「？」で残し、UI が確定後に見せる
   addLog(g, `${p.name} がサイコロを振った`, 'dice');
 
@@ -890,6 +1101,8 @@ function handleBank(g, p, landed) {
   if (hasFullMarks(p)) {
     const bonus = getLevelBonus(g, p);
     p.cash += bonus;
+    bumpStat(p, 'salaryEarned', bonus);
+    bumpStat(p, 'levelUps', 1);
     const old = p.level;
     p.level++;
     p.marks = [false, false, false, false];
@@ -985,20 +1198,27 @@ function payToll(g, payer, sq) {
     divTotal = Math.floor(toll * capShares * 0.04);
     for (const pl of holders) {
       const share = Math.floor((divTotal * (pl.stocks[sq.area] || 0)) / totalShares);
-      if (share > 0) pl.cash += share;
+      if (share > 0) {
+        pl.cash += share;
+        bumpStat(pl, 'dividendEarned', share);
+      }
     }
   }
 
   // ラッキー分け前
   for (const lp of g.players) {
     if (lp.lucky && lp.id !== payer.id && lp.id !== owner.id && !lp.bankrupt) {
-      lp.cash += Math.floor(toll * 0.2);
+      const tip = Math.floor(toll * 0.2);
+      lp.cash += tip;
+      bumpStat(lp, 'luckyIncome', tip);
     }
   }
 
   // 料金は全額支払い（所持金はマイナスになり得る）。自動売却はしない
   payer.cash -= toll;
   owner.cash += toll;
+  bumpStat(payer, 'tollPaid', toll);
+  bumpStat(owner, 'tollEarned', toll);
   addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll}G`, 'toll');
 
   if (payer.cash < 0) {
@@ -1069,6 +1289,8 @@ function sellStockForCash(g, p, area, count) {
   const got = g.areas[a].stockPrice * n;
   p.stocks[a] -= n;
   p.cash += got;
+  bumpStat(p, 'stockSold', n);
+  bumpStat(p, 'stockIncome', got);
   if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
@@ -1166,6 +1388,7 @@ export function applyChoice(g, choice) {
       }
       p.cash -= sq.price;
       sq.owner = p.id;
+      bumpStat(p, 'shopsBought', 1);
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が「${sq.label}」を購入（${sq.price}G）`, 'shop');
       const mono = tryGrantMonopolyBonus(g, p, sq.area);
@@ -1209,6 +1432,7 @@ export function applyChoice(g, choice) {
         p.cash -= pay;
         sq.extraInvest += amount;
         sq.price += amount;
+        bumpStat(p, 'investTotal', amount);
         updateAreaStockPrices(g);
         addLog(
           g,
@@ -1251,6 +1475,7 @@ export function applyChoice(g, choice) {
         sq.owner = p.id;
         sq.extraInvest = 0;
         sq.price = sq.basePrice;
+        bumpStat(p, 'shopsStolen', 1);
         if (prevOwnerId >= 0 && prevOwnerId !== p.id) {
           clearMonopolyClaim(g, prevOwnerId, area);
         }
@@ -1378,6 +1603,8 @@ export function applyChoice(g, choice) {
       if (p.cash < cost) return { ok: false, error: 'insufficient' };
       p.cash -= cost;
       p.stocks[area] = (p.stocks[area] || 0) + count;
+      bumpStat(p, 'stockBought', count);
+      bumpStat(p, 'stockSpent', cost);
       if (count >= 10) {
         g.areas[area].B = Math.floor(g.areas[area].B * 1.07);
       }
@@ -1404,6 +1631,8 @@ export function applyChoice(g, choice) {
       const got = g.areas[area].stockPrice * count;
       p.stocks[area] -= count;
       p.cash += got;
+      bumpStat(p, 'stockSold', count);
+      bumpStat(p, 'stockIncome', got);
       if (count >= 10) {
         g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * 0.93));
       }
@@ -1428,6 +1657,8 @@ export function applyChoice(g, choice) {
     if (!open.includes(cellId)) return { ok: false, error: 'bad_cell' };
     const result = scratchCell(g, p, cellId);
     if (!result.ok) return { ok: false, error: result.error };
+    bumpStat(p, 'scratchCount', 1);
+    if (result.matchBonus > 0) bumpStat(p, 'matchBonus', result.matchBonus);
     const msg = result.messages?.join(' / ') || result.cell.label;
     addLog(g, `${p.name} スクラッチ → ${result.cell.label}（${msg}）`, 'event');
     g.pending = null;
@@ -1477,6 +1708,7 @@ export function applyChoice(g, choice) {
       return { ok: true, state: serializeState(g) };
     }
     const amount = applyCappedShopBoost(g, sq, want);
+    if (amount > 0) bumpStat(p, 'investTotal', amount);
     updateAreaStockPrices(g);
     addLog(
       g,
@@ -1546,6 +1778,7 @@ function resolveMinigame(g, p, pending, choice) {
   let detail = '';
   let tier = 'miss';
   let title = '結果発表';
+  let prizeWon = 0;
   /** @type {Record<string, unknown>} */
   const outcome = {};
   let pick = choice?.value;
@@ -1561,6 +1794,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'exact';
       title = 'ぴったり！';
       const prize = 280 + p.level * 40;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`ぴったり！出目${roll} → +${prize}G`);
       payoutAll(g, 60, messages);
@@ -1569,6 +1803,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'near';
       title = 'おしい！';
       const prize = 100 + p.level * 15;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
       payoutAll(g, 40, messages);
@@ -1592,6 +1827,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'win';
       title = '正解！';
       const prize = 200 + p.level * 30;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`正解！数字は ${secret} → +${prize}G`);
       payoutAll(g, 70, messages);
@@ -1614,6 +1850,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'win';
       title = '当たり！';
       const prize = 180 + p.level * 25;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`当たり！${faceLabel} → +${prize}G`);
       payoutAll(g, 55, messages);
@@ -1636,6 +1873,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'jackpot';
       title = 'ジャックポット！';
       const prize = 320 + p.level * 50;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`ジャックポット ${line}！ → +${prize}G`);
       payoutAll(g, 100, messages);
@@ -1644,6 +1882,7 @@ function resolveMinigame(g, p, pending, choice) {
       tier = 'pair';
       title = '二つ揃い！';
       const prize = 120 + p.level * 20;
+      prizeWon = prize;
       p.cash += prize;
       messages.push(`二つ揃い ${line} → +${prize}G`);
       payoutAll(g, 50, messages);
@@ -1661,6 +1900,10 @@ function resolveMinigame(g, p, pending, choice) {
     messages.push('参加賞');
     detail = '参加賞';
   }
+
+  bumpStat(p, 'minigamePlays', 1);
+  if (win) bumpStat(p, 'minigameWins', 1);
+  if (prizeWon > 0) bumpStat(p, 'minigamePrize', prizeWon);
 
   const reveal = {
     game,
@@ -1716,6 +1959,8 @@ export function preTurnSell(g, playerId, area, count) {
   const got = g.areas[a].stockPrice * n;
   p.stocks[a] -= n;
   p.cash += got;
+  bumpStat(p, 'stockSold', n);
+  bumpStat(p, 'stockIncome', got);
   if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');

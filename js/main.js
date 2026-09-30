@@ -13,6 +13,9 @@ import {
   cpuAct,
   currentPlayer,
   getPlayerAssets,
+  buildGameResults,
+  createEmptyStats,
+  updateAreaStockPrices,
   getLiquidatableValue,
   calcToll,
   getRemainingInvest,
@@ -611,7 +614,113 @@ function maybeDemoLanding() {
     };
     app.game.move = null;
     refreshGameUI();
+    return;
   }
+  if (demo === 'results') {
+    seedResultsDemo(app.game);
+    refreshGameUI();
+  }
+}
+
+/** 終了画面デモ用に統計と資産をセット */
+function seedResultsDemo(g) {
+  const presets = [
+    {
+      cash: 4200,
+      level: 4,
+      stats: {
+        rolls: 28, diceTotal: 98, tollEarned: 6200, tollPaid: 1800, dividendEarned: 420,
+        shopsBought: 7, shopsStolen: 1, investTotal: 3400, salaryEarned: 2100, levelUps: 3,
+        monopolyCount: 2, monopolyBonus: 1800, stockBought: 40, stockSpent: 2200,
+        stockSold: 8, stockIncome: 500, scratchCount: 6, matchBonus: 300,
+        minigamePlays: 3, minigameWins: 2, minigamePrize: 520,
+      },
+    },
+    {
+      cash: 2800,
+      level: 3,
+      stats: {
+        rolls: 26, diceTotal: 90, tollEarned: 3100, tollPaid: 2400, dividendEarned: 980,
+        shopsBought: 4, shopsStolen: 0, investTotal: 900, salaryEarned: 1200, levelUps: 2,
+        monopolyCount: 0, monopolyBonus: 0, stockBought: 85, stockSpent: 4800,
+        stockSold: 20, stockIncome: 1400, scratchCount: 4, matchBonus: 100,
+        minigamePlays: 2, minigameWins: 0, minigamePrize: 0,
+      },
+    },
+    {
+      cash: 1500,
+      level: 3,
+      stats: {
+        rolls: 24, diceTotal: 85, tollEarned: 4500, tollPaid: 3200, dividendEarned: 200,
+        shopsBought: 6, shopsStolen: 2, investTotal: 2100, salaryEarned: 900, levelUps: 2,
+        monopolyCount: 1, monopolyBonus: 900, stockBought: 15, stockSpent: 800,
+        stockSold: 5, stockIncome: 280, scratchCount: 8, matchBonus: 450,
+        minigamePlays: 5, minigameWins: 3, minigamePrize: 780,
+      },
+    },
+    {
+      cash: 600,
+      level: 2,
+      stats: {
+        rolls: 22, diceTotal: 70, tollEarned: 800, tollPaid: 4100, dividendEarned: 60,
+        shopsBought: 2, shopsStolen: 0, investTotal: 200, salaryEarned: 400, levelUps: 1,
+        monopolyCount: 0, monopolyBonus: 0, stockBought: 10, stockSpent: 400,
+        stockSold: 2, stockIncome: 90, scratchCount: 3, matchBonus: 50,
+        minigamePlays: 1, minigameWins: 0, minigamePrize: 0,
+      },
+    },
+  ];
+
+  const areaIds = Object.keys(g.areas).map(Number);
+  for (const sq of g.map.filter((n) => n.type === 'shop')) {
+    sq.owner = -1;
+    sq.extraInvest = 0;
+    sq.price = sq.basePrice;
+  }
+
+  g.players.forEach((p, i) => {
+    const preset = presets[i] || presets[presets.length - 1];
+    p.cash = preset.cash;
+    p.level = preset.level;
+    p.bankrupt = false;
+    p.stats = { ...createEmptyStats(), ...preset.stats };
+    p.stocks = {};
+    if (areaIds[0] != null) p.stocks[areaIds[0]] = i === 1 ? 50 : 8;
+    if (areaIds[1] != null) p.stocks[areaIds[1]] = i === 1 ? 30 : 5;
+  });
+
+  // 店舗配分（0が最多→土地王、2も多め）
+  const shops = g.map.filter((n) => n.type === 'shop');
+  const owners = [0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 1, 1, 1, 1, 3, 3];
+  shops.forEach((sq, i) => {
+    const oid = owners[i % owners.length];
+    sq.owner = oid;
+    if (oid === 0) {
+      sq.extraInvest = 80;
+      sq.price = sq.basePrice + 80;
+    } else if (oid === 2) {
+      sq.extraInvest = 40;
+      sq.price = sq.basePrice + 40;
+    }
+  });
+
+  // 0番エリアを0番プレイヤーで独占しやすいよう調整
+  const a0 = areaIds[0];
+  if (a0 != null) {
+    for (const sq of getAreaShops(g, a0)) {
+      sq.owner = 0;
+      sq.extraInvest = 100;
+      sq.price = sq.basePrice + 100;
+    }
+  }
+
+  updateAreaStockPrices(g);
+  g.goal = Math.min(g.goal, 8000);
+  g.turn = 18;
+  g.winnerId = 0;
+  g.phase = 'gameover';
+  g.pending = null;
+  g.move = null;
 }
 
 function enterGame() {
@@ -2483,15 +2592,78 @@ function hideModal() {
 }
 
 function showWinner(g) {
-  const w = g.players[g.winnerId];
+  const results = buildGameResults(g);
+  const w = results.winnerId != null ? g.players[results.winnerId] : null;
   const overlay = $('#winner');
   overlay.hidden = false;
   $('#winner-name').textContent = w ? `${w.name} の勝ち！` : 'ゲーム終了';
-  $('#winner-name').style.color = w?.color || '#ffe08a';
-  const a = w ? getPlayerAssets(g, w) : { total: 0 };
-  $('#winner-sub').textContent = `総資産 ${a.total.toLocaleString()}G`;
+  $('#winner-name').style.color = w?.color || 'var(--accent-strong)';
+  const winAssets = w ? getPlayerAssets(g, w) : { total: 0 };
+  $('#winner-sub').textContent = w
+    ? `総資産 ${winAssets.total.toLocaleString()}G ／ 目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`
+    : `目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`;
+  renderResultsBody(results);
   $('#btn-again').onclick = () => location.reload();
   audio.sfx.win();
+}
+
+function renderResultsBody(results) {
+  const body = $('#results-body');
+  if (!body) return;
+  const maxTotal = Math.max(1, results.maxTotal || 1);
+
+  const rankingHtml = results.ranking.map((row, i) => {
+    const { cash, shopAsset, stockAsset, total } = row.assets;
+    const safeTotal = Math.max(0, total);
+    const barPct = Math.max(8, Math.round((safeTotal / maxTotal) * 100));
+    const cashPct = safeTotal > 0 ? Math.max(0, (Math.max(0, cash) / safeTotal) * 100) : 0;
+    const shopPct = safeTotal > 0 ? Math.max(0, (shopAsset / safeTotal) * 100) : 0;
+    const stockPct = Math.max(0, 100 - cashPct - shopPct);
+    const cls = [
+      'results-row',
+      row.isWinner ? 'is-winner' : '',
+      row.bankrupt ? 'is-bankrupt' : '',
+    ].filter(Boolean).join(' ');
+    return `<article class="${cls}" data-rank="${row.rank}" style="--i:${i}">
+      <div class="results-rank">${row.rank}</div>
+      <div class="results-player">
+        <div class="results-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</div>
+        <div class="results-meta">Lv.${row.level} · 店${row.shopCount}軒 · 独占${row.monopolyAreas} · ${row.bankrupt ? '破産' : '生存'}</div>
+      </div>
+      <div class="results-total">${safeTotal.toLocaleString()}G</div>
+      <div class="results-bar-wrap">
+        <div class="results-bar" style="--bar-w:${barPct}%">
+          <i class="seg-cash" style="width:${cashPct}%"></i>
+          <i class="seg-shop" style="width:${shopPct}%"></i>
+          <i class="seg-stock" style="width:${stockPct}%"></i>
+        </div>
+        <div class="results-legend">
+          <span><i class="lg-cash"></i>現金 ${Math.max(0, cash).toLocaleString()}G</span>
+          <span><i class="lg-shop"></i>お店 ${shopAsset.toLocaleString()}G</span>
+          <span><i class="lg-stock"></i>株 ${stockAsset.toLocaleString()}G</span>
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+
+  const awardsHtml = results.awards.length
+    ? results.awards.map((a, i) => `<article class="results-award" style="--i:${i}">
+        <div class="results-award-title">${escapeHtml(a.title)}</div>
+        <div class="results-award-who" style="color:${escapeHtml(a.playerColor)}">${escapeHtml(a.playerName)}</div>
+        <div class="results-award-val">${escapeHtml(a.desc)} · ${escapeHtml(a.valueLabel)}</div>
+      </article>`).join('')
+    : '<p class="results-award-val">特賞なし</p>';
+
+  body.innerHTML = `
+    <section>
+      <h3 class="results-section-title">RANKING</h3>
+      <div class="results-ranking">${rankingHtml}</div>
+    </section>
+    <section>
+      <h3 class="results-section-title">SPECIAL AWARDS</h3>
+      <div class="results-awards">${awardsHtml}</div>
+    </section>
+  `;
 }
 
 function localHumanSeat(g) {
@@ -2628,4 +2800,16 @@ if (field) {
     d.style.setProperty('--delay', `${Math.random() * 9}s`);
     field.appendChild(d);
   }
+}
+
+// ?demo=xxx でローカル4人戦を自動開始（演出確認用）
+const bootDemo = new URLSearchParams(location.search).get('demo');
+if (bootDemo) {
+  app.mode = 'local';
+  startLocal([
+    { name: 'あか', isCPU: false },
+    { name: 'あお', isCPU: true },
+    { name: 'きいろ', isCPU: true },
+    { name: 'みどり', isCPU: true },
+  ]);
 }

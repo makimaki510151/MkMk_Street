@@ -195,10 +195,16 @@
   <button type="button" id="btn-modal-restore" hidden>選択を再表示</button>
 
   <div id="winner" hidden>
-    <div class="winner-card">
-      <h2 id="winner-name">勝利</h2>
-      <p id="winner-sub"></p>
-      <button class="btn primary large" id="btn-again">もう一度</button>
+    <div class="results-panel">
+      <header class="results-hero">
+        <p class="results-kicker">RESULT</p>
+        <h2 id="winner-name">勝利</h2>
+        <p id="winner-sub"></p>
+      </header>
+      <div id="results-body" class="results-body"></div>
+      <div class="results-actions">
+        <button class="btn primary large" id="btn-again">もう一度</button>
+      </div>
     </div>
   </div>
 
