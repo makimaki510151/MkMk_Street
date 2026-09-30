@@ -663,6 +663,57 @@ describe('MkMk Street engine', () => {
     assert.match(r.messages.join(' '), /そろい×3/);
   });
 
+  it('scratch match requires contiguous cells (no spaced matches)', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 9,
+      cash: 1000,
+    });
+    const table = g.sharedEventTable;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // とびとび: 0, 2, 4（間の1,3は未開封）→ 3つあっても隣接していないので不発
+    for (const i of [0, 2]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[4].eventId = rollAgainId;
+    const before = who.cash;
+    const r = scratchCell(g, who, 4);
+    assert.equal(r.ok, true);
+    assert.equal((r.matches || []).filter((m) => m.lineKey === 'r0').length, 0);
+    assert.equal(r.matchBonus || 0, 0);
+    assert.equal(who.cash, before);
+  });
+
+  it('scratch match fires only for the contiguous block, ignoring spaced extras', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 13,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 隣接3つ (0,1,2) と、離れたもう1つ (5) → カウントは隣接の3のみ
+    for (const i of [0, 1, 5]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[2].eventId = rollAgainId;
+    const r = scratchCell(g, who, 2);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => x.lineKey === 'r0');
+    assert.ok(m, 'contiguous row match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((a, b) => a - b), [0, 1, 2]);
+    assert.ok(!m.cellIds.includes(5), 'spaced cell excluded');
+  });
+
   it('assigns distinct CPU personalities by seat', () => {
     const g = createGame({
       players: [
