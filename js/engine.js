@@ -1319,16 +1319,23 @@ export function applyChoice(g, choice) {
     const msg = result.messages?.join(' / ') || result.cell.label;
     addLog(g, `${p.name} スクラッチ → ${result.cell.label}（${msg}）`, 'event');
     g.pending = null;
+    const matchPayload = {
+      scratched: true,
+      cell: result.cell,
+      matchBonus: result.matchBonus || 0,
+      matches: result.matches || [],
+      messages: result.messages || [],
+    };
     if (maybeOpenMinigame(g, p)) {
-      return { ok: true, scratched: true, cell: result.cell, minigame: true, state: serializeState(g) };
+      return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
     }
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
-      return { ok: true, scratched: true, cell: result.cell, state: serializeState(g) };
+      return { ok: true, ...matchPayload, state: serializeState(g) };
     }
     endTurn(g);
-    return { ok: true, scratched: true, cell: result.cell, state: serializeState(g) };
+    return { ok: true, ...matchPayload, state: serializeState(g) };
   }
 
   if (pending.type === 'minigame') {
