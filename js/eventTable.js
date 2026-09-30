@@ -3,7 +3,7 @@
 export const TABLE_SIZE = 10;
 export const EVENT_COUNT = 200;
 /** 同じ色が3つ以上そろったときの1マスあたりボーナス */
-export const MATCH_BONUS_PER = 60;
+export const MATCH_BONUS_PER = 50;
 
 /** プレイヤー色インデックスと対応（あか/あお/きいろ/みどり） */
 export const COLOR_LABELS = ['あか', 'あお', 'きいろ', 'みどり'];
@@ -332,9 +332,15 @@ export function scratchCell(g, player, cellId) {
   const def = EVENT_CATALOG[cell.eventId - 1];
   applyEventDef(g, player, def, messages);
 
-  const matchBonus = checkColorMatches(g, table, cellId, messages);
+  const match = checkColorMatches(g, table, cellId, messages);
 
-  return { ok: true, cell, matchBonus, messages };
+  return {
+    ok: true,
+    cell,
+    matchBonus: match.total,
+    matches: match.matches,
+    messages,
+  };
 }
 
 function applyCash(player, amount, messages) {
@@ -738,6 +744,8 @@ function checkColorMatches(g, table, cellId, messages) {
   }
 
   let total = 0;
+  /** @type {{ lineKey: string, color: number, count: number, bonus: number, cellIds: number[], beneficiaryId: number, beneficiaryName: string, beneficiaryColor: string }[]} */
+  const matches = [];
   if (!table.claimedMatches) table.claimedMatches = {};
 
   for (const line of lines) {
@@ -762,9 +770,23 @@ function checkColorMatches(g, table, cellId, messages) {
       if (beneficiary && !beneficiary.bankrupt) {
         beneficiary.cash += bonus;
         total += bonus;
+        const cellIds = line.cells.filter((id) => {
+          const cell = table.cells[id];
+          return cell?.scratched && cell.color === color;
+        });
+        matches.push({
+          lineKey: line.key,
+          color,
+          count: n,
+          bonus,
+          cellIds,
+          beneficiaryId: beneficiary.id,
+          beneficiaryName: beneficiary.name,
+          beneficiaryColor: beneficiary.color,
+        });
         messages.push(`${COLOR_LABELS[color]}色そろい×${n} → ${beneficiary.name} +${bonus}G`);
       }
     }
   }
-  return total;
+  return { total, matches };
 }

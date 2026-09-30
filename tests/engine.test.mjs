@@ -22,7 +22,15 @@ import {
   PLAYER_COLORS,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
-import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT, applyAllCash, scratchCell, playerColorIndex } from '../js/eventTable.js';
+import {
+  unscratchedIds,
+  EVENT_CATALOG,
+  EVENT_COUNT,
+  applyAllCash,
+  scratchCell,
+  playerColorIndex,
+  MATCH_BONUS_PER,
+} from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -597,6 +605,42 @@ describe('MkMk Street engine', () => {
     assert.equal(cell.scratchedBy, 1);
     assert.equal(cell.color, playerColorIndex(g.players[1]));
     assert.equal(cell.color, 1);
+  });
+
+  it('scratch line match pays count * 50G and returns cellIds', () => {
+    assert.equal(MATCH_BONUS_PER, 50);
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 7,
+      cash: 1000,
+    });
+    const table = g.sharedEventTable;
+    const who = g.players[0];
+    // 先頭行 0,1 をあか色で先に開ける（イベント効果は無視して状態だけ）
+    for (const i of [0, 1]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    // イベント効果を無効化してボーナスだけ検証
+    table.cells[2].eventId = EVENT_CATALOG.findIndex((e) => e.effect === 'noop') + 1;
+    if (table.cells[2].eventId < 1) {
+      // noop が無ければラベルだけの無害イベントを仮置き
+      table.cells[2].eventId = 1;
+    }
+    const before = who.cash;
+    const r = scratchCell(g, who, 2);
+    assert.equal(r.ok, true);
+    assert.ok(r.matches?.length >= 1, 'expected a line match');
+    const m = r.matches.find((x) => x.lineKey === 'r0');
+    assert.ok(m, 'row match');
+    assert.equal(m.count, 3);
+    assert.equal(m.bonus, 3 * MATCH_BONUS_PER);
+    assert.deepEqual(m.cellIds.slice().sort((a, b) => a - b), [0, 1, 2]);
+    assert.ok(r.matchBonus >= 150);
+    assert.ok(who.cash >= before + 150);
+    assert.match(r.messages.join(' '), /そろい×3/);
   });
 
   it('assigns distinct CPU personalities by seat', () => {
