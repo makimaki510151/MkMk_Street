@@ -6,6 +6,12 @@ import {
   getPlayerAreaCount,
   getTollMulti,
   getPlayerAssets,
+  getMaxExtraInvest,
+  getRemainingInvest,
+  getAreaMonopolyRate,
+  investMultiByMonopolyRate,
+  applyCappedShopBoost,
+  getAreaShops,
   getLiquidatableValue,
   preTurnSell,
   canSellStockOnTurn,
@@ -80,6 +86,43 @@ describe('MkMk Street engine', () => {
     assert.equal(getTollMulti(1), 1);
     assert.equal(getTollMulti(2), 1.25);
     assert.equal(getTollMulti(4), 5);
+  });
+
+  it('scales invest cap by area monopoly rate', () => {
+    assert.equal(investMultiByMonopolyRate(0.25), 0.5);
+    assert.equal(investMultiByMonopolyRate(0.5), 1);
+    assert.equal(investMultiByMonopolyRate(0.75), 3);
+    assert.equal(investMultiByMonopolyRate(1), 9);
+
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.equal(shops.length, 4);
+    const sq = shops[0];
+    sq.owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 0.25);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 0.5));
+
+    shops[1].owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 0.5);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 1));
+
+    shops[2].owner = 0;
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 3));
+
+    shops[3].owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 1);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 9));
+
+    // 枠を超えて載せられない
+    const rem = getRemainingInvest(g, sq);
+    const added = applyCappedShopBoost(g, sq, rem + 500);
+    assert.equal(added, rem);
+    assert.equal(getRemainingInvest(g, sq), 0);
+    assert.equal(applyCappedShopBoost(g, sq, 50), 0);
   });
 
   it('raises toll when owning multiple shops in an area', () => {

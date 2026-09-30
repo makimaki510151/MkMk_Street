@@ -1,5 +1,7 @@
 /** MkMk Street — 10×10 イベント表（1〜200番をランダム配置） */
 
+import { remainingInvest } from './investLimits.js';
+
 export const TABLE_SIZE = 10;
 export const EVENT_COUNT = 200;
 /** 同じ色が3つ以上そろったときの1マスあたりボーナス */
@@ -373,16 +375,36 @@ function applyStocks(g, player, count, messages) {
   messages.push(`A${a}株 +${count}`);
 }
 
+function areaOwnedTotal(g, pid, area) {
+  const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+  const owned = shops.filter((s) => s.owner === pid).length;
+  return { owned, total: shops.length };
+}
+
+/** 独占率に応じた増資枠内だけで店価値を上げる */
+function boostShopCapped(g, sq, amount) {
+  const { owned, total } = areaOwnedTotal(g, sq.owner, sq.area);
+  const add = Math.max(0, Math.min(Math.floor(amount), remainingInvest(sq.basePrice, sq.extraInvest || 0, owned, total)));
+  if (add <= 0) return 0;
+  sq.extraInvest = (sq.extraInvest || 0) + add;
+  sq.price += add;
+  return add;
+}
+
 function applyShopBoost(g, player, amount, messages) {
   const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
   if (!shops.length) {
     messages.push('所持店なし（効果なし）');
     return;
   }
-  const sq = pickRandom(shops);
-  sq.extraInvest = (sq.extraInvest || 0) + amount;
-  sq.price += amount;
-  messages.push(`「${sq.label}」価値 +${amount}`);
+  const pool = shops.filter((sq) => {
+    const { owned, total } = areaOwnedTotal(g, player.id, sq.area);
+    return remainingInvest(sq.basePrice, sq.extraInvest || 0, owned, total) > 0;
+  });
+  const sq = pickRandom(pool.length ? pool : shops);
+  const add = boostShopCapped(g, sq, amount);
+  if (add > 0) messages.push(`「${sq.label}」価値 +${add}`);
+  else messages.push(`増資上限のため効果なし（独占率を上げよう）`);
 }
 
 function applyEventDef(g, player, def, messages) {
@@ -619,12 +641,15 @@ function applyEventDef(g, player, def, messages) {
       const a = pickRandom(areas);
       const amt = def.amount || 20;
       let n = 0;
+      let gained = 0;
       for (const sq of g.map.filter((s) => s.type === 'shop' && s.area === a && s.owner === player.id)) {
-        sq.extraInvest = (sq.extraInvest || 0) + amt;
-        sq.price += amt;
-        n++;
+        const add = boostShopCapped(g, sq, amt);
+        if (add > 0) {
+          n++;
+          gained += add;
+        }
       }
-      messages.push(n ? `A${a} の自分の店×${n} 価値+${amt}` : `A${a} に自分の店なし`);
+      messages.push(n ? `A${a} の自分の店×${n} 価値+${gained}（枠内）` : `A${a} に自分の店なし／増資枠なし`);
       if (!n) applyStocks(g, player, 5, messages);
       break;
     }
@@ -636,11 +661,16 @@ function applyEventDef(g, player, def, messages) {
         messages.push('所持店なし → 増資半額券');
         break;
       }
+      let gained = 0;
+      let hit = 0;
       for (const sq of shops) {
-        sq.extraInvest = (sq.extraInvest || 0) + amt;
-        sq.price += amt;
+        const add = boostShopCapped(g, sq, amt);
+        if (add > 0) {
+          hit++;
+          gained += add;
+        }
       }
-      messages.push(`全店の価値 +${amt}（${shops.length}店）`);
+      messages.push(hit ? `全店の価値 +${gained}（${hit}/${shops.length}店・増資枠内）` : '増資上限のため効果なし');
       break;
     }
     case 'trim_stocks': {
