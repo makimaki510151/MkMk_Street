@@ -9,6 +9,7 @@ import {
   applyChoice,
   chooseFork,
   preTurnSell,
+  canSellStockOnTurn,
   cpuAct,
   currentPlayer,
   getPlayerAssets,
@@ -460,6 +461,18 @@ function maybeDemoLanding() {
     };
     app.game.move = null;
     refreshGameUI();
+    return;
+  }
+  if (demo === 'minigame') {
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'minigame',
+      playerId: p.id,
+      game: 'guess_dice',
+      label: 'サイコロ当て',
+    };
+    app.game.move = null;
+    refreshGameUI();
   }
 }
 
@@ -778,6 +791,18 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.minigame && result.messages) {
+      if (result.win) audio.sfx.levelUp();
+      else audio.sfx.buy();
+      enqueueBanner({
+        kicker: 'ミニゲーム',
+        title: result.win ? '当たり！' : '結果発表',
+        detail: result.messages.join(' / '),
+        kind: 'event',
+        color: currentPlayer(app.game)?.color || '#ffe08a',
+        mine: true,
+      });
+    }
     if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -794,8 +819,17 @@ async function applyLocalAction(action) {
   }
 
   if (action.type === 'sell') {
-    const result = preTurnSell(app.game, action.playerId, action.area, action.count);
-    if (result?.state) app.game = restoreState(result.state);
+    const pid = action.playerId ?? app.game.currentPlayerIdx;
+    const cur = currentPlayer(app.game);
+    if (app.mode === 'local') {
+      if (cur?.isCPU || pid !== cur?.id) return;
+    } else if (pid !== app.localSeat || !isMyTurn()) {
+      return toast('あなたのターンではありません');
+    }
+    const result = preTurnSell(app.game, pid, action.area, action.count);
+    if (!result.ok) return toast(result.error || '売却できません');
+    if (result.state) app.game = restoreState(result.state);
+    audio.sfx.buy();
     syncState();
     refreshGameUI();
   }
@@ -975,6 +1009,20 @@ async function handleHostAction(from, data) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
     }
+    if (result.minigame && result.messages) {
+      if (result.win) audio.sfx.levelUp();
+      else audio.sfx.buy();
+      broadcastFx({
+        kind: 'banner',
+        payload: {
+          kicker: 'ミニゲーム',
+          title: result.win ? '当たり！' : '結果発表',
+          detail: result.messages.join(' / '),
+          kind: 'event',
+          color: app.game.players[seat]?.color || '#ffe08a',
+        },
+      });
+    }
     syncState();
     refreshGameUI();
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
@@ -988,8 +1036,17 @@ async function handleHostAction(from, data) {
   }
 
   if (action.type === 'sell') {
+    if (app.game.currentPlayerIdx !== seat) {
+      app.net.sendTo(from, { type: 'reject', reason: 'あなたのターンではありません' });
+      return;
+    }
     const result = preTurnSell(app.game, seat, action.area, action.count);
+    if (!result.ok) {
+      app.net.sendTo(from, { type: 'reject', reason: result.error || '売却できません' });
+      return;
+    }
     if (result.state) app.game = restoreState(result.state);
+    audio.sfx.buy();
     syncState();
     refreshGameUI();
   }
@@ -1217,6 +1274,7 @@ function pendingStatusLabel(pend) {
       ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
       : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
+    case 'minigame': return `ミニゲーム「${pend.label || ''}」中`;
     case 'level_up': return '昇進を祝っている';
     default: return '選択中';
   }
@@ -1793,6 +1851,58 @@ function showChoiceModal(g) {
     return;
   }
 
+  if (pend.type === 'minigame') {
+    const label = pend.label || 'ミニゲーム';
+    title.textContent = label;
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    $('#modal-card').classList.add('wide');
+    const game = pend.game || 'guess_dice';
+    if (game === 'guess_dice') {
+      body.innerHTML = `
+        <p class="modal-lead">出目を当てよう！</p>
+        <p class="hint">ぴったりで高額、おしい（±1）でも報酬。ハズレでも全員に参加賞が出ます。</p>
+        <div class="mini-pick-grid">
+          ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="btn primary mini-pick" data-pick="${n}">${n}</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-pick]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.pick) } });
+        };
+      });
+    } else if (game === 'high_low') {
+      body.innerHTML = `
+        <p class="modal-lead">次の数字はハイ？ ロー？</p>
+        <p class="hint">1〜10のうち、6以上がハイ・5以下がロー。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
+          <button class="btn" id="m-lo">ロー（1〜5）</button>
+        </div>`;
+      $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
+      $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
+    } else if (game === 'coin') {
+      body.innerHTML = `
+        <p class="modal-lead">コインの裏表を予想！</p>
+        <p class="hint">当たればボーナス。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-heads">おもて</button>
+          <button class="btn" id="m-tails">うら</button>
+        </div>`;
+      $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
+      $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
+    } else {
+      body.innerHTML = `
+        <p class="modal-lead">スロットを回そう！</p>
+        <p class="hint">3つ揃いでジャックポット。2つ揃いでも報酬。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary large" id="m-spin">回す！</button>
+        </div>`;
+      $('#m-spin').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'spin' } }); };
+    }
+    return;
+  }
+
   $('#modal-card').classList.remove('wide');
 }
 
@@ -1821,10 +1931,24 @@ function showWinner(g) {
   audio.sfx.win();
 }
 
+function localHumanSeat(g) {
+  if (app.mode === 'local') {
+    const cur = currentPlayer(g);
+    if (!cur || cur.isCPU) return null;
+    return cur.id;
+  }
+  if (app.mode === 'host' || app.mode === 'guest') return app.localSeat;
+  return null;
+}
+
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
   const areas = Object.keys(g.areas).map(Number);
   const players = g.players;
+  const seat = localHumanSeat(g);
+  const me = seat != null ? g.players[seat] : null;
+  const canSell = seat != null && !app.busy && canSellStockOnTurn(g, seat);
+
   const priceChips = areas.map((area) => {
     const meta = g.areas[area];
     return `<button type="button" class="stock-chip" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}">
@@ -1853,12 +1977,37 @@ function renderStockPanel(g) {
     </div>`;
   }).join('');
 
+  const held = me
+    ? areas.filter((area) => (me.stocks[area] || 0) > 0)
+    : [];
+  const sellBlock = canSell && held.length
+    ? `<div class="stocks-sell">
+        <div class="sh-title">自分の株を売る</div>
+        <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
+        ${held.map((area) => {
+          const meta = g.areas[area];
+          const have = me.stocks[area] || 0;
+          const price = meta.stockPrice;
+          return `<div class="sell-row" style="--ac:${meta.color}" data-hold-area="${area}">
+            <span class="sell-label">A${area} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
+            <label class="field tiny">枚数
+              <input type="number" min="1" max="${have}" value="${Math.min(have, 10)}" data-sell-count="${area}" />
+            </label>
+            <button type="button" class="btn tiny" data-turn-sell="${area}">売る</button>
+          </div>`;
+        }).join('')}
+      </div>`
+    : (seat != null && g.currentPlayerIdx === seat && !app.busy && ['await_roll', 'await_choice', 'await_fork'].includes(g.phase)
+      ? `<div class="stocks-sell muted"><p class="hint">売る株がありません</p></div>`
+      : '');
+
   el.innerHTML = `
     <div class="stocks-prices">${priceChips}</div>
     <div class="stocks-holdings">
       <div class="sh-title">株の所持（全員）</div>
       <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
-    </div>`;
+    </div>
+    ${sellBlock}`;
 
   const highlight = (area) => {
     app.renderer?.setStockHighlight(area, true);
@@ -1880,6 +2029,19 @@ function renderStockPanel(g) {
     node.addEventListener('mouseleave', clear);
     node.addEventListener('focus', () => highlight(area));
     node.addEventListener('blur', clear);
+  });
+
+  el.querySelectorAll('[data-turn-sell]').forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (seat == null || app.busy) return;
+      const area = Number(btn.dataset.turnSell);
+      const input = el.querySelector(`input[data-sell-count="${area}"]`);
+      const have = me?.stocks[area] || 0;
+      const count = Math.max(1, Math.min(have, Number(input?.value) || 1));
+      sendAction({ type: 'sell', playerId: seat, area, count });
+    };
   });
 }
 
