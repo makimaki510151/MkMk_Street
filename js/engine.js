@@ -1412,6 +1412,9 @@ export function applyChoice(g, choice) {
       messages: result.messages || [],
       warps: result.warps || [],
     };
+    if (maybeOpenPickInvest(g, p)) {
+      return { ok: true, ...matchPayload, pickInvest: true, state: serializeState(g) };
+    }
     if (maybeOpenMinigame(g, p)) {
       return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
     }
@@ -1424,11 +1427,63 @@ export function applyChoice(g, choice) {
     return { ok: true, ...matchPayload, state: serializeState(g) };
   }
 
+  if (pending.type === 'pick_invest') {
+    const amount = Math.max(20, Math.floor(Number(pending.amount) || 80));
+    let sq = null;
+    if (choice.action === 'invest' || choice.action === 'pick') {
+      sq = getNode(g, Number(choice.shopId));
+      if (!sq || sq.type !== 'shop' || sq.owner !== p.id) {
+        return { ok: false, error: 'bad_shop' };
+      }
+    } else if (choice.action === 'skip') {
+      // スキップ時は所持店からランダム適用（イベント効果を無駄にしない）
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+      sq = shops[Math.floor(Math.random() * shops.length)] || null;
+    } else {
+      return { ok: false, error: 'bad_choice' };
+    }
+    if (!sq) {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    sq.extraInvest = (sq.extraInvest || 0) + amount;
+    sq.price += amount;
+    updateAreaStockPrices(g);
+    addLog(g, `${p.name} がイベント増資で「${sq.label}」+${amount}G`, 'shop');
+    g.pending = null;
+    if (p.flags.extraRoll) {
+      p.flags.extraRoll = false;
+      g.phase = 'await_roll';
+      return { ok: true, pickInvest: true, shopId: sq.id, amount, state: serializeState(g) };
+    }
+    endTurn(g);
+    return { ok: true, pickInvest: true, shopId: sq.id, amount, state: serializeState(g) };
+  }
+
   if (pending.type === 'minigame') {
     return resolveMinigame(g, p, pending, choice);
   }
 
   return { ok: false, error: 'unknown_pending' };
+}
+
+/** スクラッチ等のあとに「好きな店へ増資」選択を開く */
+function maybeOpenPickInvest(g, p) {
+  const info = p.flags?.pendingPickInvest;
+  if (!info) return false;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+  p.flags.pendingPickInvest = null;
+  if (!shops.length) return false;
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'pick_invest',
+    playerId: p.id,
+    amount: Math.max(20, Math.floor(Number(info.amount) || 80)),
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} は増資するお店を選ぶ（+${g.pending.amount}G）`, 'shop');
+  return true;
 }
 
 function maybeOpenMinigame(g, p) {
@@ -1878,6 +1933,28 @@ export function cpuAct(g) {
       const amount = Math.min(rem, Math.floor(Math.max(0, liq) * traits.investRate));
       if (amount >= 20) return applyChoice(g, { action: 'invest', amount });
       return applyChoice(g, { action: 'skip' });
+    }
+    if (pend.type === 'pick_invest') {
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.id);
+      if (!ids.length) return applyChoice(g, { action: 'skip' });
+      // 増資余地が大きい店／エリア集中を優先
+      let best = ids[0];
+      let bestScore = -1;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq) continue;
+        const rem = getRemainingInvest(g, sq);
+        const areaCnt = getPlayerAreaCount(g, p.id, sq.area);
+        const score = rem * 1.2 + areaCnt * 40 + sq.price * 0.05
+          + (traits.key === 'magnate' || traits.key === 'tycoon' ? areaCnt * 25 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = id;
+        }
+      }
+      return applyChoice(g, { action: 'invest', shopId: best });
     }
     if (pend.type === 'five_buy') {
       const buy = cpuShouldFiveBuy(g, p, pend, traits);

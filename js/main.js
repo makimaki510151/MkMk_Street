@@ -1791,6 +1791,7 @@ function pendingStatusLabel(pend) {
     case 'fork': return '分岐を選択中';
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
+    case 'pick_invest': return 'イベント増資する店を選択中';
     case 'five_buy': return '5倍買いを検討中';
     case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
@@ -2046,6 +2047,37 @@ function showChoiceModal(g) {
       hideModal();
       sendAction({ type: 'choice', choice: { action: 'invest', amount } });
     };
+    return;
+  }
+
+  if (pend.type === 'pick_invest') {
+    const amount = pend.amount || 80;
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    title.textContent = '増資するお店を選ぶ';
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const rem = getRemainingInvest(g, sq);
+      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G · 増資枠 ${rem.toLocaleString()}G</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <p class="modal-lead">無料で <strong>+${amount.toLocaleString()}G</strong> 増資できます</p>
+      <p class="hint">自分の店舗から1つ選んでください</p>
+      <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+    $$('.pick-invest-shop').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'invest', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) skip.textContent = 'おまかせ';
     return;
   }
 

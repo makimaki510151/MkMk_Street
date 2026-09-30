@@ -67,6 +67,16 @@ function buildCatalog() {
     ['area_banner', 'エリア横断幕', 35], ['staff_cheer', '店員の応援', 40],
   ].forEach(([k, l, shopBoost]) => push(k, l, { shopBoost, effect: 'shop_boost' }));
 
+  // ── 好きな自分の店へ無料増資（選択）────────────────────────
+  [
+    ['free_remodel', '好きなお店を改装', 80],
+    ['owner_choice_boost', '店主の采配', 70],
+    ['pick_renovation', '改装オーダー', 90],
+    ['my_shop_glowup', '推し店を磨こう', 60],
+    ['selective_invest', '一点集中投資', 100],
+    ['spotlight_shop', 'スポットライト改装', 75],
+  ].forEach(([k, l, amount]) => push(k, l, { effect: 'pick_invest', amount }));
+
   // ── サイコロ・移動 ───────────────────────────────────────
   [
     ['roll_again', 'もう一振り'], ['express_lane', '急行レーン'],
@@ -245,6 +255,7 @@ function buildCatalog() {
     { effect: 'grant_mark', grantMark: true },
     { effect: 'stocks', stocks: 5 },
     { effect: 'shop_boost', shopBoost: 30 },
+    { effect: 'pick_invest', amount: 55 },
     { effect: 'invest_coupon' },
     { effect: 'toll_shield' },
     { effect: 'bump_area_stock', amount: 1.08 },
@@ -436,6 +447,18 @@ function applyEventDef(g, player, def, messages) {
     case 'shop_boost':
       applyShopBoost(g, player, def.shopBoost || 30, messages);
       break;
+    case 'pick_invest': {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
+      const amount = Math.max(20, Math.floor(def.amount || def.shopBoost || 80));
+      if (!shops.length) {
+        player.flags.investCoupon = true;
+        messages.push('所持店なし → 増資半額券');
+        break;
+      }
+      player.flags.pendingPickInvest = { amount };
+      messages.push(`好きな自分の店を選んで +${amount}G 増資！`);
+      break;
+    }
     case 'shop_and_stock':
       applyShopBoost(g, player, def.shopBoost || 30, messages);
       applyStocks(g, player, def.stocks || 5, messages);
