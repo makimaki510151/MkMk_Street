@@ -9,6 +9,7 @@ import {
   applyChoice,
   chooseFork,
   preTurnSell,
+  canSellStockOnTurn,
   cpuAct,
   currentPlayer,
   getPlayerAssets,
@@ -818,8 +819,17 @@ async function applyLocalAction(action) {
   }
 
   if (action.type === 'sell') {
-    const result = preTurnSell(app.game, action.playerId, action.area, action.count);
-    if (result?.state) app.game = restoreState(result.state);
+    const pid = action.playerId ?? app.game.currentPlayerIdx;
+    const cur = currentPlayer(app.game);
+    if (app.mode === 'local') {
+      if (cur?.isCPU || pid !== cur?.id) return;
+    } else if (pid !== app.localSeat || !isMyTurn()) {
+      return toast('あなたのターンではありません');
+    }
+    const result = preTurnSell(app.game, pid, action.area, action.count);
+    if (!result.ok) return toast(result.error || '売却できません');
+    if (result.state) app.game = restoreState(result.state);
+    audio.sfx.buy();
     syncState();
     refreshGameUI();
   }
@@ -1026,8 +1036,17 @@ async function handleHostAction(from, data) {
   }
 
   if (action.type === 'sell') {
+    if (app.game.currentPlayerIdx !== seat) {
+      app.net.sendTo(from, { type: 'reject', reason: 'あなたのターンではありません' });
+      return;
+    }
     const result = preTurnSell(app.game, seat, action.area, action.count);
+    if (!result.ok) {
+      app.net.sendTo(from, { type: 'reject', reason: result.error || '売却できません' });
+      return;
+    }
     if (result.state) app.game = restoreState(result.state);
+    audio.sfx.buy();
     syncState();
     refreshGameUI();
   }
@@ -1912,10 +1931,24 @@ function showWinner(g) {
   audio.sfx.win();
 }
 
+function localHumanSeat(g) {
+  if (app.mode === 'local') {
+    const cur = currentPlayer(g);
+    if (!cur || cur.isCPU) return null;
+    return cur.id;
+  }
+  if (app.mode === 'host' || app.mode === 'guest') return app.localSeat;
+  return null;
+}
+
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
   const areas = Object.keys(g.areas).map(Number);
   const players = g.players;
+  const seat = localHumanSeat(g);
+  const me = seat != null ? g.players[seat] : null;
+  const canSell = seat != null && !app.busy && canSellStockOnTurn(g, seat);
+
   const priceChips = areas.map((area) => {
     const meta = g.areas[area];
     return `<button type="button" class="stock-chip" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}">
@@ -1944,12 +1977,37 @@ function renderStockPanel(g) {
     </div>`;
   }).join('');
 
+  const held = me
+    ? areas.filter((area) => (me.stocks[area] || 0) > 0)
+    : [];
+  const sellBlock = canSell && held.length
+    ? `<div class="stocks-sell">
+        <div class="sh-title">自分の株を売る</div>
+        <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
+        ${held.map((area) => {
+          const meta = g.areas[area];
+          const have = me.stocks[area] || 0;
+          const price = meta.stockPrice;
+          return `<div class="sell-row" style="--ac:${meta.color}" data-hold-area="${area}">
+            <span class="sell-label">A${area} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
+            <label class="field tiny">枚数
+              <input type="number" min="1" max="${have}" value="${Math.min(have, 10)}" data-sell-count="${area}" />
+            </label>
+            <button type="button" class="btn tiny" data-turn-sell="${area}">売る</button>
+          </div>`;
+        }).join('')}
+      </div>`
+    : (seat != null && g.currentPlayerIdx === seat && !app.busy && ['await_roll', 'await_choice', 'await_fork'].includes(g.phase)
+      ? `<div class="stocks-sell muted"><p class="hint">売る株がありません</p></div>`
+      : '');
+
   el.innerHTML = `
     <div class="stocks-prices">${priceChips}</div>
     <div class="stocks-holdings">
       <div class="sh-title">株の所持（全員）</div>
       <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
-    </div>`;
+    </div>
+    ${sellBlock}`;
 
   const highlight = (area) => {
     app.renderer?.setStockHighlight(area, true);
@@ -1971,6 +2029,19 @@ function renderStockPanel(g) {
     node.addEventListener('mouseleave', clear);
     node.addEventListener('focus', () => highlight(area));
     node.addEventListener('blur', clear);
+  });
+
+  el.querySelectorAll('[data-turn-sell]').forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (seat == null || app.busy) return;
+      const area = Number(btn.dataset.turnSell);
+      const input = el.querySelector(`input[data-sell-count="${area}"]`);
+      const have = me?.stocks[area] || 0;
+      const count = Math.max(1, Math.min(have, Number(input?.value) || 1));
+      sendAction({ type: 'sell', playerId: seat, area, count });
+    };
   });
 }
 

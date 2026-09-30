@@ -7,6 +7,8 @@ import {
   getTollMulti,
   getPlayerAssets,
   getLiquidatableValue,
+  preTurnSell,
+  canSellStockOnTurn,
   rollDice,
   advanceMove,
   applyChoice,
@@ -574,5 +576,40 @@ describe('MkMk Street engine', () => {
     const scratched2 = scratchCell(g, g.players[0], 1);
     assert.equal(scratched2.ok, true);
     assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
+  });
+
+  it('allows stock sell during own turn in roll/choice/fork phases', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 101,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 20;
+    g.phase = 'await_roll';
+    assert.equal(canSellStockOnTurn(g, 0), true);
+    assert.equal(canSellStockOnTurn(g, 1), false);
+    const before = g.players[0].cash;
+    const price = g.areas[area].stockPrice;
+    const sold = preTurnSell(g, 0, area, 5);
+    assert.equal(sold.ok, true);
+    assert.equal(g.players[0].stocks[area], 15);
+    assert.equal(g.players[0].cash, before + price * 5);
+
+    // 選択待ちでも売れる
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: 1, price: 100 };
+    assert.equal(canSellStockOnTurn(g, 0), true);
+    const sold2 = preTurnSell(g, 0, area, 2);
+    assert.equal(sold2.ok, true);
+    assert.equal(g.players[0].stocks[area], 13);
+
+    // 移動中は売れない
+    g.phase = 'moving';
+    g.move = { stepsLeft: 2, path: [], passedBank: false, startPos: g.startId };
+    assert.equal(canSellStockOnTurn(g, 0), false);
+    const blocked = preTurnSell(g, 0, area, 1);
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error, 'bad_phase');
   });
 });
