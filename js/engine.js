@@ -150,12 +150,13 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
   const rng = mulberry32(seed);
 
+  let cpuOrd = 0;
   const plist = players.map((pl, i) => {
     const isCPU = !!pl.isCPU;
     const personality = isCPU
       ? (pl.personality && CPU_PERSONALITIES[pl.personality]
         ? pl.personality
-        : CPU_PERSONALITY_KEYS[i % CPU_PERSONALITY_KEYS.length])
+        : CPU_PERSONALITY_KEYS[cpuOrd++ % CPU_PERSONALITY_KEYS.length])
       : null;
     return {
       id: i,

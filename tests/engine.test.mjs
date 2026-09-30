@@ -610,11 +610,12 @@ describe('MkMk Street engine', () => {
       seed: 12,
     });
     assert.equal(g.players[0].personality, null);
-    assert.equal(g.players[1].personality, CPU_PERSONALITY_KEYS[1]);
-    assert.equal(g.players[2].personality, CPU_PERSONALITY_KEYS[2]);
-    assert.equal(g.players[3].personality, CPU_PERSONALITY_KEYS[3]);
-    assert.equal(getCpuPersonality(g.players[1]).label, '株マニア');
-    assert.equal(getCpuPersonality(g.players[2]).label, '独占屋');
+    // 人間を除いたCPU順で個性を振る（店舗王から）
+    assert.equal(g.players[1].personality, CPU_PERSONALITY_KEYS[0]);
+    assert.equal(g.players[2].personality, CPU_PERSONALITY_KEYS[1]);
+    assert.equal(g.players[3].personality, CPU_PERSONALITY_KEYS[2]);
+    assert.equal(getCpuPersonality(g.players[1]).label, '店舗王');
+    assert.equal(getCpuPersonality(g.players[2]).label, '株マニア');
   });
 
   it('CPU personalities prefer different stock budgets', () => {
