@@ -629,6 +629,17 @@ button:disabled { opacity: .45; cursor: default; }
 .modal-card h3 { font-family: var(--display); color: var(--gold); font-size: 1.05rem; }
 .modal-lead { font-size: 1.05rem; }
 .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.mini-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+.mini-pick-grid .mini-pick {
+  min-height: 2.8rem;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
 .fork-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
 .fork-btn {
   border-radius: 14px !important;

@@ -460,6 +460,18 @@ function maybeDemoLanding() {
     };
     app.game.move = null;
     refreshGameUI();
+    return;
+  }
+  if (demo === 'minigame') {
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'minigame',
+      playerId: p.id,
+      game: 'guess_dice',
+      label: 'サイコロ当て',
+    };
+    app.game.move = null;
+    refreshGameUI();
   }
 }
 
@@ -778,6 +790,18 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.minigame && result.messages) {
+      if (result.win) audio.sfx.levelUp();
+      else audio.sfx.buy();
+      enqueueBanner({
+        kicker: 'ミニゲーム',
+        title: result.win ? '当たり！' : '結果発表',
+        detail: result.messages.join(' / '),
+        kind: 'event',
+        color: currentPlayer(app.game)?.color || '#ffe08a',
+        mine: true,
+      });
+    }
     if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -974,6 +998,20 @@ async function handleHostAction(from, data) {
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
+    }
+    if (result.minigame && result.messages) {
+      if (result.win) audio.sfx.levelUp();
+      else audio.sfx.buy();
+      broadcastFx({
+        kind: 'banner',
+        payload: {
+          kicker: 'ミニゲーム',
+          title: result.win ? '当たり！' : '結果発表',
+          detail: result.messages.join(' / '),
+          kind: 'event',
+          color: app.game.players[seat]?.color || '#ffe08a',
+        },
+      });
     }
     syncState();
     refreshGameUI();
@@ -1217,6 +1255,7 @@ function pendingStatusLabel(pend) {
       ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
       : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
+    case 'minigame': return `ミニゲーム「${pend.label || ''}」中`;
     case 'level_up': return '昇進を祝っている';
     default: return '選択中';
   }
@@ -1790,6 +1829,58 @@ function showChoiceModal(g) {
         sendAction({ type: 'choice', choice: { action: 'scratch', cellId } });
       };
     });
+    return;
+  }
+
+  if (pend.type === 'minigame') {
+    const label = pend.label || 'ミニゲーム';
+    title.textContent = label;
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    $('#modal-card').classList.add('wide');
+    const game = pend.game || 'guess_dice';
+    if (game === 'guess_dice') {
+      body.innerHTML = `
+        <p class="modal-lead">出目を当てよう！</p>
+        <p class="hint">ぴったりで高額、おしい（±1）でも報酬。ハズレでも全員に参加賞が出ます。</p>
+        <div class="mini-pick-grid">
+          ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="btn primary mini-pick" data-pick="${n}">${n}</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-pick]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.pick) } });
+        };
+      });
+    } else if (game === 'high_low') {
+      body.innerHTML = `
+        <p class="modal-lead">次の数字はハイ？ ロー？</p>
+        <p class="hint">1〜10のうち、6以上がハイ・5以下がロー。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
+          <button class="btn" id="m-lo">ロー（1〜5）</button>
+        </div>`;
+      $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
+      $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
+    } else if (game === 'coin') {
+      body.innerHTML = `
+        <p class="modal-lead">コインの裏表を予想！</p>
+        <p class="hint">当たればボーナス。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-heads">おもて</button>
+          <button class="btn" id="m-tails">うら</button>
+        </div>`;
+      $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
+      $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
+    } else {
+      body.innerHTML = `
+        <p class="modal-lead">スロットを回そう！</p>
+        <p class="hint">3つ揃いでジャックポット。2つ揃いでも報酬。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary large" id="m-spin">回す！</button>
+        </div>`;
+      $('#m-spin').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'spin' } }); };
+    }
     return;
   }
 
