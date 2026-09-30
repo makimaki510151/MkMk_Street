@@ -118,6 +118,30 @@ function buildCatalog() {
     ['park_bench', '公園のベンチ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'rest' }));
 
+  // ── 全員の持ち金アップ（原作の景気・給料系）────────────────
+  [
+    ['payday_all', '給料日', 100], ['bonus_wave', 'ボーナス支給', 120],
+    ['town_stimulus', '景気刺激策', 80], ['festival_boom', 'お祭り景気', 90],
+    ['tourist_rush', '観光客ラッシュ', 70], ['year_end_refund', '年末還付', 110],
+    ['new_year_gift', 'お年玉タイム', 95], ['summer_bonus', '夏のボーナス', 130],
+    ['street_dividend', '通りの配当', 75], ['mayor_gift', '市長からの贈り物', 85],
+    ['prosperity_bell', '繁栄の鐘', 105], ['market_cheer', '市場の万歳', 65],
+  ].forEach(([k, l, cash]) => push(k, l, { cash, effect: 'all_cash' }));
+
+  // ── ミニゲーム（勝利者＋全員に参加賞）────────────────────
+  [
+    ['mini_dice', 'サイコロ当て', 'guess_dice'],
+    ['mini_highlow', 'ハイ＆ロー', 'high_low'],
+    ['mini_coin', 'コイントス', 'coin'],
+    ['mini_slot', 'スリースロット', 'slot'],
+    ['dice_carnival', '賽のカーニバル', 'guess_dice'],
+    ['lucky_flip', 'ラッキーフリップ', 'coin'],
+    ['card_highlow', 'カードハイロー', 'high_low'],
+    ['neon_slot', 'ネオンスロット', 'slot'],
+    ['fortune_dice', 'フォーチュンダイス', 'guess_dice'],
+    ['party_coin', 'パーティーコイン', 'coin'],
+  ].forEach(([k, l, game]) => push(k, l, { effect: 'minigame', game }));
+
   // ── 相手・分配インタラクション ───────────────────────────
   [
     ['charity_box', '募金箱'], ['share_candy', 'あめ玉シェア'],
@@ -169,6 +193,8 @@ function buildCatalog() {
     ['street_cleanup', '街の清掃', { effect: 'boost_all_shops', amount: 15 }],
     ['mystery_box', 'ミステリー箱', { effect: 'mystery' }],
     ['fortune_wheel', '運命の輪', { effect: 'mystery' }],
+    ['all_hands_raise', 'みんなで乾杯', { effect: 'all_cash', cash: 140 }],
+    ['city_wide_sale', '全市セール還元', { effect: 'all_cash', cash: 60 }],
   ].forEach(([k, l, data]) => push(k, l, data));
 
   // ── 残りを多彩フレーバーで埋める（G偏重を避けるローテーション）──
@@ -199,7 +225,7 @@ function buildCatalog() {
     '信号待ちの幸運', 'エレベーター相席', '改札の忘れ物', '青信号ラッシュ', '夕焼けロード',
   ];
 
-  /** フレーバー埋めの効果ローテ（Gは少なめ） */
+  /** フレーバー埋めの効果ローテ（Gは少なめ／全員ボーナス・ミニゲームも混ぜる） */
   const flavorEffects = [
     { effect: 'extra_roll', extraRoll: true },
     { effect: 'lucky', lucky: true },
@@ -212,6 +238,9 @@ function buildCatalog() {
     { effect: 'warp_random' },
     { effect: 'mystery' },
     { effect: 'cash', cash: 55 }, // 稀に小額
+    { effect: 'all_cash', cash: 45 },
+    { effect: 'minigame', game: 'coin' },
+    { effect: 'minigame', game: 'high_low' },
     { effect: 'trim_stocks', amount: 3 },
     { effect: 'boost_area_shops', amount: 20 },
     { effect: 'donate_poorest', amount: 50 },
@@ -309,6 +338,16 @@ function applyCash(player, amount, messages) {
   }
 }
 
+/** 生存プレイヤー全員に同額支給（原作の景気・給料イベント） */
+export function applyAllCash(g, amount, messages) {
+  const n = Math.max(0, Math.floor(Number(amount) || 0));
+  if (!n) return 0;
+  const alive = g.players.filter((p) => !p.bankrupt);
+  for (const pl of alive) pl.cash += n;
+  messages.push(`全員 +${n}G（${alive.length}人）`);
+  return alive.length;
+}
+
 function applyStocks(g, player, count, messages) {
   const areas = Object.keys(g.areas).map(Number);
   if (!areas.length || !count) return;
@@ -347,6 +386,18 @@ function applyEventDef(g, player, def, messages) {
     case 'cash':
       applyCash(player, def.cash || 50, messages);
       break;
+    case 'all_cash':
+      applyAllCash(g, def.cash || 80, messages);
+      break;
+    case 'minigame': {
+      const game = def.game || 'guess_dice';
+      player.flags.pendingMinigame = {
+        game,
+        label: def.label || 'ミニゲーム',
+      };
+      messages.push(`ミニゲーム「${def.label || game}」へ！`);
+      break;
+    }
     case 'stocks':
       applyStocks(g, player, def.stocks || 5, messages);
       break;

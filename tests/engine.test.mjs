@@ -7,6 +7,8 @@ import {
   getTollMulti,
   getPlayerAssets,
   getLiquidatableValue,
+  preTurnSell,
+  canSellStockOnTurn,
   rollDice,
   advanceMove,
   applyChoice,
@@ -16,7 +18,7 @@ import {
   updateAreaStockPrices,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
-import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT } from '../js/eventTable.js';
+import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT, applyAllCash, scratchCell } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -200,9 +202,12 @@ describe('MkMk Street engine', () => {
     );
     assert.equal(hubs.length, 4);
     assert.ok(hubs.every((h) => h.type !== 'mark'));
-    assert.ok(hubs.some((h) => h.type === 'rest'));
-    assert.ok(hubs.some((h) => h.type === 'holiday'));
+    assert.ok(hubs.every((h) => h.type !== 'rest' && h.type !== 'holiday'));
     assert.ok(hubs.some((h) => h.type === 'event'));
+    const minis = hubs.filter((h) => h.type === 'minigame');
+    assert.equal(minis.length, 2);
+    const games = new Set(minis.map((h) => h.game));
+    assert.equal(games.size, 2, 'two minigame hubs must use different games');
   });
 
   it('opens event-table scratch when landing on a mark', () => {
@@ -237,6 +242,12 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('extra_roll') || kinds.has('grant_mark'));
     assert.ok(kinds.has('warp_bank') || kinds.has('warp_random'));
     assert.ok(kinds.has('stocks') || kinds.has('shop_boost'));
+    assert.ok(kinds.has('all_cash'), 'expected all-player cash events');
+    assert.ok(kinds.has('minigame'), 'expected minigame events');
+    const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
+    const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
+    assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
+    assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {
@@ -253,10 +264,44 @@ describe('MkMk Street engine', () => {
     assert.equal(bad.ok, false);
   });
 
-  it('keeps rest squares minimal on the board', () => {
+  it('replaces rest/holiday hubs with distinct minigame squares', () => {
     const board = buildBoard();
-    const rests = board.nodes.filter((n) => n.type === 'rest');
-    assert.ok(rests.length <= 1, `expected at most 1 rest, got ${rests.length}`);
+    assert.equal(board.nodes.filter((n) => n.type === 'rest').length, 0);
+    assert.equal(board.nodes.filter((n) => n.type === 'holiday').length, 0);
+    const minis = board.nodes.filter((n) => n.type === 'minigame');
+    assert.equal(minis.length, 2);
+    const east = minis.find((n) => n.col === 10 && n.row === 5);
+    const south = minis.find((n) => n.col === 5 && n.row === 10);
+    assert.ok(east, 'east hub should be minigame');
+    assert.ok(south, 'south hub should be minigame');
+    assert.equal(east.game, 'guess_dice');
+    assert.equal(south.game, 'slot');
+    assert.notEqual(east.game, south.game);
+  });
+
+  it('landing on a minigame hub opens that square\'s fixed game', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 33,
+    });
+    const slotHub = g.map.find((n) => n.type === 'minigame' && n.game === 'slot');
+    assert.ok(slotHub);
+    g.players[0].pos = slotHub.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [slotHub.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'minigame');
+    assert.equal(g.pending?.game, 'slot');
+
+    const diceHub = g.map.find((n) => n.type === 'minigame' && n.game === 'guess_dice');
+    g.players[0].pos = diceHub.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [diceHub.id], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    advanceMove(g);
+    assert.equal(g.pending?.type, 'minigame');
+    assert.equal(g.pending?.game, 'guess_dice');
   });
 
   it('has one dedicated scratch hub and one event hub on mid-sides', () => {
@@ -467,5 +512,104 @@ describe('MkMk Street engine', () => {
     assert.equal(done.ok, true);
     assert.equal(done.fiveBuy, true);
     assert.equal(shop.owner, 0);
+  });
+
+  it('all_cash event gives money to every living player', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C', isCPU: true }],
+      seed: 77,
+      cash: 1000,
+    });
+    g.players[2].bankrupt = true;
+    const before = g.players.map((p) => p.cash);
+    const msgs = [];
+    applyAllCash(g, 80, msgs);
+    assert.equal(g.players[0].cash, before[0] + 80);
+    assert.equal(g.players[1].cash, before[1] + 80);
+    assert.equal(g.players[2].cash, before[2], 'bankrupt unchanged');
+    assert.match(msgs.join(''), /全員/);
+  });
+
+  it('minigame pending pays participation cash to everyone', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 88,
+      cash: 1000,
+    });
+    g.phase = 'await_choice';
+    g.pending = { type: 'minigame', playerId: 0, game: 'coin', label: 'コイントス' };
+    const beforeA = g.players[0].cash;
+    const beforeB = g.players[1].cash;
+    const r = applyChoice(g, { action: 'pick', value: 'heads' });
+    assert.equal(r.ok, true);
+    assert.equal(r.minigame, true);
+    // 当たりでも外れでも相手（と自分）に参加賞が入る
+    assert.ok(g.players[1].cash > beforeB, 'other player got participation');
+    assert.ok(g.players[0].cash >= beforeA, 'actor cash not reduced');
+    assert.equal(g.pending, null);
+  });
+
+  it('scratch all_cash / minigame catalog entries apply correctly', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 99,
+      cash: 1500,
+    });
+    const allCashId = EVENT_CATALOG.findIndex((e) => e.effect === 'all_cash');
+    assert.ok(allCashId >= 0);
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = allCashId + 1;
+    cell.label = EVENT_CATALOG[allCashId].label;
+    cell.scratched = false;
+    const beforeB = g.players[1].cash;
+    const scratched = scratchCell(g, g.players[0], 0);
+    assert.equal(scratched.ok, true);
+    assert.ok(g.players[1].cash > beforeB);
+
+    const miniId = EVENT_CATALOG.findIndex((e) => e.effect === 'minigame' && e.game === 'guess_dice');
+    assert.ok(miniId >= 0);
+    const cell2 = g.sharedEventTable.cells[1];
+    cell2.eventId = miniId + 1;
+    cell2.label = EVENT_CATALOG[miniId].label;
+    cell2.scratched = false;
+    g.players[0].flags = {};
+    const scratched2 = scratchCell(g, g.players[0], 1);
+    assert.equal(scratched2.ok, true);
+    assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
+  });
+
+  it('allows stock sell during own turn in roll/choice/fork phases', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 101,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 20;
+    g.phase = 'await_roll';
+    assert.equal(canSellStockOnTurn(g, 0), true);
+    assert.equal(canSellStockOnTurn(g, 1), false);
+    const before = g.players[0].cash;
+    const price = g.areas[area].stockPrice;
+    const sold = preTurnSell(g, 0, area, 5);
+    assert.equal(sold.ok, true);
+    assert.equal(g.players[0].stocks[area], 15);
+    assert.equal(g.players[0].cash, before + price * 5);
+
+    // 選択待ちでも売れる
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: 1, price: 100 };
+    assert.equal(canSellStockOnTurn(g, 0), true);
+    const sold2 = preTurnSell(g, 0, area, 2);
+    assert.equal(sold2.ok, true);
+    assert.equal(g.players[0].stocks[area], 13);
+
+    // 移動中は売れない
+    g.phase = 'moving';
+    g.move = { stepsLeft: 2, path: [], passedBank: false, startPos: g.startId };
+    assert.equal(canSellStockOnTurn(g, 0), false);
+    const blocked = preTurnSell(g, 0, area, 1);
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error, 'bad_phase');
   });
 });

@@ -1,7 +1,7 @@
 /** MkMk Street — ゲームエンジン（純ロジック / ホスト権威） */
 
 import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
-import { createEventTable, scratchCell, unscratchedIds } from './eventTable.js';
+import { createEventTable, scratchCell, unscratchedIds, applyAllCash } from './eventTable.js';
 
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
@@ -9,9 +9,17 @@ export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり
 const TOLL_MULTI = [1, 1, 1.25, 2.5, 5, 6, 6.75];
 const MAX_INVEST_RATE = [0, 0.5, 1, 3, 9, 11, 13];
 
+function giveAllCash(g, amount) {
+  const msgs = [];
+  applyAllCash(g, amount, msgs);
+  return msgs[0] || `全員 +${amount}G`;
+}
+
 const CHANCE_EVENTS = [
   { id: 'bonus', label: '臨時ボーナス', apply: (g, p) => { const n = 200 + p.level * 50; p.cash += n; return `+${n}G` } },
   { id: 'salary', label: '給料日っぽい日', apply: (g, p) => { const n = Math.floor(getLevelBonus(g, p) * 0.5); p.cash += n; return `賞金の半分 +${n}G` } },
+  { id: 'payday_all', label: '給料日！', apply: (g) => giveAllCash(g, 120) },
+  { id: 'bonus_wave', label: 'ボーナス支給', apply: (g) => giveAllCash(g, 150) },
   { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `-${n}G` } },
   { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => { p.pos = g.startId; p.prevPos = null; return '銀行へ移動' } },
   { id: 'stock_gift', label: '株のおすそ分け', apply: (g, p) => {
@@ -21,10 +29,20 @@ const CHANCE_EVENTS = [
     return `A${a}株 +10`
   }},
   { id: 'invest_boost', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の自分店増資が半額' } },
+  { id: 'mini_dice', label: 'サイコロ当て', apply: (g, p) => {
+    p.flags.pendingMinigame = { game: 'guess_dice', label: 'サイコロ当て' };
+    return 'ミニゲーム！';
+  }},
+  { id: 'mini_coin', label: 'コイントス', apply: (g, p) => {
+    p.flags.pendingMinigame = { game: 'coin', label: 'コイントス' };
+    return 'ミニゲーム！';
+  }},
 ];
 
 const BOARD_EVENTS = [
   { id: 'cash', label: '臨時収入', apply: (g, p) => { const n = 180 + p.level * 40; p.cash += n; return `+${n}G` } },
+  { id: 'festival', label: 'お祭り景気', apply: (g) => giveAllCash(g, 100) },
+  { id: 'stimulus', label: '景気刺激策', apply: (g) => giveAllCash(g, 80) },
   { id: 'tax', label: '出費', apply: (g, p) => { const n = Math.min(p.cash, 120 + p.level * 25); p.cash -= n; return `-${n}G` } },
   { id: 'stock', label: '株プレゼント', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
@@ -35,6 +53,14 @@ const BOARD_EVENTS = [
   { id: 'rollon', label: 'ラッキー再挑戦', apply: (g, p) => { p.flags.extraRoll = true; return 'もう一度サイコロ' } },
   { id: 'invest', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の増資が半額' } },
   { id: 'lucky', label: '幸運のお守り', apply: (g, p) => { p.lucky = true; return 'ラッキーステータス' } },
+  { id: 'mini_highlow', label: 'ハイ＆ロー', apply: (g, p) => {
+    p.flags.pendingMinigame = { game: 'high_low', label: 'ハイ＆ロー' };
+    return 'ミニゲーム！';
+  }},
+  { id: 'mini_slot', label: 'スリースロット', apply: (g, p) => {
+    p.flags.pendingMinigame = { game: 'slot', label: 'スリースロット' };
+    return 'ミニゲーム！';
+  }},
 ];
 
 function mulberry32(seed) {
@@ -486,6 +512,16 @@ function resolveLanding(g, p, { passedBank }) {
     return;
   }
 
+  if (sq.type === 'minigame') {
+    const game = sq.game || 'guess_dice';
+    const label = sq.label || 'ミニゲーム';
+    p.flags.pendingMinigame = { game, label };
+    addLog(g, `${p.name} がミニゲームマス「${label}」に停止`, 'event');
+    maybeOpenMinigame(g, p);
+    return;
+  }
+
+  // 旧セーブ互換（盤面からは廃止）
   if (sq.type === 'rest') {
     p.resting = true;
     addLog(g, `${p.name} は休憩マス。次ターン休み`, 'system');
@@ -510,6 +546,7 @@ function resolveLanding(g, p, { passedBank }) {
     const ev = BOARD_EVENTS[Math.floor(rngNext(g) * BOARD_EVENTS.length)];
     const detail = ev.apply(g, p);
     addLog(g, `イベント！ ${ev.label}（${detail}）`, 'event');
+    if (maybeOpenMinigame(g, p)) return;
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
@@ -536,6 +573,7 @@ function resolveLanding(g, p, { passedBank }) {
     const ev = CHANCE_EVENTS[Math.floor(rngNext(g) * CHANCE_EVENTS.length)];
     const detail = ev.apply(g, p);
     addLog(g, `チャンス！ ${ev.label}（${detail}）`, 'event');
+    if (maybeOpenMinigame(g, p)) return;
     if (ev.id === 'warp_bank' && !p.flags.bankVisitDone) {
       beginBankVisit(g, p, { landed: true, resumeMove: false });
       if (g.phase === 'gameover' || g.phase === 'await_choice') return;
@@ -1199,6 +1237,9 @@ export function applyChoice(g, choice) {
     const msg = result.messages?.join(' / ') || result.cell.label;
     addLog(g, `${p.name} スクラッチ → ${result.cell.label}（${msg}）`, 'event');
     g.pending = null;
+    if (maybeOpenMinigame(g, p)) {
+      return { ok: true, scratched: true, cell: result.cell, minigame: true, state: serializeState(g) };
+    }
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
@@ -1208,23 +1249,157 @@ export function applyChoice(g, choice) {
     return { ok: true, scratched: true, cell: result.cell, state: serializeState(g) };
   }
 
+  if (pending.type === 'minigame') {
+    return resolveMinigame(g, p, pending, choice);
+  }
+
   return { ok: false, error: 'unknown_pending' };
 }
 
-/** ターン開始前に株売却できる */
+function maybeOpenMinigame(g, p) {
+  const mg = p.flags?.pendingMinigame;
+  if (!mg) return false;
+  p.flags.pendingMinigame = null;
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'minigame',
+    playerId: p.id,
+    game: mg.game || 'guess_dice',
+    label: mg.label || 'ミニゲーム',
+  };
+  addLog(g, `${p.name} のミニゲーム「${g.pending.label}」！`, 'event');
+  return true;
+}
+
+function payoutAll(g, amount, messages) {
+  applyAllCash(g, amount, messages);
+}
+
+function resolveMinigame(g, p, pending, choice) {
+  const game = pending.game || 'guess_dice';
+  const messages = [];
+  let win = false;
+  let detail = '';
+
+  if (game === 'guess_dice') {
+    const pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
+    const roll = Math.floor(rngNext(g) * 6) + 1;
+    const diff = Math.abs(pick - roll);
+    if (diff === 0) {
+      win = true;
+      const prize = 280 + p.level * 40;
+      p.cash += prize;
+      messages.push(`ぴったり！出目${roll} → +${prize}G`);
+      payoutAll(g, 60, messages);
+    } else if (diff === 1) {
+      const prize = 100 + p.level * 15;
+      p.cash += prize;
+      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
+      payoutAll(g, 40, messages);
+    } else {
+      messages.push(`ハズレ…出目${roll}（予想${pick}）`);
+      payoutAll(g, 25, messages);
+    }
+    detail = `出目 ${roll}`;
+  } else if (game === 'high_low') {
+    const pick = choice.value === 'high' ? 'high' : 'low';
+    const secret = Math.floor(rngNext(g) * 10) + 1; // 1-10
+    const isHigh = secret >= 6;
+    const ok = (pick === 'high' && isHigh) || (pick === 'low' && !isHigh);
+    if (ok) {
+      win = true;
+      const prize = 200 + p.level * 30;
+      p.cash += prize;
+      messages.push(`正解！数字は ${secret} → +${prize}G`);
+      payoutAll(g, 70, messages);
+    } else {
+      messages.push(`残念…数字は ${secret}`);
+      payoutAll(g, 35, messages);
+    }
+    detail = `数字 ${secret}`;
+  } else if (game === 'coin') {
+    const pick = choice.value === 'tails' ? 'tails' : 'heads';
+    const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
+    const label = face === 'heads' ? 'おもて' : 'うら';
+    if (pick === face) {
+      win = true;
+      const prize = 180 + p.level * 25;
+      p.cash += prize;
+      messages.push(`当たり！${label} → +${prize}G`);
+      payoutAll(g, 55, messages);
+    } else {
+      messages.push(`ハズレ…${label}`);
+      payoutAll(g, 30, messages);
+    }
+    detail = label;
+  } else if (game === 'slot') {
+    const syms = ['★', '♪', 'G', '♦', '♣'];
+    const a = syms[Math.floor(rngNext(g) * syms.length)];
+    const b = syms[Math.floor(rngNext(g) * syms.length)];
+    const c = syms[Math.floor(rngNext(g) * syms.length)];
+    const line = `${a}${b}${c}`;
+    if (a === b && b === c) {
+      win = true;
+      const prize = 320 + p.level * 50;
+      p.cash += prize;
+      messages.push(`ジャックポット ${line}！ → +${prize}G`);
+      payoutAll(g, 100, messages);
+    } else if (a === b || b === c || a === c) {
+      const prize = 120 + p.level * 20;
+      p.cash += prize;
+      messages.push(`二つ揃い ${line} → +${prize}G`);
+      payoutAll(g, 50, messages);
+    } else {
+      messages.push(`バラバラ ${line}`);
+      payoutAll(g, 30, messages);
+    }
+    detail = line;
+  } else {
+    payoutAll(g, 40, messages);
+    messages.push('参加賞');
+  }
+
+  addLog(g, `${p.name} の「${pending.label}」→ ${messages.join(' / ')}`, 'event');
+  g.pending = null;
+  endTurn(g);
+  return {
+    ok: true,
+    minigame: true,
+    win,
+    detail,
+    messages,
+    state: serializeState(g),
+  };
+}
+
+const STOCK_SELL_PHASES = new Set(['await_roll', 'await_choice', 'await_fork']);
+
+/** 自分のターン中（移動演出以外）に株を売れるか */
+export function canSellStockOnTurn(g, playerId) {
+  if (!g || g.phase === 'gameover') return false;
+  if (!STOCK_SELL_PHASES.has(g.phase)) return false;
+  if (g.currentPlayerIdx !== playerId) return false;
+  const p = g.players[playerId];
+  if (!p || p.bankrupt || p.resting) return false;
+  return Object.values(p.stocks || {}).some((n) => (n || 0) > 0);
+}
+
+/** 自分のターン中いつでも株売却できる（サイコロ前・選択中・分岐中） */
 export function preTurnSell(g, playerId, area, count) {
-  if (g.phase !== 'await_roll') return { ok: false, error: 'bad_phase' };
+  if (!STOCK_SELL_PHASES.has(g.phase)) return { ok: false, error: 'bad_phase' };
   if (g.currentPlayerIdx !== playerId) return { ok: false, error: 'not_your_turn' };
   const p = g.players[playerId];
-  const have = p.stocks[area] || 0;
-  const n = Math.max(1, Math.min(have, count));
-  if (n <= 0) return { ok: false, error: 'no_stock' };
-  const got = g.areas[area].stockPrice * n;
-  p.stocks[area] -= n;
+  if (!p || p.bankrupt) return { ok: false, error: 'bankrupt' };
+  const a = Number(area);
+  const have = p.stocks[a] || 0;
+  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
+  const got = g.areas[a].stockPrice * n;
+  p.stocks[a] -= n;
   p.cash += got;
-  if (n >= 10) g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * 0.93));
+  if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
-  addLog(g, `${p.name} が A${area}株×${n} 売却（+${got}G）`, 'stock');
+  addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
 }
 
@@ -1368,6 +1543,18 @@ export function cpuAct(g) {
       }
       const cellId = open[Math.floor(Math.random() * open.length)];
       return applyChoice(g, { action: 'scratch', cellId });
+    }
+    if (pend.type === 'minigame') {
+      if (pend.game === 'guess_dice') {
+        return applyChoice(g, { action: 'pick', value: 1 + Math.floor(Math.random() * 6) });
+      }
+      if (pend.game === 'high_low') {
+        return applyChoice(g, { action: 'pick', value: Math.random() < 0.5 ? 'low' : 'high' });
+      }
+      if (pend.game === 'coin') {
+        return applyChoice(g, { action: 'pick', value: Math.random() < 0.5 ? 'heads' : 'tails' });
+      }
+      return applyChoice(g, { action: 'spin' });
     }
   }
   return null;

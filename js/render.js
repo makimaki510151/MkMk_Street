@@ -9,6 +9,7 @@ const TYPE_ICON = {
   mark: '',
   rest: '休',
   holiday: '店休',
+  minigame: '遊',
   event: 'EV',
   scratch: '削',
   chance: '？',
@@ -16,6 +17,13 @@ const TYPE_ICON = {
   lucky: '★',
   rollon: '再',
   junction: '分岐',
+};
+
+const MINIGAME_ICON = {
+  guess_dice: '賽',
+  high_low: 'HL',
+  coin: '貨',
+  slot: 'スロ',
 };
 
 export function createRenderer(canvas) {
@@ -163,6 +171,7 @@ export function createRenderer(canvas) {
       else if (n.type === 'event') fill = '#6b3fa0';
       else if (n.type === 'scratch') fill = '#1f6f8b';
       else if (n.type === 'holiday') fill = '#a65d2e';
+      else if (n.type === 'minigame') fill = n.game === 'slot' ? '#8b3a62' : '#c27820';
       else if (n.type === 'stockbroker') fill = '#2f6f6a';
       else if (n.type === 'rest') fill = '#4a6a7a';
       else if (n.type === 'lucky') fill = '#b8860b';
@@ -286,6 +295,12 @@ export function createRenderer(canvas) {
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
         ctx.fillText(SUIT_LABELS[n.mark], x + size / 2, y + size / 2);
+      } else if (n.type === 'minigame') {
+        ctx.font = `800 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
+        ctx.fillText(MINIGAME_ICON[n.game] || TYPE_ICON.minigame, x + size / 2, y + size / 2 - size * 0.08);
+        ctx.font = `700 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillText((n.label || '遊').slice(0, 3), x + size / 2, y + size / 2 + size * 0.2);
       } else if (n.type === 'holiday' || n.type === 'event' || n.type === 'scratch') {
         ctx.font = `800 ${Math.max(9, size * 0.22)}px "Zen Maru Gothic", sans-serif`;
         ctx.fillText(TYPE_ICON[n.type] || n.label.slice(0, 2), x + size / 2, y + size / 2);
@@ -474,6 +489,15 @@ export function shopTooltip(g, sq) {
   if (!sq) return '';
   if (sq.type === 'mark') return `マーク ${sq.label}（通過で入手／停止でイベント表スクラッチ）`;
   if (sq.type === 'holiday') return `${sq.label} — 止まるとお店が1ターン休み`;
+  if (sq.type === 'minigame') {
+    const names = {
+      guess_dice: 'サイコロ当て',
+      high_low: 'ハイ＆ロー',
+      coin: 'コイントス',
+      slot: 'スリースロット',
+    };
+    return `${sq.label} — 止まるとミニゲーム「${names[sq.game] || sq.game}」（外れても全員に参加賞）`;
+  }
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
   if (sq.type === 'rest') return `${sq.label} — 止まると次ターン休み`;
