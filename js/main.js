@@ -22,7 +22,7 @@ import {
   getCpuPersonality,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER } from './eventTable.js';
+import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER, playerColorIndex } from './eventTable.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
@@ -441,6 +441,16 @@ function maybeDemoLanding() {
   if (demo === 'scratch') {
     const mark = app.game.map.find((n) => n.type === 'mark');
     if (!mark) return;
+    // 開けた人の色で塗られた状態を見せる（イベント効果は適用しない）
+    const table = getSharedEventTable(app.game);
+    for (let i = 0; i < Math.min(12, table.cells.length); i++) {
+      const who = app.game.players[i % app.game.players.length];
+      const cell = table.cells[i];
+      cell.scratched = true;
+      cell.scratchedBy = who.id;
+      cell.color = playerColorIndex(who);
+      cell.group = cell.color;
+    }
     p.pos = mark.id;
     app.game.phase = 'moving';
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
