@@ -200,9 +200,12 @@ describe('MkMk Street engine', () => {
     );
     assert.equal(hubs.length, 4);
     assert.ok(hubs.every((h) => h.type !== 'mark'));
-    assert.ok(hubs.some((h) => h.type === 'rest'));
-    assert.ok(hubs.some((h) => h.type === 'holiday'));
+    assert.ok(hubs.every((h) => h.type !== 'rest' && h.type !== 'holiday'));
     assert.ok(hubs.some((h) => h.type === 'event'));
+    const minis = hubs.filter((h) => h.type === 'minigame');
+    assert.equal(minis.length, 2);
+    const games = new Set(minis.map((h) => h.game));
+    assert.equal(games.size, 2, 'two minigame hubs must use different games');
   });
 
   it('opens event-table scratch when landing on a mark', () => {
@@ -259,10 +262,44 @@ describe('MkMk Street engine', () => {
     assert.equal(bad.ok, false);
   });
 
-  it('keeps rest squares minimal on the board', () => {
+  it('replaces rest/holiday hubs with distinct minigame squares', () => {
     const board = buildBoard();
-    const rests = board.nodes.filter((n) => n.type === 'rest');
-    assert.ok(rests.length <= 1, `expected at most 1 rest, got ${rests.length}`);
+    assert.equal(board.nodes.filter((n) => n.type === 'rest').length, 0);
+    assert.equal(board.nodes.filter((n) => n.type === 'holiday').length, 0);
+    const minis = board.nodes.filter((n) => n.type === 'minigame');
+    assert.equal(minis.length, 2);
+    const east = minis.find((n) => n.col === 10 && n.row === 5);
+    const south = minis.find((n) => n.col === 5 && n.row === 10);
+    assert.ok(east, 'east hub should be minigame');
+    assert.ok(south, 'south hub should be minigame');
+    assert.equal(east.game, 'guess_dice');
+    assert.equal(south.game, 'slot');
+    assert.notEqual(east.game, south.game);
+  });
+
+  it('landing on a minigame hub opens that square\'s fixed game', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 33,
+    });
+    const slotHub = g.map.find((n) => n.type === 'minigame' && n.game === 'slot');
+    assert.ok(slotHub);
+    g.players[0].pos = slotHub.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [slotHub.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'minigame');
+    assert.equal(g.pending?.game, 'slot');
+
+    const diceHub = g.map.find((n) => n.type === 'minigame' && n.game === 'guess_dice');
+    g.players[0].pos = diceHub.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [diceHub.id], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    advanceMove(g);
+    assert.equal(g.pending?.type, 'minigame');
+    assert.equal(g.pending?.game, 'guess_dice');
   });
 
   it('has one dedicated scratch hub and one event hub on mid-sides', () => {
