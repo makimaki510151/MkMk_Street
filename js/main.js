@@ -119,7 +119,7 @@ function bindVolumeUI() {
   $('#vol-master').value = v.master;
   $('#vol-bgm').value = v.bgm;
   $('#vol-se').value = v.se;
-  $('#btn-mute').textContent = v.muted ? '🔇' : '🔊';
+  $('#btn-mute').textContent = v.muted ? '消' : '音';
 
   const unlock = () => {
     audio.resume();
@@ -132,9 +132,36 @@ function bindVolumeUI() {
   $('#vol-se').oninput = (e) => { audio.setSe(e.target.value); unlock(); };
   $('#btn-mute').onclick = () => {
     const muted = audio.toggleMute();
-    $('#btn-mute').textContent = muted ? '🔇' : '🔊';
+    $('#btn-mute').textContent = muted ? '消' : '音';
     unlock();
   };
+  $('#btn-vol-expand')?.addEventListener('click', () => {
+    $('#vol-dock')?.classList.toggle('vol-collapsed');
+    unlock();
+  });
+}
+
+function bindSideChrome() {
+  $$('.side-tab').forEach((btn) => {
+    btn.onclick = () => {
+      const tab = btn.dataset.sideTab;
+      $$('.side-tab').forEach((b) => {
+        const on = b.dataset.sideTab === tab;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      $$('.side-pane').forEach((pane) => {
+        const on = pane.dataset.pane === tab;
+        pane.classList.toggle('active', on);
+        pane.hidden = !on;
+      });
+      audio.sfx.click();
+    };
+  });
+  $('#btn-feed-toggle')?.addEventListener('click', () => {
+    $('#event-feed-wrap')?.classList.toggle('feed-collapsed');
+    audio.sfx.click();
+  });
 }
 
 function bindTitle() {
@@ -2413,18 +2440,18 @@ function escapeHtml(s) {
 
 // boot
 bindVolumeUI();
+bindSideChrome();
 bindTitle();
 showScreen('screen-title');
 
 const field = $('#title-field');
 if (field) {
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 14; i++) {
     const d = document.createElement('span');
     d.className = 'float-coin';
-    d.style.setProperty('--x', `${Math.random() * 100}%`);
-    d.style.setProperty('--d', `${8 + Math.random() * 10}s`);
-    d.style.setProperty('--delay', `${Math.random() * 8}s`);
-    d.textContent = ['♠', '♥', '♦', '♣', 'G'][i % 5];
+    d.style.setProperty('--x', `${6 + Math.random() * 88}%`);
+    d.style.setProperty('--d', `${10 + Math.random() * 12}s`);
+    d.style.setProperty('--delay', `${Math.random() * 9}s`);
     field.appendChild(d);
   }
 }
