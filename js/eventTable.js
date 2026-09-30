@@ -309,6 +309,13 @@ export function unscratchedIds(table) {
   return table.cells.filter((c) => !c.scratched).map((c) => c.id);
 }
 
+/** プレイヤー色 → 表の色インデックス（あか/あお/きいろ/みどり） */
+export function playerColorIndex(player) {
+  const c = (player?.color || '').toLowerCase();
+  const idx = GROUP_COLORS.findIndex((g) => g.toLowerCase() === c);
+  return idx >= 0 ? idx : (player?.id ?? 0) % GROUP_COLORS.length;
+}
+
 export function scratchCell(g, player, cellId) {
   const table = g.sharedEventTable || player.eventTable;
   if (!table) return { ok: false, error: 'no_table' };
@@ -317,6 +324,10 @@ export function scratchCell(g, player, cellId) {
 
   cell.scratched = true;
   cell.scratchedBy = player.id;
+  // 開けた人の色で塗る（そろいボーナスもその色）
+  const painted = playerColorIndex(player);
+  cell.color = painted;
+  cell.group = painted;
   const messages = [];
   const def = EVENT_CATALOG[cell.eventId - 1];
   applyEventDef(g, player, def, messages);
