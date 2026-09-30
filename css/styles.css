@@ -803,6 +803,25 @@ button:disabled { opacity: .42; cursor: default; }
 .modal-card h3 { font-family: var(--display); color: var(--accent); font-size: 1.05rem; }
 .modal-lead { font-size: 1.05rem; }
 .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.pick-invest-list {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+}
+.pick-invest-shop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  border-radius: var(--radius-sm, 2px) !important;
+  border-left: 3px solid var(--ac, var(--accent));
+  background: color-mix(in srgb, var(--ac, #888) 12%, var(--surface, rgba(0,0,0,0.28)));
+}
+.pick-invest-shop strong { font-size: 0.92rem; }
+.pick-invest-shop small { color: var(--muted); font-size: 0.72rem; }
 .mini-pick-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

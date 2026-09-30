@@ -610,6 +610,43 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
   });
 
+  it('pick_invest event lets player choose a shop to boost', () => {
+    const pickId = EVENT_CATALOG.findIndex((e) => e.effect === 'pick_invest');
+    assert.ok(pickId >= 0, 'catalog has pick_invest');
+    const amount = EVENT_CATALOG[pickId].amount || 80;
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+      cash: 3000,
+    });
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const a = shops[0];
+    const b = shops[1];
+    a.owner = 0;
+    b.owner = 0;
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = pickId + 1;
+    cell.label = EVENT_CATALOG[pickId].label;
+    cell.scratched = false;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.pickInvest, true);
+    assert.equal(g.pending?.type, 'pick_invest');
+    assert.equal(g.pending.amount, amount);
+    assert.ok(g.pending.shopIds.includes(a.id));
+    assert.ok(g.pending.shopIds.includes(b.id));
+
+    const priceBefore = b.price;
+    const invested = applyChoice(g, { action: 'invest', shopId: b.id });
+    assert.equal(invested.ok, true);
+    assert.equal(invested.pickInvest, true);
+    assert.equal(b.price, priceBefore + amount);
+    assert.equal(b.extraInvest, amount);
+    assert.equal(a.extraInvest || 0, 0);
+  });
+
   it('scratch paints cell with opener player color', () => {
     const g = createGame({
       players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
