@@ -512,6 +512,16 @@ function resolveLanding(g, p, { passedBank }) {
     return;
   }
 
+  if (sq.type === 'minigame') {
+    const game = sq.game || 'guess_dice';
+    const label = sq.label || 'ミニゲーム';
+    p.flags.pendingMinigame = { game, label };
+    addLog(g, `${p.name} がミニゲームマス「${label}」に停止`, 'event');
+    maybeOpenMinigame(g, p);
+    return;
+  }
+
+  // 旧セーブ互換（盤面からは廃止）
   if (sq.type === 'rest') {
     p.resting = true;
     addLog(g, `${p.name} は休憩マス。次ターン休み`, 'system');

@@ -36,8 +36,8 @@ function link(...pairs) {
 
 /**
  * 銀行を中心に十字＋外周ループ。
- * マーク（♠♥♦♣）は四隅。辺の中央は特殊マス（イベント／店休／休憩／チャンス）。
- * 休みマスは最小限（ストレス軽減）。
+ * マーク（♠♥♦♣）は四隅。辺の中央は特殊マス（イベント／ミニゲーム／スクラッチ／チャンス）。
+ * 東西南北ハブのミニゲームは種類を必ず分ける。
  */
 export function buildBoard() {
   const nodes = [];
@@ -61,14 +61,15 @@ export function buildBoard() {
   const e2 = N('stockbroker', { label: '証券', col: 7, row: 5 });
   const e3 = N('shop', { label: '雑貨屋', area: 10, basePrice: 140, col: 8, row: 5 });
   const e4 = N('rollon', { label: 'もう一回', col: 9, row: 5 });
-  const hubE = N('holiday', { label: '店休', col: 10, row: 5 });
+  // 東ハブ：サイコロ当て（南ハブとは別ミニゲーム）
+  const hubE = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 10, row: 5 });
 
   const s1 = N('shop', { label: '弁当屋', area: 9, basePrice: 120, col: 5, row: 6 });
   const s2 = N('lucky', { label: '★', col: 5, row: 7 });
   const s3 = N('shop', { label: '時計店', area: 9, basePrice: 280, col: 5, row: 8 });
   const s4 = N('chance', { label: 'チャンス', col: 5, row: 9 });
-  // 唯一の休憩マス（旧複数休みを集約）
-  const hubS = N('rest', { label: '休憩', col: 5, row: 10 });
+  // 南ハブ：スロット（東ハブとは別ミニゲーム）
+  const hubS = N('minigame', { label: 'スロット', game: 'slot', col: 5, row: 10 });
 
   const w1 = N('shop', { label: '靴屋', area: 10, basePrice: 220, col: 4, row: 5 });
   const w2 = N('stockbroker', { label: '証券', col: 3, row: 5 });
