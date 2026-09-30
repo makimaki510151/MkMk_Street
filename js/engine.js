@@ -1369,84 +1369,138 @@ function resolveMinigame(g, p, pending, choice) {
   const messages = [];
   let win = false;
   let detail = '';
+  let tier = 'miss';
+  let title = '結果発表';
+  /** @type {Record<string, unknown>} */
+  const outcome = {};
+  let pick = choice?.value;
 
   if (game === 'guess_dice') {
-    const pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
+    pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
     const roll = Math.floor(rngNext(g) * 6) + 1;
     const diff = Math.abs(pick - roll);
+    outcome.roll = roll;
+    outcome.pick = pick;
     if (diff === 0) {
       win = true;
+      tier = 'exact';
+      title = 'ぴったり！';
       const prize = 280 + p.level * 40;
       p.cash += prize;
       messages.push(`ぴったり！出目${roll} → +${prize}G`);
       payoutAll(g, 60, messages);
     } else if (diff === 1) {
+      win = true;
+      tier = 'near';
+      title = 'おしい！';
       const prize = 100 + p.level * 15;
       p.cash += prize;
       messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
       payoutAll(g, 40, messages);
     } else {
+      tier = 'miss';
+      title = 'ハズレ…';
       messages.push(`ハズレ…出目${roll}（予想${pick}）`);
       payoutAll(g, 25, messages);
     }
-    detail = `出目 ${roll}`;
+    detail = `予想 ${pick} → 出目 ${roll}`;
   } else if (game === 'high_low') {
-    const pick = choice.value === 'high' ? 'high' : 'low';
+    pick = choice.value === 'high' ? 'high' : 'low';
     const secret = Math.floor(rngNext(g) * 10) + 1; // 1-10
     const isHigh = secret >= 6;
     const ok = (pick === 'high' && isHigh) || (pick === 'low' && !isHigh);
+    outcome.secret = secret;
+    outcome.band = isHigh ? 'high' : 'low';
+    outcome.pick = pick;
     if (ok) {
       win = true;
+      tier = 'win';
+      title = '正解！';
       const prize = 200 + p.level * 30;
       p.cash += prize;
       messages.push(`正解！数字は ${secret} → +${prize}G`);
       payoutAll(g, 70, messages);
     } else {
+      tier = 'miss';
+      title = '残念…';
       messages.push(`残念…数字は ${secret}`);
       payoutAll(g, 35, messages);
     }
-    detail = `数字 ${secret}`;
+    detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'} → ${secret}`;
   } else if (game === 'coin') {
-    const pick = choice.value === 'tails' ? 'tails' : 'heads';
+    pick = choice.value === 'tails' ? 'tails' : 'heads';
     const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
-    const label = face === 'heads' ? 'おもて' : 'うら';
+    const faceLabel = face === 'heads' ? 'おもて' : 'うら';
+    const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
+    outcome.face = face;
+    outcome.pick = pick;
     if (pick === face) {
       win = true;
+      tier = 'win';
+      title = '当たり！';
       const prize = 180 + p.level * 25;
       p.cash += prize;
-      messages.push(`当たり！${label} → +${prize}G`);
+      messages.push(`当たり！${faceLabel} → +${prize}G`);
       payoutAll(g, 55, messages);
     } else {
-      messages.push(`ハズレ…${label}`);
+      tier = 'miss';
+      title = 'ハズレ…';
+      messages.push(`ハズレ…${faceLabel}`);
       payoutAll(g, 30, messages);
     }
-    detail = label;
+    detail = `予想 ${pickLabel} → ${faceLabel}`;
   } else if (game === 'slot') {
     const syms = ['★', '♪', 'G', '♦', '♣'];
     const a = syms[Math.floor(rngNext(g) * syms.length)];
     const b = syms[Math.floor(rngNext(g) * syms.length)];
     const c = syms[Math.floor(rngNext(g) * syms.length)];
     const line = `${a}${b}${c}`;
+    outcome.symbols = [a, b, c];
     if (a === b && b === c) {
       win = true;
+      tier = 'jackpot';
+      title = 'ジャックポット！';
       const prize = 320 + p.level * 50;
       p.cash += prize;
       messages.push(`ジャックポット ${line}！ → +${prize}G`);
       payoutAll(g, 100, messages);
     } else if (a === b || b === c || a === c) {
+      win = true;
+      tier = 'pair';
+      title = '二つ揃い！';
       const prize = 120 + p.level * 20;
       p.cash += prize;
       messages.push(`二つ揃い ${line} → +${prize}G`);
       payoutAll(g, 50, messages);
     } else {
+      tier = 'miss';
+      title = 'バラバラ…';
       messages.push(`バラバラ ${line}`);
       payoutAll(g, 30, messages);
     }
     detail = line;
   } else {
+    tier = 'miss';
+    title = '参加賞';
     payoutAll(g, 40, messages);
     messages.push('参加賞');
+    detail = '参加賞';
   }
+
+  const reveal = {
+    game,
+    label: pending.label || 'ミニゲーム',
+    playerId: p.id,
+    playerName: p.name,
+    playerColor: p.color,
+    pick,
+    outcome,
+    tier,
+    win,
+    title,
+    detail,
+    messages: [...messages],
+  };
 
   addLog(g, `${p.name} の「${pending.label}」→ ${messages.join(' / ')}`, 'event');
   g.pending = null;
@@ -1457,6 +1511,7 @@ function resolveMinigame(g, p, pending, choice) {
     win,
     detail,
     messages,
+    reveal,
     state: serializeState(g),
   };
 }
