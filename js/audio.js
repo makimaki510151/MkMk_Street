@@ -112,6 +112,15 @@ export function createAudio() {
       tone(220, 0.05, 'triangle', 0.05);
       noiseBurst(0.03, 0.04);
     },
+    /** ワープ移動 */
+    warp() {
+      noiseBurst(0.1, 0.07);
+      tone(180, 0.18, 'sawtooth', 0.06);
+      tone(320, 0.22, 'triangle', 0.07, 0.08);
+      tone(520, 0.28, 'sine', 0.08, 0.2);
+      tone(780, 0.35, 'sine', 0.06, 0.38);
+      tone(240, 0.2, 'triangle', 0.05, 0.7);
+    },
     yourTurn() {
       tone(523, 0.12, 'sine', 0.1);
       tone(659, 0.14, 'sine', 0.1, 0.1);

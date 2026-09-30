@@ -9,6 +9,19 @@ export const MATCH_BONUS_PER = 50;
 export const COLOR_LABELS = ['あか', 'あお', 'きいろ', 'みどり'];
 export const GROUP_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 
+/** ワープ演出用。serializeState には含めず、UIが takeWarpFx で取り出す */
+export function recordWarp(g, pid, from, to) {
+  if (from == null || to == null || from === to) return;
+  if (!g.warpFx) g.warpFx = [];
+  g.warpFx.push({ pid, from, to });
+}
+
+export function takeWarpFx(g) {
+  const warps = g.warpFx ? [...g.warpFx] : [];
+  g.warpFx = null;
+  return warps;
+}
+
 /**
  * 1〜200 のユニークイベント定義。
  * G増減に偏らず、移動・株・店・相手干渉・ステータスなど多彩に配分。
@@ -333,6 +346,7 @@ export function scratchCell(g, player, cellId) {
   applyEventDef(g, player, def, messages);
 
   const match = checkColorMatches(g, table, cellId, messages);
+  const warps = takeWarpFx(g);
 
   return {
     ok: true,
@@ -340,6 +354,7 @@ export function scratchCell(g, player, cellId) {
     matchBonus: match.total,
     matches: match.matches,
     messages,
+    warps,
   };
 }
 
@@ -437,6 +452,7 @@ function applyEventDef(g, player, def, messages) {
     case 'bank_warp':
     case 'taxi_voucher':
     case 'home_portal':
+      recordWarp(g, player.id, player.pos, g.startId);
       player.pos = g.startId;
       player.prevPos = null;
       messages.push('銀行へ移動');
@@ -445,6 +461,7 @@ function applyEventDef(g, player, def, messages) {
     case 'warp_mark': {
       const mark = pickRandom(g.map.filter((n) => n.type === 'mark'));
       if (mark) {
+        recordWarp(g, player.id, player.pos, mark.id);
         player.prevPos = player.pos;
         player.pos = mark.id;
         messages.push(`${mark.label || 'マーク'}マスへ移動`);
@@ -457,6 +474,7 @@ function applyEventDef(g, player, def, messages) {
     case 'warp_vacant_shop': {
       const vacant = pickRandom(g.map.filter((n) => n.type === 'shop' && n.owner < 0));
       if (vacant) {
+        recordWarp(g, player.id, player.pos, vacant.id);
         player.prevPos = player.pos;
         player.pos = vacant.id;
         messages.push(`空き店「${vacant.label}」へ`);
@@ -469,6 +487,7 @@ function applyEventDef(g, player, def, messages) {
       const walkable = g.map.filter((n) => n.type !== 'junction');
       const dest = pickRandom(walkable);
       if (dest) {
+        recordWarp(g, player.id, player.pos, dest.id);
         player.prevPos = player.pos;
         player.pos = dest.id;
         messages.push(`「${dest.label || dest.type}」へワープ`);
@@ -591,9 +610,12 @@ function applyEventDef(g, player, def, messages) {
         messages.push('もう一度サイコロ！');
         break;
       }
-      const tmp = player.pos;
-      player.pos = other.pos;
-      other.pos = tmp;
+      const aFrom = player.pos;
+      const bFrom = other.pos;
+      recordWarp(g, player.id, aFrom, bFrom);
+      recordWarp(g, other.id, bFrom, aFrom);
+      player.pos = bFrom;
+      other.pos = aFrom;
       player.prevPos = null;
       other.prevPos = null;
       messages.push(`${other.name} と場所交換`);

@@ -1,7 +1,7 @@
 /** MkMk Street — ゲームエンジン（純ロジック / ホスト権威） */
 
 import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
-import { createEventTable, scratchCell, unscratchedIds, applyAllCash } from './eventTable.js';
+import { createEventTable, scratchCell, unscratchedIds, applyAllCash, recordWarp, takeWarpFx } from './eventTable.js';
 
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
@@ -93,7 +93,12 @@ const CHANCE_EVENTS = [
   { id: 'payday_all', label: '給料日！', apply: (g) => giveAllCash(g, 120) },
   { id: 'bonus_wave', label: 'ボーナス支給', apply: (g) => giveAllCash(g, 150) },
   { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `-${n}G` } },
-  { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => { p.pos = g.startId; p.prevPos = null; return '銀行へ移動' } },
+  { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => {
+    recordWarp(g, p.id, p.pos, g.startId);
+    p.pos = g.startId;
+    p.prevPos = null;
+    return '銀行へ移動';
+  }},
   { id: 'stock_gift', label: '株のおすそ分け', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
@@ -393,7 +398,8 @@ function finishMove(g, p) {
   const path = g.move?.path || [];
   g.move = null;
   resolveLanding(g, p, { passedBank });
-  return { ok: true, done: true, forked: false, path, state: serializeState(g) };
+  const warps = takeWarpFx(g);
+  return { ok: true, done: true, forked: false, path, warps, state: serializeState(g) };
 }
 
 function applyStep(g, p, nextId) {
@@ -1325,6 +1331,7 @@ export function applyChoice(g, choice) {
       matchBonus: result.matchBonus || 0,
       matches: result.matches || [],
       messages: result.messages || [],
+      warps: result.warps || [],
     };
     if (maybeOpenMinigame(g, p)) {
       return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };

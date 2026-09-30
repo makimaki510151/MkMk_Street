@@ -464,6 +464,13 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
+  if (data.kind === 'warp' && data.warp) {
+    app.busy = true;
+    presentWarpFx([data.warp], { remote: true }).finally(() => {
+      app.busy = false;
+      refreshGameUI();
+    });
+  }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
@@ -515,6 +522,17 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'warp') {
+    const shops = app.game.map.filter((n) => n.type === 'shop');
+    const from = shops[2] || shops[0] || app.game.map[0];
+    const to = app.game.map.find((n) => n.type === 'bank') || shops[5] || app.game.map[1];
+    p.pos = to.id;
+    refreshGameUI();
+    setTimeout(() => {
+      presentWarpFx([{ pid: p.id, from: from.id, to: to.id }]);
+    }, 400);
     return;
   }
   if (demo === 'stock') {
@@ -870,6 +888,7 @@ async function applyLocalAction(action) {
     }
     if (result.scratched) {
       await presentScratchMatches(result);
+      await presentWarpFx(result.warps);
     }
     if (result.reveal) {
       await presentMinigameResult(result);
@@ -997,6 +1016,7 @@ async function continueAdvancing() {
 
     if (result.done) {
       onLandingSfx();
+      if (result.warps?.length) await presentWarpFx(result.warps);
       syncState();
       refreshGameUI();
       return;
@@ -1058,6 +1078,69 @@ async function presentScratchMatches(result) {
   await playScratchMatchReveal(matches, result.messages || [], { banner: true });
   hideModal();
   app.busy = false;
+}
+
+function nodeLabel(g, id) {
+  const n = getNode(g, id);
+  if (!n) return '？';
+  return n.label || TYPE_LABEL(n) || String(id);
+}
+
+function TYPE_LABEL(n) {
+  if (n.type === 'bank') return '銀行';
+  if (n.type === 'mark') return SUIT_LABELS[n.mark] || 'マーク';
+  if (n.type === 'shop') return n.label || 'お店';
+  if (n.type === 'chance') return 'チャンス';
+  if (n.type === 'scratch') return 'スクラッチ';
+  return n.type;
+}
+
+async function presentWarpFx(warps, { remote = false } = {}) {
+  if (!warps?.length || !app.game) return;
+  const wasBusy = app.busy;
+  app.busy = true;
+  for (const w of warps) {
+    if (w.from === w.to) continue;
+    const who = app.game.players[w.pid];
+    const fromLabel = nodeLabel(app.game, w.from);
+    const toLabel = nodeLabel(app.game, w.to);
+    if (!remote) broadcastFx({ kind: 'warp', warp: w });
+    showWarpOverlay(who, fromLabel, toLabel);
+    app.renderer?.animateWarp(w.pid, w.from, w.to, 1200, who?.color);
+    audio.sfx.warp();
+    enqueueBanner({
+      kicker: who ? `${who.name} のワープ` : 'ワープ',
+      title: toLabel,
+      detail: `${fromLabel} → ${toLabel}`,
+      kind: 'event',
+      color: who?.color || '#c4a574',
+      mine: who && (app.mode === 'local' ? !who.isCPU : who.id === app.localSeat),
+    });
+    app.inspectedId = w.to;
+    updateInspectPanel();
+    await wait(1280);
+    hideWarpOverlay();
+  }
+  if (!wasBusy) app.busy = false;
+}
+
+function showWarpOverlay(who, fromLabel, toLabel) {
+  const overlay = $('#warp-overlay');
+  if (!overlay) return;
+  $('#warp-kicker').textContent = who ? `${who.name} がワープ` : 'ワープ';
+  $('#warp-from').textContent = fromLabel;
+  $('#warp-to').textContent = toLabel;
+  overlay.style.setProperty('--wc', who?.color || '#c4a574');
+  overlay.hidden = false;
+  overlay.classList.remove('landed');
+  requestAnimationFrame(() => overlay.classList.add('landed'));
+}
+
+function hideWarpOverlay() {
+  const overlay = $('#warp-overlay');
+  if (!overlay) return;
+  overlay.hidden = true;
+  overlay.classList.remove('landed');
 }
 
 function mountScratchMatchOverlay(matches) {
@@ -1389,6 +1472,7 @@ async function handleHostAction(from, data) {
     }
     if (result.scratched) {
       await presentScratchMatches(result);
+      await presentWarpFx(result.warps);
     }
     if (result.reveal) {
       await presentMinigameResult(result);
@@ -1497,6 +1581,7 @@ function scheduleCpu() {
       if (result?.state) app.game = restoreState(result.state);
       if (result?.scratched) {
         await presentScratchMatches(result);
+        await presentWarpFx(result.warps);
       }
       if (result?.reveal) {
         await presentMinigameResult(result);
