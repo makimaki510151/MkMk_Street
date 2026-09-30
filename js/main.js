@@ -1097,12 +1097,23 @@ function refreshGameUI() {
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
     ].join('');
+    const stockBits = Object.keys(g.areas).map(Number)
+      .filter((area) => (p.stocks[area] || 0) > 0)
+      .map((area) => {
+        const meta = g.areas[area];
+        const n = p.stocks[area];
+        return `<span class="pc-stock" style="--ac:${meta.color}" title="${escapeHtml(meta.name)} ${meta.stockPrice}G">A${area}×${n}</span>`;
+      });
+    const stockLine = stockBits.length
+      ? `<div class="pc-stocks">${stockBits.join('')}</div>`
+      : '<div class="pc-stocks empty">株なし</div>';
     return `
       <div class="player-card ${active} ${me}" style="--pc:${p.color}">
         <div class="pc-head"><span class="pc-dot"></span><strong>${p.name}</strong><span class="pc-lv">Lv.${p.level}</span></div>
         <div class="pc-money${a.cash < 0 ? ' debt' : ''}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
+        ${stockLine}
         <div class="pc-marks">${marks}${status}</div>
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
@@ -1812,13 +1823,64 @@ function showWinner(g) {
 
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
-  el.innerHTML = Object.keys(g.areas).map((a) => {
-    const area = Number(a);
+  const areas = Object.keys(g.areas).map(Number);
+  const players = g.players;
+  const priceChips = areas.map((area) => {
     const meta = g.areas[area];
-    return `<div class="stock-chip" style="--ac:${meta.color}" title="${meta.name}">
+    return `<button type="button" class="stock-chip" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}">
       <b>A${area}</b> ${meta.stockPrice}G
+    </button>`;
+  }).join('');
+
+  const head = `
+    <div class="sh-row sh-head">
+      <span class="sh-area">エリア</span>
+      ${players.map((p) => `<span class="sh-player" style="--pc:${p.color}" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>`).join('')}
+    </div>`;
+
+  const rows = areas.map((area) => {
+    const meta = g.areas[area];
+    const cells = players.map((p) => {
+      const n = p.stocks[area] || 0;
+      return `<span class="sh-count ${n > 0 ? 'has' : ''}" style="--pc:${p.color}">${n > 0 ? `×${n}` : '—'}</span>`;
+    }).join('');
+    return `<div class="sh-row" data-hold-area="${area}" style="--ac:${meta.color}">
+      <span class="sh-area" title="${escapeHtml(meta.name)}">
+        <b>A${area}</b>
+        <small>${meta.stockPrice}G</small>
+      </span>
+      ${cells}
     </div>`;
   }).join('');
+
+  el.innerHTML = `
+    <div class="stocks-prices">${priceChips}</div>
+    <div class="stocks-holdings">
+      <div class="sh-title">株の所持（全員）</div>
+      <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
+    </div>`;
+
+  const highlight = (area) => {
+    app.renderer?.setStockHighlight(area, true);
+  };
+  const clear = () => {
+    // 株購入モーダル中はハイライトを維持
+    if (g.phase === 'await_choice' && g.pending?.type === 'stock') {
+      const sel = document.querySelector('.stock-card.selected, .stock-card[aria-pressed="true"]');
+      const keep = sel ? Number(sel.dataset.area) : null;
+      app.renderer?.setStockHighlight(keep, true);
+      return;
+    }
+    app.renderer?.clearStockHighlight();
+  };
+
+  el.querySelectorAll('[data-hold-area]').forEach((node) => {
+    const area = Number(node.dataset.holdArea);
+    node.addEventListener('mouseenter', () => highlight(area));
+    node.addEventListener('mouseleave', clear);
+    node.addEventListener('focus', () => highlight(area));
+    node.addEventListener('blur', clear);
+  });
 }
 
 function escapeHtml(s) {
