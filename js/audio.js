@@ -155,6 +155,12 @@ export function createAudio() {
       tone(1568, 0.45, 'sine', 0.08, 0.7);
     },
     cancel() { tone(280, 0.08, 'triangle', 0.05); },
+    /** スクラッチ色そろい */
+    scratchMatch() {
+      noiseBurst(0.08, 0.08);
+      [392, 523, 659, 784, 988].forEach((f, i) => tone(f, 0.2, 'triangle', 0.1, i * 0.08));
+      tone(1175, 0.4, 'sine', 0.08, 0.45);
+    },
   };
 
   /**

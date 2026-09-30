@@ -19,9 +19,16 @@ import {
   getNode,
   getSharedEventTable,
   PLAYER_COLORS,
+  getCpuPersonality,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER } from './eventTable.js';
+import {
+  GROUP_COLORS,
+  TABLE_SIZE,
+  COLOR_LABELS,
+  MATCH_BONUS_PER,
+  playerColorIndex,
+} from './eventTable.js';
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
@@ -416,6 +423,13 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
+  if (data.kind === 'scratchMatch' && data.matches?.length) {
+    app.busy = true;
+    playScratchMatchReveal(data.matches, data.messages || [], { banner: false }).finally(() => {
+      app.busy = false;
+      refreshGameUI();
+    });
+  }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
@@ -437,9 +451,31 @@ function maybeDemoLanding() {
   if (!demo || !app.game) return;
   const p = currentPlayer(app.game);
   if (!p) return;
-  if (demo === 'scratch') {
+  if (demo === 'scratch' || demo === 'scratch-match') {
     const mark = app.game.map.find((n) => n.type === 'mark');
     if (!mark) return;
+    const table = getSharedEventTable(app.game);
+    if (demo === 'scratch-match') {
+      // 先頭行に2つ塗っておき、3つ目でそろい演出を確認できる
+      const who = app.game.players[0];
+      for (const i of [0, 1]) {
+        const cell = table.cells[i];
+        cell.scratched = true;
+        cell.scratchedBy = who.id;
+        cell.color = playerColorIndex(who);
+        cell.group = cell.color;
+      }
+    } else {
+      // 開けた人の色で塗られた状態を見せる（イベント効果は適用しない）
+      for (let i = 0; i < Math.min(12, table.cells.length); i++) {
+        const who = app.game.players[i % app.game.players.length];
+        const cell = table.cells[i];
+        cell.scratched = true;
+        cell.scratchedBy = who.id;
+        cell.color = playerColorIndex(who);
+        cell.group = cell.color;
+      }
+    }
     p.pos = mark.id;
     app.game.phase = 'moving';
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
@@ -791,6 +827,9 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.scratched) {
+      await presentScratchMatches(result);
+    }
     if (result.minigame && result.messages) {
       if (result.win) audio.sfx.levelUp();
       else audio.sfx.buy();
@@ -961,6 +1000,114 @@ async function playDiceOverlay(face, remote = false) {
   overlay.hidden = true;
 }
 
+async function presentScratchMatches(result) {
+  const matches = result.matches || [];
+  if (!matches.length) {
+    hideModal();
+    return;
+  }
+  app.busy = true;
+  broadcastFx({
+    kind: 'scratchMatch',
+    matches,
+    messages: result.messages || [],
+  });
+  await playScratchMatchReveal(matches, result.messages || [], { banner: true });
+  hideModal();
+  app.busy = false;
+}
+
+function mountScratchMatchOverlay(matches) {
+  const overlay = $('#scratch-match-overlay');
+  const row = $('#sm-row');
+  if (!overlay || !row) return null;
+  const ids = [...new Set(matches.flatMap((m) => m.cellIds))];
+  const color = matches[0]?.beneficiaryColor || '#888';
+  const table = app.game ? getSharedEventTable(app.game) : null;
+  row.innerHTML = ids.map((id, i) => {
+    const num = table?.cells[id]?.eventId ?? '';
+    return `<div class="sm-chip" data-match-id="${id}" style="--pc:${color};--spin-i:${i}">${num}</div>`;
+  }).join('');
+  overlay.hidden = false;
+  return row;
+}
+
+function hideScratchMatchOverlay() {
+  const overlay = $('#scratch-match-overlay');
+  if (overlay) overlay.hidden = true;
+  const row = $('#sm-row');
+  if (row) row.innerHTML = '';
+}
+
+async function playScratchMatchReveal(matches, messages = [], { banner = true } = {}) {
+  if (!matches?.length) return;
+  const matchMsgs = messages.filter((m) => String(m).includes('そろい'));
+  const top = matches.reduce((a, b) => (b.count > a.count ? b : a), matches[0]);
+  const totalBonus = matches.reduce((s, m) => s + (m.bonus || 0), 0);
+  const title = `${COLOR_LABELS[top.color] || ''}色 ${top.count}そろい！`;
+  const detail = matchMsgs.join(' / ') || `+${totalBonus}G`;
+  const color = top.beneficiaryColor || GROUP_COLORS[top.color] || '#ffe08a';
+
+  const modalGrid = document.querySelector('#modal:not([hidden]) .scratch-grid');
+  let usedOverlay = false;
+  if (modalGrid) {
+    const ids = [...new Set(matches.flatMap((m) => m.cellIds))];
+    ids.forEach((id, i) => {
+      const el = modalGrid.children[id];
+      if (!el) return;
+      el.classList.add('match-spin');
+      el.style.setProperty('--spin-i', String(i));
+      if (!el.classList.contains('done')) {
+        el.classList.add('done', 'by-player');
+        el.style.setProperty('--pc', color);
+      }
+    });
+  } else {
+    usedOverlay = true;
+    mountScratchMatchOverlay(matches);
+    const kicker = $('#sm-kicker');
+    const titleEl = $('#sm-title');
+    const detailEl = $('#sm-detail');
+    if (kicker) kicker.textContent = `${top.beneficiaryName || ''} の色そろい`;
+    if (titleEl) titleEl.textContent = title;
+    if (detailEl) detailEl.textContent = `+${totalBonus}G`;
+  }
+
+  const resultEl = $('#scratch-result');
+  if (resultEl) {
+    resultEl.hidden = false;
+    resultEl.classList.add('match-pop');
+    resultEl.textContent = `${title} → +${totalBonus}G`;
+  }
+
+  audio.sfx.scratchMatch();
+  if (banner) {
+    enqueueBanner({
+      kicker: '色そろい！',
+      title: `${top.count}そろい`,
+      detail,
+      kind: 'event',
+      color,
+      mine: true,
+    });
+    broadcastFx({
+      kind: 'banner',
+      payload: {
+        kicker: '色そろい！',
+        title: `${top.count}そろい`,
+        detail,
+        kind: 'event',
+        color,
+      },
+    });
+  }
+
+  await wait(1550);
+  document.querySelectorAll('.match-spin').forEach((el) => el.classList.remove('match-spin'));
+  resultEl?.classList.remove('match-pop');
+  if (usedOverlay) hideScratchMatchOverlay();
+}
+
 async function handleHostAction(from, data) {
   if (app.busy) {
     app.net.sendTo(from, { type: 'reject', reason: '演出中です' });
@@ -1008,6 +1155,9 @@ async function handleHostAction(from, data) {
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
+    }
+    if (result.scratched) {
+      await presentScratchMatches(result);
     }
     if (result.minigame && result.messages) {
       if (result.win) audio.sfx.levelUp();
@@ -1112,6 +1262,9 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
+      if (result?.scratched) {
+        await presentScratchMatches(result);
+      }
       syncState();
       refreshGameUI();
       if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
@@ -1150,9 +1303,11 @@ function refreshGameUI() {
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
+    const persona = p.isCPU ? getCpuPersonality(p) : null;
     const status = [
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
+      persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
     ].join('');
     const stockBits = Object.keys(g.areas).map(Number)
       .filter((area) => (p.stocks[area] || 0) > 0)
@@ -1801,21 +1956,20 @@ function showChoiceModal(g) {
       `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
-      const sealColor = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
         const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
-        const pc = scratcher?.color || '#888';
+        const pc = scratcher?.color || GROUP_COLORS[c.color] || '#888';
         const who = scratcher ? escapeHtml(scratcher.name) : '';
-        // マス内は色＋番号のみ（イベント名は title に）
-        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc};--sc:${sealColor}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+        // 開けた人の色で塗り、番号のみ表示（イベント名は title）
+        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
           <span class="scratch-num">${c.eventId}</span>
           <span class="scratch-owner" aria-hidden="true">${who ? who.slice(0, 1) : '·'}</span>
         </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${sealColor}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">全員共通の表です。めくると色と番号だけ表示（イベント名はホバーで確認）。めくった人の色で縁取り。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
+      <p class="hint">全員共通の表です。めくると<strong>開けた人の色</strong>で塗られます。同じ色が縦・横・斜めに3つ以上そろうとセルが回り、<strong>${MATCH_BONUS_PER}G×枚数</strong>ボーナス</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
@@ -1829,12 +1983,11 @@ function showChoiceModal(g) {
         body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
         const cellId = Number(btn.dataset.cell);
         const cell = table.cells[cellId];
-        const sealColor = GROUP_COLORS[cell?.color] || GROUP_COLORS[cell?.group] || '#888';
         const actor = g.players[pend.playerId];
+        const pc = actor?.color || '#888';
         btn.classList.remove('sealed');
         btn.classList.add('reveal', 'done', 'by-player');
-        btn.style.setProperty('--pc', actor?.color || '#888');
-        btn.style.setProperty('--sc', sealColor);
+        btn.style.setProperty('--pc', pc);
         btn.title = cell?.label || '';
         btn.innerHTML = `<span class="scratch-num">${cell?.eventId ?? ''}</span>
           <span class="scratch-owner" aria-hidden="true">${(actor?.name || '·').slice(0, 1)}</span>`;
@@ -1844,7 +1997,7 @@ function showChoiceModal(g) {
           resultEl.textContent = `${cell?.label || ''} をスクラッチ…`;
         }
         audio.sfx.buy();
-        hideModal();
+        // そろい演出のためモーダルは残す（結果後に閉じる）
         sendAction({ type: 'choice', choice: { action: 'scratch', cellId } });
       };
     });
