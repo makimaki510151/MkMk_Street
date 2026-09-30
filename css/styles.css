@@ -490,6 +490,42 @@ button:disabled { opacity: .45; cursor: default; }
   border: 1px solid color-mix(in srgb, var(--ac) 55%, transparent);
   color: #fff;
 }
+.stocks-sell {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.35rem;
+  display: grid;
+  gap: 0.3rem;
+}
+.stocks-sell.muted { opacity: 0.75; }
+.sell-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.4rem;
+  border-radius: 8px;
+  border-left: 3px solid var(--ac, var(--gold));
+  background: color-mix(in srgb, var(--ac, #888) 12%, rgba(0, 0, 0, 0.22));
+  font-size: 0.74rem;
+}
+.sell-label { flex: 1 1 6rem; }
+.sell-label small { color: var(--muted); margin-left: 0.2rem; }
+.sell-row .field.tiny {
+  margin: 0;
+  font-size: 0.68rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.sell-row .field.tiny input {
+  width: 3.8rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+}
 #log {
   flex: 1;
   min-height: 120px;
