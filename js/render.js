@@ -155,8 +155,8 @@ export function createRenderer(canvas) {
     for (const n of g.map) {
       const x = ox + n.col * size;
       const y = oy + n.row * size;
-      const pad = size * 0.08;
-      const r = size * 0.14;
+      const pad = size * 0.07;
+      const r = size * 0.04;
       roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
 
       let fill = '#2a4050';
@@ -344,16 +344,20 @@ export function createRenderer(canvas) {
     const brandX = ox + size * 2.5;
     const brandY = oy + size * 2.5;
     ctx.save();
-    ctx.fillStyle = 'rgba(12, 28, 32, 0.42)';
-    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 12);
+    ctx.fillStyle = 'rgba(20, 24, 28, 0.55)';
+    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 2);
     ctx.fill();
-    ctx.fillStyle = '#ffe08a';
-    ctx.font = `900 ${Math.max(14, size * 0.32)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
+    ctx.strokeStyle = 'rgba(232, 228, 220, 0.14)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 2);
+    ctx.stroke();
+    ctx.fillStyle = '#c4a574';
+    ctx.font = `700 ${Math.max(14, size * 0.3)}px "Syne", "Zen Kaku Gothic New", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('MkMk Street', brandX, brandY - size * 0.18);
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = `600 ${Math.max(10, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
+    ctx.fillStyle = 'rgba(232, 228, 220, 0.72)';
+    ctx.font = `500 ${Math.max(10, size * 0.17)}px "Zen Kaku Gothic New", sans-serif`;
     ctx.fillText(`目標 ${g.goal.toLocaleString()}G`, brandX, brandY + size * 0.28);
     ctx.restore();
   }
