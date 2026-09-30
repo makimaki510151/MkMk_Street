@@ -734,10 +734,16 @@ button:disabled { opacity: .45; cursor: default; }
 .scratch-cell.done {
   opacity: 0.95;
   cursor: default;
-  /* マスのイベント色をベースに、めくった人の色で縁取り */
-  background: color-mix(in srgb, var(--sc, #888) 72%, #111);
-  border: 2px solid color-mix(in srgb, var(--pc, #fff) 88%, #111);
+  /* 開けた人の色で塗る */
+  background: color-mix(in srgb, var(--pc, #888) 78%, #111);
+  border: 2px solid color-mix(in srgb, var(--pc, #fff) 92%, #111);
   color: #fffef8;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc, #fff) 35%, transparent);
+}
+.pc-flag.cpu-style {
+  background: rgba(255, 224, 138, 0.16);
+  color: var(--gold);
+  border: 1px solid rgba(255, 224, 138, 0.35);
 }
 .scratch-cell.by-player {
   opacity: 1;

@@ -16,9 +16,13 @@ import {
   getForwardNexts,
   continueMove,
   updateAreaStockPrices,
+  cpuAct,
+  getCpuPersonality,
+  CPU_PERSONALITY_KEYS,
+  PLAYER_COLORS,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
-import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT, applyAllCash, scratchCell } from '../js/eventTable.js';
+import { unscratchedIds, EVENT_CATALOG, EVENT_COUNT, applyAllCash, scratchCell, playerColorIndex } from '../js/eventTable.js';
 
 describe('MkMk Street engine', () => {
   it('builds a branching board (not a single loop)', () => {
@@ -576,6 +580,62 @@ describe('MkMk Street engine', () => {
     const scratched2 = scratchCell(g, g.players[0], 1);
     assert.equal(scratched2.ok, true);
     assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
+  });
+
+  it('scratch paints cell with opener player color', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 55,
+      cash: 1500,
+    });
+    const cell = g.sharedEventTable.cells[3];
+    cell.color = 3; // 事前の表色とは違う色にしておく
+    cell.group = 3;
+    cell.scratched = false;
+    const r = scratchCell(g, g.players[1], 3);
+    assert.equal(r.ok, true);
+    assert.equal(cell.scratchedBy, 1);
+    assert.equal(cell.color, playerColorIndex(g.players[1]));
+    assert.equal(cell.color, 1);
+  });
+
+  it('assigns distinct CPU personalities by seat', () => {
+    const g = createGame({
+      players: [
+        { name: 'Human' },
+        { name: 'C1', isCPU: true },
+        { name: 'C2', isCPU: true },
+        { name: 'C3', isCPU: true },
+      ],
+      seed: 12,
+    });
+    assert.equal(g.players[0].personality, null);
+    assert.equal(g.players[1].personality, CPU_PERSONALITY_KEYS[1]);
+    assert.equal(g.players[2].personality, CPU_PERSONALITY_KEYS[2]);
+    assert.equal(g.players[3].personality, CPU_PERSONALITY_KEYS[3]);
+    assert.equal(getCpuPersonality(g.players[1]).label, '株マニア');
+    assert.equal(getCpuPersonality(g.players[2]).label, '独占屋');
+  });
+
+  it('CPU personalities prefer different stock budgets', () => {
+    const mk = (personality) => {
+      const g = createGame({
+        players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality }],
+        seed: 33,
+        cash: 3000,
+      });
+      g.currentPlayerIdx = 1;
+      g.phase = 'await_choice';
+      g.pending = { type: 'stock', playerId: 1, bankVisit: true, maxBuys: 1 };
+      const before = g.players[1].cash;
+      const r = cpuAct(g);
+      assert.equal(r?.ok, true);
+      return before - g.players[1].cash;
+    };
+    const brokerSpend = mk('broker');
+    const tycoonSpend = mk('tycoon');
+    assert.ok(brokerSpend > 0, 'broker buys stock');
+    assert.ok(brokerSpend >= tycoonSpend, 'broker spends at least as much as tycoon on stocks');
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {

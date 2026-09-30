@@ -19,6 +19,7 @@ import {
   getNode,
   getSharedEventTable,
   PLAYER_COLORS,
+  getCpuPersonality,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import { GROUP_COLORS, TABLE_SIZE, COLOR_LABELS, MATCH_BONUS_PER } from './eventTable.js';
@@ -1150,9 +1151,11 @@ function refreshGameUI() {
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
+    const persona = p.isCPU ? getCpuPersonality(p) : null;
     const status = [
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
+      persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
     ].join('');
     const stockBits = Object.keys(g.areas).map(Number)
       .filter((area) => (p.stocks[area] || 0) > 0)
@@ -1801,21 +1804,20 @@ function showChoiceModal(g) {
       `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
-      const sealColor = GROUP_COLORS[c.color] || GROUP_COLORS[c.group] || '#888';
       if (c.scratched) {
         const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
-        const pc = scratcher?.color || '#888';
+        const pc = scratcher?.color || GROUP_COLORS[c.color] || '#888';
         const who = scratcher ? escapeHtml(scratcher.name) : '';
-        // マス内は色＋番号のみ（イベント名は title に）
-        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc};--sc:${sealColor}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
+        // 開けた人の色で塗り、番号のみ表示（イベント名は title）
+        return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
           <span class="scratch-num">${c.eventId}</span>
           <span class="scratch-owner" aria-hidden="true">${who ? who.slice(0, 1) : '·'}</span>
         </button>`;
       }
-      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" style="--sc:${sealColor}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
+      return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">全員共通の表です。めくると色と番号だけ表示（イベント名はホバーで確認）。めくった人の色で縁取り。縦・横・斜めに同じ色が3つ以上で ${MATCH_BONUS_PER}G×数</p>
+      <p class="hint">全員共通の表です。めくると<strong>開けた人の色</strong>で塗られ番号が表示されます（イベント名はホバーで確認）。同じ色が縦・横・斜めに3つ以上で ${MATCH_BONUS_PER}G×数</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
       <p class="scratch-result" id="scratch-result" hidden></p>
@@ -1829,12 +1831,11 @@ function showChoiceModal(g) {
         body.querySelectorAll('[data-cell]').forEach((b) => { b.disabled = true; });
         const cellId = Number(btn.dataset.cell);
         const cell = table.cells[cellId];
-        const sealColor = GROUP_COLORS[cell?.color] || GROUP_COLORS[cell?.group] || '#888';
         const actor = g.players[pend.playerId];
+        const pc = actor?.color || '#888';
         btn.classList.remove('sealed');
         btn.classList.add('reveal', 'done', 'by-player');
-        btn.style.setProperty('--pc', actor?.color || '#888');
-        btn.style.setProperty('--sc', sealColor);
+        btn.style.setProperty('--pc', pc);
         btn.title = cell?.label || '';
         btn.innerHTML = `<span class="scratch-num">${cell?.eventId ?? ''}</span>
           <span class="scratch-owner" aria-hidden="true">${(actor?.name || '·').slice(0, 1)}</span>`;
