@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   createGame,
   calcToll,
+  hasAreaMonopoly,
+  tryGrantMonopolyBonus,
+  MONOPOLY_BONUS_RATE,
+  getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
   getPlayerAssets,
@@ -76,10 +80,14 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].cash, 2000);
   });
 
-  it('computes toll multipliers by area ownership', () => {
-    assert.equal(getTollMulti(1), 1);
-    assert.equal(getTollMulti(2), 1.25);
-    assert.equal(getTollMulti(4), 5);
+  it('computes toll multipliers by area size and ownership', () => {
+    assert.equal(getTollMulti(1, 4), 1);
+    assert.equal(getTollMulti(2, 4), 1.25);
+    assert.equal(getTollMulti(3, 4), 2.5);
+    assert.equal(getTollMulti(4, 4), 5);
+    // 5軒エリアは4軒所有でも独占倍率にならない
+    assert.equal(getTollMulti(4, 5), 3.25);
+    assert.equal(getTollMulti(5, 5), 6);
   });
 
   it('raises toll when owning multiple shops in an area', () => {
@@ -95,6 +103,37 @@ describe('MkMk Street engine', () => {
     const tollMax = calcToll(g, shops[0]);
     assert.ok(getPlayerAreaCount(g, 0, area) >= 2);
     assert.ok(tollMax > toll1);
+    assert.equal(hasAreaMonopoly(g, 0, area), true);
+    assert.equal(getTollMulti(shops.length, shops.length), 5);
+  });
+
+  it('grants monopoly cash bonus when completing an area', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.ok(shops.length >= 3);
+    for (let i = 0; i < shops.length - 1; i++) shops[i].owner = 0;
+    assert.equal(hasAreaMonopoly(g, 0, area), false);
+
+    const last = shops[shops.length - 1];
+    g.players[0].cash = 50000;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: last.id, price: last.price };
+    const cashBefore = g.players[0].cash;
+    const value = shops.reduce((s, sq) => s + sq.price, 0);
+    const expectedBonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
+    const result = applyChoice(g, { action: 'buy' });
+    assert.equal(result.ok, true);
+    assert.equal(result.monopoly, true);
+    assert.equal(result.bonus, expectedBonus);
+    assert.equal(hasAreaMonopoly(g, 0, area), true);
+    // 購入費を引いたあとボーナスが載る
+    assert.equal(g.players[0].cash, cashBefore - last.price + expectedBonus);
+    // 二重付与されない
+    assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
   });
 
   it('updates stock prices from shop values', () => {

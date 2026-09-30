@@ -122,6 +122,24 @@ export function createAudio() {
       tone(659, 0.1, 'triangle', 0.08, 0.08);
       tone(784, 0.16, 'triangle', 0.1, 0.16);
     },
+    /** エリア独占 — 盛大なファンファーレ */
+    monopoly() {
+      noiseBurst(0.18, 0.16);
+      tone(98, 0.5, 'sawtooth', 0.1);
+      tone(130, 0.4, 'square', 0.08, 0.06);
+      // 上昇アルペジオ
+      [262, 330, 392, 523, 659, 784, 1046].forEach((f, i) => {
+        tone(f, 0.28, i < 3 ? 'square' : 'triangle', 0.11 - i * 0.008, 0.2 + i * 0.09);
+      });
+      // 決めの和音
+      tone(523, 0.55, 'triangle', 0.1, 0.9);
+      tone(659, 0.55, 'triangle', 0.09, 0.92);
+      tone(784, 0.7, 'sine', 0.11, 0.95);
+      tone(1046, 0.85, 'sine', 0.1, 1.05);
+      tone(1318, 0.9, 'triangle', 0.08, 1.2);
+      noiseBurst(0.12, 0.1);
+      tone(196, 0.6, 'sine', 0.07, 1.35);
+    },
     /** 5倍買い — 衝撃的な奪取ファンファーレ（長め・派手） */
     fiveBuy() {
       noiseBurst(0.22, 0.2);

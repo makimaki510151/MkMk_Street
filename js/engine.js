@@ -78,8 +78,21 @@ export function getCpuPersonality(p) {
   return { key, ...CPU_PERSONALITIES[key] };
 }
 
-const TOLL_MULTI = [1, 1, 1.25, 2.5, 5, 6, 6.75];
+/**
+ * 買い物料の変化倍率（いたストSP準拠）。
+ * 行: エリア内店舗数、列インデックス: 所有軒数（0は未使用）。
+ * 全軒所有＝独占で最大倍率。
+ */
+const TOLL_MULTI_BY_AREA = {
+  3: [1, 1, 2, 3.75],
+  4: [1, 1, 1.25, 2.5, 5],
+  5: [1, 1, 1.25, 2, 3.25, 6],
+  6: [1, 1, 1.25, 2, 2.75, 4.25, 6.75],
+};
+/** 増資限度倍率（所有軒数ベース・SP/GK系） */
 const MAX_INVEST_RATE = [0, 0.5, 1, 3, 9, 11, 13];
+/** 独占達成時：エリア店価合計に対する現金ボーナス率 */
+export const MONOPOLY_BONUS_RATE = 0.15;
 
 function giveAllCash(g, amount) {
   const msgs = [];
@@ -223,8 +236,23 @@ export function getPlayerAreaCount(g, pid, area) {
   return g.map.filter((s) => s.type === 'shop' && s.area === area && s.owner === pid).length;
 }
 
-export function getTollMulti(cnt) {
-  return TOLL_MULTI[Math.min(cnt, 6)] || 1;
+/** エリア内の全店舗を所有しているか */
+export function hasAreaMonopoly(g, pid, area) {
+  const shops = getAreaShops(g, area);
+  if (!shops.length) return false;
+  return shops.every((s) => s.owner === pid);
+}
+
+/**
+ * 買い物料倍率。areaSize 省略時は4軒エリアとして扱う（後方互換）。
+ * @param {number} owned 所有軒数
+ * @param {number} [areaSize=4] エリア内店舗数
+ */
+export function getTollMulti(owned, areaSize = 4) {
+  const size = TOLL_MULTI_BY_AREA[areaSize] ? areaSize : 4;
+  const table = TOLL_MULTI_BY_AREA[size];
+  const i = Math.min(Math.max(0, owned | 0), table.length - 1);
+  return table[i] ?? 1;
 }
 
 export function getMaxExtraInvest(g, sq) {
@@ -241,8 +269,47 @@ export function calcToll(g, sq) {
   if (!sq || sq.owner < 0) return 0;
   const owner = g.players[sq.owner];
   if (owner?.shopsClosed) return 0;
+  const areaSize = getAreaShops(g, sq.area).length;
   const cnt = getPlayerAreaCount(g, sq.owner, sq.area);
-  return Math.floor(sq.baseToll * (1 + (sq.extraInvest / sq.basePrice) * 2) * getTollMulti(cnt));
+  return Math.floor(
+    sq.baseToll * (1 + (sq.extraInvest / sq.basePrice) * 2) * getTollMulti(cnt, areaSize),
+  );
+}
+
+/**
+ * 直前まで非独占 → 今回独占になったらボーナス付与。
+ * @returns {{ monopoly: true, area: number, bonus: number, areaName: string } | null}
+ */
+export function tryGrantMonopolyBonus(g, p, area) {
+  if (!hasAreaMonopoly(g, p.id, area)) return null;
+  const shops = getAreaShops(g, area);
+  // 直前は未独占だったか（今回の取得で完成したか）は呼び出し側で確認済み想定だが、
+  // 二重付与防止フラグをエリア×プレイヤーで持つ
+  if (!p.flags) p.flags = {};
+  if (!p.flags.monopolyBonusClaimed) p.flags.monopolyBonusClaimed = {};
+  if (p.flags.monopolyBonusClaimed[area]) return null;
+
+  const value = shops.reduce((s, sq) => s + (sq.price || sq.basePrice || 0), 0);
+  const bonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
+  p.cash += bonus;
+  p.flags.monopolyBonusClaimed[area] = true;
+
+  if (g.areas[area]) {
+    g.areas[area].B = Math.max(1, Math.floor((g.areas[area].B || 100) * 1.1));
+  }
+  updateAreaStockPrices(g);
+
+  const areaName = g.areas[area]?.name || `エリア${area}`;
+  addLog(g, `${p.name} が「${areaName}」を独占！ ボーナス +${bonus}G`, 'level');
+  return { monopoly: true, area, bonus, areaName };
+}
+
+/** 独占が崩れたらボーナス再取得可能に（5倍買い等） */
+export function clearMonopolyClaim(g, pid, area) {
+  const p = g.players[pid];
+  if (p?.flags?.monopolyBonusClaimed) {
+    delete p.flags.monopolyBonusClaimed[area];
+  }
 }
 
 export function updateAreaStockPrices(g) {
@@ -950,10 +1017,12 @@ function sellShopForCash(g, p, shopId) {
   const sq = getNode(g, shopId);
   if (!sq || sq.type !== 'shop' || sq.owner !== p.id) return { ok: false, error: 'bad_shop' };
   const got = Math.floor(sq.price * 0.5);
+  const area = sq.area;
   p.cash += got;
   sq.owner = -1;
   sq.extraInvest = 0;
   sq.price = sq.basePrice;
+  clearMonopolyClaim(g, p.id, area);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が「${sq.label}」を売却（+${got}G）`, 'system');
   return { ok: true, got };
@@ -1066,6 +1135,10 @@ export function applyChoice(g, choice) {
       sq.owner = p.id;
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が「${sq.label}」を購入（${sq.price}G）`, 'shop');
+      const mono = tryGrantMonopolyBonus(g, p, sq.area);
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, ...(mono || {}), state: serializeState(g) };
     } else {
       addLog(g, `${p.name} は「${sq.label}」の購入を見送り`, 'system');
     }
@@ -1138,16 +1211,22 @@ export function applyChoice(g, choice) {
       }
       if (p.cash >= price) {
         const owner = g.players[sq.owner];
+        const prevOwnerId = sq.owner;
+        const area = sq.area;
         p.cash -= price;
         if (owner) owner.cash += Math.floor(price * 0.6);
         sq.owner = p.id;
         sq.extraInvest = 0;
         sq.price = sq.basePrice;
+        if (prevOwnerId >= 0 && prevOwnerId !== p.id) {
+          clearMonopolyClaim(g, prevOwnerId, area);
+        }
         updateAreaStockPrices(g);
         addLog(g, `${p.name} が5倍買いで「${sq.label}」を奪取！`, 'shop');
+        const mono = tryGrantMonopolyBonus(g, p, area);
         g.pending = null;
         endTurn(g);
-        return { ok: true, fiveBuy: true, state: serializeState(g) };
+        return { ok: true, fiveBuy: true, ...(mono || {}), state: serializeState(g) };
       }
     }
     g.pending = null;

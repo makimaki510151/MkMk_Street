@@ -20,6 +20,10 @@ import {
   getSharedEventTable,
   PLAYER_COLORS,
   getCpuPersonality,
+  hasAreaMonopoly,
+  getTollMulti,
+  getAreaShops,
+  getPlayerAreaCount,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -468,7 +472,30 @@ function playRemoteFx(data) {
     enqueueBanner(data.payload || data);
   }
   if (data.kind === 'fiveBuy') audio.sfx.fiveBuy();
+  if (data.kind === 'monopoly') {
+    audio.sfx.monopoly();
+    if (data.payload) enqueueBanner(data.payload);
+  }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
+}
+
+function presentMonopolyFx(result) {
+  if (!result?.monopoly || !app.game) return;
+  const who = app.game.players.find((p) => p.flags?.monopolyBonusClaimed?.[result.area])
+    || currentPlayer(app.game);
+  const areaName = result.areaName || app.game.areas[result.area]?.name || `エリア${result.area}`;
+  const bonus = result.bonus || 0;
+  audio.sfx.monopoly();
+  const payload = {
+    kicker: 'エリア独占！',
+    title: areaName,
+    detail: bonus ? `独占ボーナス +${bonus.toLocaleString()}G` : 'エリアを完全支配！',
+    kind: 'level',
+    color: who?.color || '#ffe08a',
+    mine: who && (app.mode === 'local' ? !who.isCPU : who.id === app.localSeat),
+  };
+  broadcastFx({ kind: 'monopoly', payload, area: result.area, bonus });
+  enqueueBanner(payload);
 }
 
 function startLocal(seats) {
@@ -515,6 +542,19 @@ function maybeDemoLanding() {
     app.game.move = { stepsLeft: 0, path: [mark.id], passedBank: false, startPos: app.game.startId };
     advanceMove(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'monopoly') {
+    const area = Number(Object.keys(app.game.areas)[0]);
+    const shops = getAreaShops(app.game, area);
+    for (let i = 0; i < shops.length - 1; i++) shops[i].owner = p.id;
+    const last = shops[shops.length - 1];
+    p.cash = Math.max(p.cash, last.price + 1000);
+    p.pos = last.id;
+    app.game.phase = 'await_choice';
+    app.game.pending = { type: 'buy_shop', playerId: p.id, shopId: last.id, price: last.price };
+    refreshGameUI();
+    setTimeout(() => sendAction({ type: 'choice', choice: { action: 'buy' } }), 700);
     return;
   }
   if (demo === 'stock') {
@@ -868,6 +908,7 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchMatches(result);
     }
@@ -1387,6 +1428,7 @@ async function handleHostAction(from, data) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
     }
+    if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchMatches(result);
     }
@@ -1495,6 +1537,11 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
+      if (result?.fiveBuy) {
+        audio.sfx.fiveBuy();
+        broadcastFx({ kind: 'fiveBuy' });
+      }
+      if (result?.monopoly) presentMonopolyFx(result);
       if (result?.scratched) {
         await presentScratchMatches(result);
       }

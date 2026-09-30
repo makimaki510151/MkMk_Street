@@ -1,7 +1,7 @@
 /** MkMk Street — ボード描画 */
 
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { calcToll } from './engine.js';
+import { calcToll, hasAreaMonopoly, getPlayerAreaCount, getAreaShops, getTollMulti } from './engine.js';
 
 const TYPE_ICON = {
   bank: '銀',
@@ -510,5 +510,17 @@ export function shopTooltip(g, sq) {
   const toll = calcToll(g, sq);
   const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
-  return `${ownTag} ${sq.label} / ${AREA_META[sq.area]?.name || ''} / 価格${sq.price}G / 料${toll}G${closed}`;
+  const areaName = AREA_META[sq.area]?.name || '';
+  let mono = '';
+  if (sq.owner >= 0) {
+    const areaSize = getAreaShops(g, sq.area).length;
+    const cnt = getPlayerAreaCount(g, sq.owner, sq.area);
+    const multi = getTollMulti(cnt, areaSize);
+    if (hasAreaMonopoly(g, sq.owner, sq.area)) {
+      mono = `／独占×${multi}`;
+    } else if (cnt > 1) {
+      mono = `／${cnt}/${areaSize}軒×${multi}`;
+    }
+  }
+  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price}G / 料${toll}G${mono}${closed}`;
 }
