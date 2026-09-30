@@ -164,6 +164,18 @@ export function getPlayerAssets(g, p) {
   return { cash: p.cash, stockAsset, shopAsset, total: p.cash + stockAsset + shopAsset };
 }
 
+/** 店を半分価格で売却したときの合計 */
+export function getShopFireSaleValue(g, p) {
+  return g.map
+    .filter((s) => s.type === 'shop' && s.owner === p.id)
+    .reduce((s, sq) => s + Math.floor(sq.price * 0.5), 0);
+}
+
+/** 現金＋株＋店売却見込み */
+export function getLiquidatableValue(g, p) {
+  return p.cash + getPlayerAssets(g, p).stockAsset + getShopFireSaleValue(g, p);
+}
+
 export function getLevelBonus(g, p) {
   const base = 400 + 150 * p.level;
   const shopTotal = g.map
@@ -534,7 +546,8 @@ function resolveLanding(g, p, { passedBank }) {
 
   if (sq.type === 'stockbroker') {
     g.phase = 'await_choice';
-    g.pending = { type: 'stock', playerId: p.id, broker: true };
+    // 証券でも1回の訪問で買えるのは1種類のみ
+    g.pending = { type: 'stock', playerId: p.id, broker: true, maxBuys: 1 };
     return;
   }
 
@@ -763,21 +776,31 @@ function payToll(g, payer, sq) {
     }
   }
 
+  // 料金は全額支払い（所持金はマイナスになり得る）。自動売却はしない
+  payer.cash -= toll;
+  owner.cash += toll;
   addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll}G`, 'toll');
 
-  const paid = Math.min(payer.cash, toll);
-  payer.cash -= paid;
-  owner.cash += toll;
-
-  const remaining = toll - paid;
-  if (remaining > 0) {
-    autoLiquidate(g, payer, remaining);
+  if (payer.cash < 0) {
+    openRaiseFunds(g, payer, {
+      targetCash: 0,
+      reason: 'toll',
+      resume: { type: 'after_toll', shopId: sq.id, toll },
+    });
+    return;
   }
 
-  // 5倍買い選択肢
+  offerFiveBuyOrEnd(g, payer, sq, toll);
+}
+
+function offerFiveBuyOrEnd(g, payer, sq, toll) {
+  if (payer.bankrupt || g.phase === 'gameover') {
+    endTurn(g);
+    return;
+  }
   const five = sq.price * 5;
-  const liq = payer.cash + getPlayerAssets(g, payer).stockAsset;
-  if (liq >= five && !payer.bankrupt) {
+  const liq = getLiquidatableValue(g, payer);
+  if (liq >= five) {
     g.phase = 'await_choice';
     g.pending = {
       type: 'five_buy',
@@ -788,61 +811,105 @@ function payToll(g, payer, sq) {
     };
     return;
   }
-
   endTurn(g);
 }
 
-function autoLiquidate(g, p, need) {
-  // 株を高いエリアから売却
-  const areas = Object.keys(p.stocks)
-    .map(Number)
-    .filter((a) => (p.stocks[a] || 0) > 0)
-    .sort((a, b) => (g.areas[b].stockPrice || 0) - (g.areas[a].stockPrice || 0));
+function openRaiseFunds(g, p, { targetCash, reason, resume }) {
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'raise_funds',
+    playerId: p.id,
+    targetCash: Number(targetCash) || 0,
+    reason: reason || 'debt',
+    resume: resume || null,
+  };
+  addLog(g, `${p.name} は資金調達が必要（目標 ${Number(targetCash).toLocaleString()}G）`, 'system');
+}
 
-  let needLeft = need;
-  for (const a of areas) {
-    while (needLeft > 0 && (p.stocks[a] || 0) > 0) {
-      const sell = Math.min(p.stocks[a], Math.ceil(needLeft / g.areas[a].stockPrice));
-      const got = sell * g.areas[a].stockPrice;
-      p.stocks[a] -= sell;
-      p.cash += got;
-      needLeft -= got;
-      // 大量売却で株価微減
-      if (sell >= 10) {
-        g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
-      }
-    }
-  }
+function sellShopForCash(g, p, shopId) {
+  const sq = getNode(g, shopId);
+  if (!sq || sq.type !== 'shop' || sq.owner !== p.id) return { ok: false, error: 'bad_shop' };
+  const got = Math.floor(sq.price * 0.5);
+  p.cash += got;
+  sq.owner = -1;
+  sq.extraInvest = 0;
+  sq.price = sq.basePrice;
   updateAreaStockPrices(g);
+  addLog(g, `${p.name} が「${sq.label}」を売却（+${got}G）`, 'system');
+  return { ok: true, got };
+}
 
-  if (p.cash < needLeft) {
-    // 店を売却
-    const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
-    for (const sq of shops) {
-      if (p.cash >= needLeft) break;
-      p.cash += Math.floor(sq.price * 0.5);
-      sq.owner = -1;
-      sq.extraInvest = 0;
-      sq.price = sq.basePrice;
-      addLog(g, `${p.name} が「${sq.label}」を売却`, 'system');
-    }
-    updateAreaStockPrices(g);
-  }
+function sellStockForCash(g, p, area, count) {
+  const a = Number(area);
+  const have = p.stocks[a] || 0;
+  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
+  const got = g.areas[a].stockPrice * n;
+  p.stocks[a] -= n;
+  p.cash += got;
+  if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
+  updateAreaStockPrices(g);
+  addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
+  return { ok: true, got };
+}
 
-  if (p.cash < needLeft) {
-    p.cash = 0;
-    p.bankrupt = true;
-    for (const sq of g.map.filter((s) => s.type === 'shop' && s.owner === p.id)) {
-      sq.owner = -1;
-      sq.extraInvest = 0;
-      sq.price = sq.basePrice;
-    }
-    p.stocks = {};
-    addLog(g, `${p.name} が破産…`, 'system');
-    updateAreaStockPrices(g);
-  } else {
-    p.cash -= needLeft;
+function declareBankrupt(g, p) {
+  p.cash = 0;
+  p.bankrupt = true;
+  for (const sq of g.map.filter((s) => s.type === 'shop' && s.owner === p.id)) {
+    sq.owner = -1;
+    sq.extraInvest = 0;
+    sq.price = sq.basePrice;
   }
+  p.stocks = {};
+  addLog(g, `${p.name} が破産…`, 'system');
+  updateAreaStockPrices(g);
+}
+
+function resumeAfterRaiseFunds(g, p, resume) {
+  if (!resume) {
+    endTurn(g);
+    return;
+  }
+  if (resume.type === 'after_toll') {
+    const sq = getNode(g, resume.shopId);
+    if (sq) offerFiveBuyOrEnd(g, p, sq, resume.toll || 0);
+    else endTurn(g);
+    return;
+  }
+  if (resume.type === 'five_buy') {
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'five_buy',
+      playerId: p.id,
+      shopId: resume.shopId,
+      price: resume.price,
+      toll: resume.toll,
+    };
+    return;
+  }
+  if (resume.type === 'buy_shop') {
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'buy_shop',
+      playerId: p.id,
+      shopId: resume.shopId,
+      price: resume.price,
+    };
+    return;
+  }
+  if (resume.type === 'invest') {
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'invest',
+      playerId: p.id,
+      shopId: resume.shopId,
+      remaining: resume.remaining,
+      toll: resume.toll,
+    };
+    return;
+  }
+  endTurn(g);
 }
 
 /** プレイヤー選択の解決 */
@@ -864,13 +931,16 @@ export function applyChoice(g, choice) {
   if (pending.type === 'buy_shop') {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'buy') {
-      if (p.cash + getPlayerAssets(g, p).stockAsset < sq.price) {
+      if (getLiquidatableValue(g, p) < sq.price) {
         return { ok: false, error: 'insufficient' };
       }
-      if (p.cash < sq.price) autoLiquidate(g, p, sq.price - p.cash);
-      if (p.bankrupt) {
-        endTurn(g);
-        return { ok: true, state: serializeState(g) };
+      if (p.cash < sq.price) {
+        openRaiseFunds(g, p, {
+          targetCash: sq.price,
+          reason: 'buy_shop',
+          resume: { type: 'buy_shop', shopId: sq.id, price: sq.price },
+        });
+        return { ok: true, needFunds: true, state: serializeState(g) };
       }
       p.cash -= sq.price;
       sq.owner = p.id;
@@ -888,27 +958,37 @@ export function applyChoice(g, choice) {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'invest') {
       const rem = getRemainingInvest(g, sq);
-      let amount = Math.max(0, Math.min(Number(choice.amount) || 0, rem, p.cash + getPlayerAssets(g, p).stockAsset));
-      if (p.flags.investCoupon) {
-        const pay = Math.ceil(amount / 2);
-        p.flags.investCoupon = false;
-        if (p.cash < pay) autoLiquidate(g, p, pay - p.cash);
-        if (!p.bankrupt) {
-          p.cash -= pay;
-          sq.extraInvest += amount;
-          sq.price += amount;
-          updateAreaStockPrices(g);
-          addLog(g, `${p.name} が「${sq.label}」に ${amount}G 増資（半額クーポン）`, 'shop');
-        }
-      } else {
-        if (p.cash < amount) autoLiquidate(g, p, amount - p.cash);
-        if (!p.bankrupt && amount > 0) {
-          p.cash -= amount;
-          sq.extraInvest += amount;
-          sq.price += amount;
-          updateAreaStockPrices(g);
-          addLog(g, `${p.name} が「${sq.label}」に ${amount}G 増資`, 'shop');
-        }
+      let amount = Math.max(0, Math.min(Number(choice.amount) || 0, rem));
+      const pay = p.flags.investCoupon ? Math.ceil(amount / 2) : amount;
+      if (amount > 0 && getLiquidatableValue(g, p) < pay) {
+        return { ok: false, error: 'insufficient' };
+      }
+      if (amount > 0 && p.cash < pay) {
+        openRaiseFunds(g, p, {
+          targetCash: pay,
+          reason: 'invest',
+          resume: {
+            type: 'invest',
+            shopId: sq.id,
+            remaining: rem,
+            toll: pending.toll,
+            amount,
+          },
+        });
+        return { ok: true, needFunds: true, state: serializeState(g) };
+      }
+      if (amount > 0) {
+        const usedCoupon = !!p.flags.investCoupon;
+        if (usedCoupon) p.flags.investCoupon = false;
+        p.cash -= pay;
+        sq.extraInvest += amount;
+        sq.price += amount;
+        updateAreaStockPrices(g);
+        addLog(
+          g,
+          `${p.name} が「${sq.label}」に ${amount}G 増資${usedCoupon ? '（半額クーポン）' : ''}`,
+          'shop'
+        );
       }
     }
     g.pending = null;
@@ -920,21 +1000,112 @@ export function applyChoice(g, choice) {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'buy') {
       const price = sq.price * 5;
-      if (p.cash < price) autoLiquidate(g, p, price - p.cash);
-      if (!p.bankrupt && p.cash >= price) {
+      if (getLiquidatableValue(g, p) < price) {
+        return { ok: false, error: 'insufficient' };
+      }
+      if (p.cash < price) {
+        openRaiseFunds(g, p, {
+          targetCash: price,
+          reason: 'five_buy',
+          resume: {
+            type: 'five_buy',
+            shopId: sq.id,
+            price,
+            toll: pending.toll,
+          },
+        });
+        return { ok: true, needFunds: true, state: serializeState(g) };
+      }
+      if (p.cash >= price) {
         const owner = g.players[sq.owner];
         p.cash -= price;
-        owner.cash += Math.floor(price * 0.6);
+        if (owner) owner.cash += Math.floor(price * 0.6);
         sq.owner = p.id;
         sq.extraInvest = 0;
         sq.price = sq.basePrice;
         updateAreaStockPrices(g);
         addLog(g, `${p.name} が5倍買いで「${sq.label}」を奪取！`, 'shop');
+        g.pending = null;
+        endTurn(g);
+        return { ok: true, fiveBuy: true, state: serializeState(g) };
       }
     }
     g.pending = null;
     endTurn(g);
     return { ok: true, state: serializeState(g) };
+  }
+
+  if (pending.type === 'raise_funds') {
+    const target = Number(pending.targetCash) || 0;
+    if (choice.action === 'sell_stock') {
+      const r = sellStockForCash(g, p, choice.area, choice.count);
+      if (!r.ok) return { ok: false, error: r.error };
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action === 'sell_shop') {
+      const r = sellShopForCash(g, p, Number(choice.shopId));
+      if (!r.ok) return { ok: false, error: r.error };
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action === 'bankrupt') {
+      declareBankrupt(g, p);
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, bankrupt: true, state: serializeState(g) };
+    }
+    if (choice.action === 'cancel') {
+      // 売却済みの現金は残し、元の購入/5倍買いは取りやめてターン終了
+      // 料金不足（after_toll）だけは負債解消を優先して続きへ
+      const resume = pending.resume;
+      g.pending = null;
+      if (resume?.type === 'after_toll' && p.cash >= target) {
+        resumeAfterRaiseFunds(g, p, resume);
+        return { ok: true, state: serializeState(g) };
+      }
+      if (resume?.type === 'after_toll' && p.cash < target) {
+        return { ok: false, error: 'still_short' };
+      }
+      endTurn(g);
+      return { ok: true, cancelled: true, state: serializeState(g) };
+    }
+    if (choice.action === 'continue') {
+      if (p.cash < target) return { ok: false, error: 'still_short' };
+      const resume = pending.resume;
+      g.pending = null;
+      // 調達後に元の行動へ戻す（5倍買いなど）
+      if (resume?.type === 'five_buy' && choice.execute) {
+        g.pending = {
+          type: 'five_buy',
+          playerId: p.id,
+          shopId: resume.shopId,
+          price: resume.price,
+          toll: resume.toll,
+        };
+        return applyChoice(g, { action: 'buy' });
+      }
+      if (resume?.type === 'buy_shop' && choice.execute) {
+        g.pending = {
+          type: 'buy_shop',
+          playerId: p.id,
+          shopId: resume.shopId,
+          price: resume.price,
+        };
+        return applyChoice(g, { action: 'buy' });
+      }
+      if (resume?.type === 'invest' && choice.execute) {
+        g.pending = {
+          type: 'invest',
+          playerId: p.id,
+          shopId: resume.shopId,
+          remaining: resume.remaining,
+          toll: resume.toll,
+        };
+        return applyChoice(g, { action: 'invest', amount: resume.amount });
+      }
+      resumeAfterRaiseFunds(g, p, resume);
+      return { ok: true, state: serializeState(g) };
+    }
+    return { ok: false, error: 'bad_action' };
   }
 
   if (pending.type === 'level_up') {
@@ -968,8 +1139,8 @@ export function applyChoice(g, choice) {
       if (!g.areas[area]) return { ok: false, error: 'bad_area' };
       const price = g.areas[area].stockPrice;
       const maxAfford = Math.floor(p.cash / price);
-      // 銀行は持ち金の限り。証券は従来どおり上限99
-      const hardCap = bankVisit ? Math.max(1, maxAfford) : 99;
+      // 1種類購入時は持ち金の限り（証券・銀行とも）
+      const hardCap = Math.max(1, maxAfford);
       const count = Math.max(1, Math.min(hardCap, Number(choice.count) || 1));
       const cost = price * count;
       if (p.cash < cost) return { ok: false, error: 'insufficient' };
@@ -1133,19 +1304,45 @@ export function cpuAct(g) {
     if (pend.type === 'buy_shop') {
       const sq = getNode(g, pend.shopId);
       const assets = getPlayerAssets(g, p);
-      const buy = p.cash >= sq.price && assets.total < g.goal * 0.95;
+      const buy = getLiquidatableValue(g, p) >= sq.price && assets.total < g.goal * 0.95;
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
     }
     if (pend.type === 'invest') {
       const rem = pend.remaining || 0;
-      const amount = Math.min(rem, Math.floor(p.cash * 0.4));
+      const liq = getLiquidatableValue(g, p);
+      const amount = Math.min(rem, Math.floor(Math.max(0, liq) * 0.4));
       if (amount >= 20) return applyChoice(g, { action: 'invest', amount });
       return applyChoice(g, { action: 'skip' });
     }
     if (pend.type === 'five_buy') {
-      const assets = getPlayerAssets(g, p);
-      const buy = assets.cash + assets.stockAsset >= pend.price && Math.random() > 0.4;
+      const buy = getLiquidatableValue(g, p) >= pend.price && Math.random() > 0.4;
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
+    }
+    if (pend.type === 'raise_funds') {
+      const target = Number(pend.targetCash) || 0;
+      // 株→店の順で目標まで売却
+      while (p.cash < target) {
+        const held = Object.keys(p.stocks || {}).map(Number).filter((a) => (p.stocks[a] || 0) > 0);
+        if (held.length) {
+          const a = held[0];
+          const need = target - p.cash;
+          const price = g.areas[a].stockPrice || 1;
+          const count = Math.min(p.stocks[a], Math.max(1, Math.ceil(need / price)));
+          sellStockForCash(g, p, a, count);
+          continue;
+        }
+        const shop = g.map.find((s) => s.type === 'shop' && s.owner === p.id);
+        if (shop) {
+          sellShopForCash(g, p, shop.id);
+          continue;
+        }
+        break;
+      }
+      if (p.cash >= target) {
+        const exec = pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
+        return applyChoice(g, { action: 'continue', execute: !!exec });
+      }
+      return applyChoice(g, { action: 'bankrupt' });
     }
     if (pend.type === 'stock') {
       const ownedAreas = [...new Set(g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.area))];

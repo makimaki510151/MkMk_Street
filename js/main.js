@@ -12,6 +12,7 @@ import {
   cpuAct,
   currentPlayer,
   getPlayerAssets,
+  getLiquidatableValue,
   calcToll,
   getRemainingInvest,
   getNode,
@@ -417,6 +418,7 @@ function playRemoteFx(data) {
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
+  if (data.kind === 'fiveBuy') audio.sfx.fiveBuy();
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
@@ -764,7 +766,18 @@ async function applyLocalAction(action) {
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
-    if (pend.type === 'five_buy' && action.choice.action === 'buy') audio.sfx.buy();
+    if (result.fiveBuy) {
+      audio.sfx.fiveBuy();
+      broadcastFx({ kind: 'fiveBuy' });
+      enqueueBanner({
+        kicker: '衝撃！',
+        title: '5倍買い！',
+        detail: 'お店を奪取した！',
+        kind: 'shop',
+        color: currentPlayer(app.game)?.color || '#ffe08a',
+        mine: true,
+      });
+    }
     if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -958,6 +971,10 @@ async function handleHostAction(from, data) {
     }
     const result = applyChoice(app.game, action.choice);
     if (result.state) app.game = restoreState(result.state);
+    if (result.fiveBuy) {
+      audio.sfx.fiveBuy();
+      broadcastFx({ kind: 'fiveBuy' });
+    }
     syncState();
     refreshGameUI();
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
@@ -1080,12 +1097,23 @@ function refreshGameUI() {
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
     ].join('');
+    const stockBits = Object.keys(g.areas).map(Number)
+      .filter((area) => (p.stocks[area] || 0) > 0)
+      .map((area) => {
+        const meta = g.areas[area];
+        const n = p.stocks[area];
+        return `<span class="pc-stock" style="--ac:${meta.color}" title="${escapeHtml(meta.name)} ${meta.stockPrice}G">A${area}×${n}</span>`;
+      });
+    const stockLine = stockBits.length
+      ? `<div class="pc-stocks">${stockBits.join('')}</div>`
+      : '<div class="pc-stocks empty">株なし</div>';
     return `
       <div class="player-card ${active} ${me}" style="--pc:${p.color}">
         <div class="pc-head"><span class="pc-dot"></span><strong>${p.name}</strong><span class="pc-lv">Lv.${p.level}</span></div>
-        <div class="pc-money">${a.cash.toLocaleString()}G</div>
+        <div class="pc-money${a.cash < 0 ? ' debt' : ''}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
+        ${stockLine}
         <div class="pc-marks">${marks}${status}</div>
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
@@ -1184,6 +1212,7 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'five_buy': return '5倍買いを検討中';
+    case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
       ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
       : '株を取引中';
@@ -1390,6 +1419,7 @@ function showChoiceModal(g) {
   $('#modal-card').classList.remove('wide');
   $('#modal-card').classList.remove('stock-modal');
   $('#modal-card').classList.remove('scratch-modal');
+  $('#modal-card').classList.remove('raise-modal');
   hideForkRails();
 
   if (pend.type === 'fork') {
@@ -1441,16 +1471,109 @@ function showChoiceModal(g) {
   if (pend.type === 'five_buy') {
     const sq = getNode(g, pend.shopId);
     const owner = g.players[sq.owner];
+    const p = g.players[pend.playerId];
+    const short = (p?.cash || 0) < pend.price;
+    const canRaise = getLiquidatableValue(g, p) >= pend.price;
     title.textContent = '5倍買い？';
     body.innerHTML = `
-      <p class="modal-lead"><strong>${sq.label}</strong>（${owner?.name || ''}の店）</p>
+      <p class="modal-lead"><strong>${escapeHtml(sq.label)}</strong>（${escapeHtml(owner?.name || '')}の店）</p>
       <p>価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
+      <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G${short ? ' — 不足分は株や物件を売って調達できます' : ''}</p>
       <div class="modal-actions">
-        <button class="btn danger" id="m-five">5倍買いする</button>
+        <button class="btn danger" id="m-five" ${!canRaise ? 'disabled' : ''}>
+          ${short ? '資金を調達して5倍買い' : '5倍買いする'}
+        </button>
       </div>`;
     $('#m-five').onclick = () => {
       hideModal();
       sendAction({ type: 'choice', choice: { action: 'buy' } });
+    };
+    return;
+  }
+
+  if (pend.type === 'raise_funds') {
+    const p = g.players[pend.playerId];
+    const target = Number(pend.targetCash) || 0;
+    const short = Math.max(0, target - (p?.cash || 0));
+    const reasonLabel = {
+      toll: '買い物料の支払い後',
+      five_buy: '5倍買いのため',
+      buy_shop: 'お店購入のため',
+      invest: '増資のため',
+    }[pend.reason] || '資金調達';
+    title.textContent = '資金調達';
+    $('#modal-card').classList.add('wide');
+    $('#modal-card').classList.add('raise-modal');
+    const stockRows = Object.keys(g.areas).map((a) => {
+      const area = Number(a);
+      const have = p?.stocks[area] || 0;
+      if (!have) return '';
+      const price = g.areas[area].stockPrice;
+      return `<div class="raise-row" style="--ac:${g.areas[area].color}">
+        <span>A${area} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
+        <label class="field tiny">枚数
+          <input type="number" min="1" max="${have}" value="${Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))))}" data-sell-stock="${area}" />
+        </label>
+        <button type="button" class="btn tiny" data-do-sell-stock="${area}">売る</button>
+      </div>`;
+    }).join('');
+    const shopRows = g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((sq) => {
+      const got = Math.floor(sq.price * 0.5);
+      return `<div class="raise-row" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <span>${escapeHtml(sq.label)}（売却見込 ${got.toLocaleString()}G）</span>
+        <button type="button" class="btn tiny" data-do-sell-shop="${sq.id}">物件を売る</button>
+      </div>`;
+    }).join('');
+    const canContinue = (p?.cash || 0) >= target;
+    const canExec = canContinue && pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
+    const execLabel = {
+      five_buy: '調達完了 — 5倍買いする',
+      buy_shop: '調達完了 — 購入する',
+      invest: '調達完了 — 増資する',
+    }[pend.resume?.type] || '調達完了 — 実行する';
+    body.innerHTML = `
+      <p class="modal-lead">${reasonLabel}</p>
+      <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
+        ／ 目標 <strong>${target.toLocaleString()}G</strong>
+        ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。</p>
+      <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
+      <div class="raise-section"><h4>物件（半額売却）</h4>${shopRows || '<p class="hint">売却できる物件がありません</p>'}</div>
+      <div class="modal-actions">
+        <button class="btn primary" id="m-raise-go" ${canContinue ? '' : 'disabled'}>
+          ${canExec ? execLabel : '調達完了'}
+        </button>
+        <button class="btn ghost" id="m-raise-cancel">やめる（ターン終了）</button>
+        <button class="btn danger ghost" id="m-raise-bankrupt">破産を宣言</button>
+      </div>`;
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    body.querySelectorAll('[data-do-sell-stock]').forEach((btn) => {
+      btn.onclick = () => {
+        const area = Number(btn.dataset.doSellStock);
+        const input = body.querySelector(`input[data-sell-stock="${area}"]`);
+        const count = Math.max(1, Number(input?.value) || 1);
+        sendAction({ type: 'choice', choice: { action: 'sell_stock', area, count } });
+      };
+    });
+    body.querySelectorAll('[data-do-sell-shop]').forEach((btn) => {
+      btn.onclick = () => {
+        sendAction({ type: 'choice', choice: { action: 'sell_shop', shopId: Number(btn.dataset.doSellShop) } });
+      };
+    });
+    $('#m-raise-go').onclick = () => {
+      if (!canContinue) return;
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'continue', execute: !!canExec } });
+    };
+    $('#m-raise-cancel').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'cancel' } });
+    };
+    $('#m-raise-bankrupt').onclick = () => {
+      if (!confirm('破産すると店も株も失います。よろしいですか？')) return;
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'bankrupt' } });
     };
     return;
   }
@@ -1488,10 +1611,11 @@ function showChoiceModal(g) {
 
   if (pend.type === 'stock') {
     const bankVisit = !!pend.bankVisit || !!pend.bankPass || !!pend.atBank;
+    const broker = !!pend.broker && !bankVisit;
     const p = currentPlayer(g);
     title.textContent = bankVisit
       ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
-      : '証券マス — 株取引';
+      : '証券マス — 株を1種類購入';
     $('#modal-card').classList.add('stock-modal');
     // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
     app.renderer?.setStockHighlight(null, true);
@@ -1502,107 +1626,100 @@ function showChoiceModal(g) {
         const area = Number(el.dataset.area);
         el.addEventListener('pointerenter', () => app.renderer?.setStockHighlight(area, true));
         el.addEventListener('pointerleave', () => {
-          const sel = root.querySelector('.stock-card.selected, .stock-card.broker.focus');
+          const sel = root.querySelector('.stock-card.selected');
           app.renderer?.setStockHighlight(sel ? Number(sel.dataset.area) : null, true);
         });
       });
     };
 
-    if (bankVisit) {
-      const cards = Object.keys(g.areas).map((a) => {
-        const area = Number(a);
-        const meta = g.areas[area];
-        const price = meta.stockPrice;
-        const max = Math.floor((p?.cash || 0) / price);
-        const have = p?.stocks[area] || 0;
-        return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max="${max}" ${max < 1 ? 'disabled' : ''}>
-          <span class="sc-swatch" aria-hidden="true"></span>
-          <span class="sc-name">A${area} ${meta.name}</span>
-          <span class="sc-price">${price}G</span>
-          <span class="sc-max">${max < 1 ? '資金不足' : `最大 ${max}枚`}</span>
-          <span class="sc-have">持株 ${have}</span>
-        </button>`;
-      }).join('');
-      body.innerHTML = `
-        <p class="hint">カードに触れると盤面の同じエリア店が光ります。1種類だけ持ち金の限り購入（所持金 ${Number(p?.cash || 0).toLocaleString()}G）</p>
-        <div class="stock-grid">${cards}</div>
-        <div id="stock-buy-panel" class="stock-buy-panel" hidden>
-          <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
-          <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
-        </div>`;
-      $('#btn-end-choice').hidden = true;
-      $('#btn-skip-choice').hidden = false;
-      $('#btn-skip-choice').textContent = pend.resumeMove ? '買わずに進む方向を選ぶ' : '買わずに終了';
-
-      let selected = null;
-      bindAreaHighlight(body);
-      body.querySelectorAll('.stock-card').forEach((btn) => {
-        btn.onclick = () => {
-          body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
-          btn.classList.add('selected');
-          selected = Number(btn.dataset.area);
-          app.renderer?.setStockHighlight(selected, true);
-          const max = Number(btn.dataset.max) || 1;
-          const panel = $('#stock-buy-panel');
-          const input = $('#m-stock-count');
-          panel.hidden = false;
-          input.max = String(max);
-          input.value = String(max);
-        };
-      });
-      $('#m-stock-confirm').onclick = () => {
-        if (selected == null) return;
-        const max = Number(body.querySelector(`.stock-card[data-area="${selected}"]`)?.dataset.max) || 1;
-        const count = Math.max(1, Math.min(max, Number($('#m-stock-count').value) || 1));
-        hideModal();
-        sendAction({ type: 'choice', choice: { action: 'buy', area: selected, count } });
-      };
-      return;
-    }
-
-    // 証券マス：売買＋エリアハイライト
-    const rows = Object.keys(g.areas).map((a) => {
+    const cards = Object.keys(g.areas).map((a) => {
       const area = Number(a);
       const meta = g.areas[area];
+      const price = meta.stockPrice;
+      const maxBuy = Math.floor((p?.cash || 0) / price);
       const have = p?.stocks[area] || 0;
-      return `<div class="stock-card broker" style="--ac:${meta.color}" data-area="${area}">
+      return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max-buy="${maxBuy}" data-have="${have}" ${maxBuy < 1 && !(broker && have) ? 'disabled' : ''}>
         <span class="sc-swatch" aria-hidden="true"></span>
         <span class="sc-name">A${area} ${meta.name}</span>
-        <span class="sc-price">${meta.stockPrice}G / 持株 ${have}</span>
-        <div class="sc-actions">
-          <button class="btn tiny" data-buy="${area}">買う</button>
-          <button class="btn tiny ghost" data-sell="${area}" ${have ? '' : 'disabled'}>売る</button>
-        </div>
-      </div>`;
+        <span class="sc-price">${price}G</span>
+        <span class="sc-max">${maxBuy < 1 ? '資金不足' : `最大 ${maxBuy}枚`}</span>
+        <span class="sc-have">持株 ${have}</span>
+      </button>`;
     }).join('');
-    body.innerHTML = `<p class="hint">カードに触れると盤面のエリア店が光ります</p>
-      <div class="stock-grid">${rows}</div>`;
-    $('#btn-end-choice').hidden = false;
-    $('#btn-skip-choice').hidden = true;
-    bindAreaHighlight(body);
 
-    body.querySelectorAll('.stock-card.broker').forEach((card) => {
-      card.addEventListener('pointerenter', () => card.classList.add('focus'));
-      card.addEventListener('pointerleave', () => card.classList.remove('focus'));
-    });
-    body.querySelectorAll('[data-buy]').forEach((btn) => {
+    body.innerHTML = `
+      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のエリア店が光ります。</p>
+      <div class="stock-grid">${cards}</div>
+      <div id="stock-buy-panel" class="stock-buy-panel" hidden>
+        <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
+        <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
+        ${broker ? '<button class="btn ghost" id="m-stock-sell" hidden>この枚数で売る</button>' : ''}
+      </div>`;
+    $('#btn-end-choice').hidden = true;
+    $('#btn-skip-choice').hidden = false;
+    $('#btn-skip-choice').textContent = pend.resumeMove
+      ? '買わずに進む方向を選ぶ'
+      : (broker ? '買わずに終了' : '買わずに終了');
+
+    let selected = null;
+    bindAreaHighlight(body);
+    body.querySelectorAll('.stock-card').forEach((btn) => {
       btn.onclick = () => {
-        const area = Number(btn.dataset.buy);
-        app.renderer?.setStockHighlight(area, true);
-        const price = g.areas[area].stockPrice;
-        const max = Math.floor((p?.cash || 0) / price);
-        const count = Number(prompt(`A${area} を何枚？（1〜${Math.min(99, max)}）`, String(Math.min(10, max)))) || 0;
-        if (count > 0) sendAction({ type: 'choice', choice: { action: 'buy', area, count } });
+        body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selected = Number(btn.dataset.area);
+        app.renderer?.setStockHighlight(selected, true);
+        const maxBuy = Number(btn.dataset.maxBuy) || 0;
+        const have = Number(btn.dataset.have) || 0;
+        const panel = $('#stock-buy-panel');
+        const input = $('#m-stock-count');
+        const buyBtn = $('#m-stock-confirm');
+        const sellBtn = $('#m-stock-sell');
+        panel.hidden = false;
+        if (maxBuy >= 1) {
+          input.min = '1';
+          input.max = String(maxBuy);
+          input.value = String(maxBuy);
+          buyBtn.hidden = false;
+          buyBtn.disabled = false;
+        } else {
+          buyBtn.hidden = true;
+        }
+        if (sellBtn) {
+          if (have >= 1) {
+            sellBtn.hidden = false;
+            if (maxBuy < 1) {
+              input.min = '1';
+              input.max = String(have);
+              input.value = String(Math.min(have, 10));
+            }
+          } else {
+            sellBtn.hidden = true;
+          }
+        }
       };
     });
-    body.querySelectorAll('[data-sell]').forEach((btn) => {
-      btn.onclick = () => {
-        const area = Number(btn.dataset.sell);
-        app.renderer?.setStockHighlight(area, true);
-        const count = Number(prompt('何枚売りますか？', '10')) || 0;
-        if (count > 0) sendAction({ type: 'choice', choice: { action: 'sell', area, count } });
+    $('#m-stock-confirm').onclick = () => {
+      if (selected == null) return;
+      const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+      const maxBuy = Number(card?.dataset.maxBuy) || 1;
+      if (maxBuy < 1) return;
+      const count = Math.max(1, Math.min(maxBuy, Number($('#m-stock-count').value) || 1));
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'buy', area: selected, count } });
+    };
+    const sellBtn = $('#m-stock-sell');
+    if (sellBtn) {
+      sellBtn.onclick = () => {
+        if (selected == null) return;
+        const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+        const have = Number(card?.dataset.have) || 0;
+        if (have < 1) return;
+        const count = Math.max(1, Math.min(have, Number($('#m-stock-count').value) || 1));
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'sell', area: selected, count } });
       };
-    });
+    }
     return;
   }
 
@@ -1706,13 +1823,64 @@ function showWinner(g) {
 
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
-  el.innerHTML = Object.keys(g.areas).map((a) => {
-    const area = Number(a);
+  const areas = Object.keys(g.areas).map(Number);
+  const players = g.players;
+  const priceChips = areas.map((area) => {
     const meta = g.areas[area];
-    return `<div class="stock-chip" style="--ac:${meta.color}" title="${meta.name}">
+    return `<button type="button" class="stock-chip" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}">
       <b>A${area}</b> ${meta.stockPrice}G
+    </button>`;
+  }).join('');
+
+  const head = `
+    <div class="sh-row sh-head">
+      <span class="sh-area">エリア</span>
+      ${players.map((p) => `<span class="sh-player" style="--pc:${p.color}" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>`).join('')}
+    </div>`;
+
+  const rows = areas.map((area) => {
+    const meta = g.areas[area];
+    const cells = players.map((p) => {
+      const n = p.stocks[area] || 0;
+      return `<span class="sh-count ${n > 0 ? 'has' : ''}" style="--pc:${p.color}">${n > 0 ? `×${n}` : '—'}</span>`;
+    }).join('');
+    return `<div class="sh-row" data-hold-area="${area}" style="--ac:${meta.color}">
+      <span class="sh-area" title="${escapeHtml(meta.name)}">
+        <b>A${area}</b>
+        <small>${meta.stockPrice}G</small>
+      </span>
+      ${cells}
     </div>`;
   }).join('');
+
+  el.innerHTML = `
+    <div class="stocks-prices">${priceChips}</div>
+    <div class="stocks-holdings">
+      <div class="sh-title">株の所持（全員）</div>
+      <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
+    </div>`;
+
+  const highlight = (area) => {
+    app.renderer?.setStockHighlight(area, true);
+  };
+  const clear = () => {
+    // 株購入モーダル中はハイライトを維持
+    if (g.phase === 'await_choice' && g.pending?.type === 'stock') {
+      const sel = document.querySelector('.stock-card.selected, .stock-card[aria-pressed="true"]');
+      const keep = sel ? Number(sel.dataset.area) : null;
+      app.renderer?.setStockHighlight(keep, true);
+      return;
+    }
+    app.renderer?.clearStockHighlight();
+  };
+
+  el.querySelectorAll('[data-hold-area]').forEach((node) => {
+    const area = Number(node.dataset.holdArea);
+    node.addEventListener('mouseenter', () => highlight(area));
+    node.addEventListener('mouseleave', clear);
+    node.addEventListener('focus', () => highlight(area));
+    node.addEventListener('blur', clear);
+  });
 }
 
 function escapeHtml(s) {

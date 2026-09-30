@@ -389,6 +389,10 @@ button:disabled { opacity: .45; cursor: default; }
   100% { transform: none; }
 }
 #stocks-panel {
+  display: grid;
+  gap: 0.4rem;
+}
+.stocks-prices {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
@@ -399,6 +403,92 @@ button:disabled { opacity: .45; cursor: default; }
   border-radius: 8px;
   background: color-mix(in srgb, var(--ac) 22%, rgba(0,0,0,0.35));
   border: 1px solid color-mix(in srgb, var(--ac) 50%, transparent);
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+}
+.stock-chip:hover, .stock-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 70%, #fff);
+}
+.stocks-holdings {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.35rem;
+}
+.sh-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--gold);
+  margin-bottom: 0.25rem;
+}
+.sh-table {
+  display: grid;
+  gap: 0.12rem;
+  max-height: min(22vh, 220px);
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+.sh-row {
+  display: grid;
+  grid-template-columns: minmax(4.2rem, 1.2fr) repeat(var(--sh-cols, 2), minmax(2.2rem, 1fr));
+  gap: 0.2rem;
+  align-items: center;
+  padding: 0.18rem 0.25rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+}
+.sh-row.sh-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(10, 24, 28, 0.96);
+  color: var(--muted);
+  font-weight: 700;
+}
+.sh-row[data-hold-area] {
+  background: color-mix(in srgb, var(--ac, #888) 10%, rgba(0, 0, 0, 0.18));
+  cursor: default;
+}
+.sh-row[data-hold-area]:hover {
+  background: color-mix(in srgb, var(--ac, #888) 22%, rgba(0, 0, 0, 0.22));
+}
+.sh-area b { color: #fff; margin-right: 0.2rem; }
+.sh-area small { color: var(--muted); font-size: 0.65rem; }
+.sh-player {
+  color: var(--pc);
+  font-weight: 700;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sh-count {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.28);
+  font-variant-numeric: tabular-nums;
+}
+.sh-count.has {
+  color: var(--pc);
+  font-weight: 800;
+}
+.pc-stocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  margin-top: 0.28rem;
+}
+.pc-stocks.empty {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.28);
+}
+.pc-stock {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ac) 24%, rgba(0, 0, 0, 0.3));
+  border: 1px solid color-mix(in srgb, var(--ac) 55%, transparent);
+  color: #fff;
 }
 #log {
   flex: 1;
@@ -505,6 +595,17 @@ button:disabled { opacity: .45; cursor: default; }
 #modal .modal-card.stock-modal {
   width: min(360px, calc(100vw - 320px));
   max-height: min(58vh, 520px);
+}
+#modal .modal-card.raise-modal {
+  width: min(420px, calc(100vw - 320px));
+  max-height: min(70vh, 620px);
+}
+#modal .modal-card.raise-modal .modal-actions {
+  position: sticky;
+  bottom: -0.2rem;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, transparent, #143238 28%);
+  z-index: 2;
 }
 .modal-card {
   pointer-events: auto;
@@ -731,12 +832,17 @@ button:disabled { opacity: .45; cursor: default; }
 .sc-max, .sc-have { font-size: 0.72rem; color: var(--muted); }
 .sc-actions { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
 .stock-buy-panel {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
   align-items: end;
   padding-top: 0.2rem;
 }
+.stock-buy-panel .field {
+  flex: 1 1 7rem;
+  margin: 0;
+}
+.stock-buy-panel .btn { flex: 0 0 auto; }
 .stock-row {
   display: grid;
   grid-template-columns: 1.3fr 0.7fr 0.8fr auto auto;
@@ -747,6 +853,45 @@ button:disabled { opacity: .45; cursor: default; }
   background: color-mix(in srgb, var(--ac) 12%, rgba(0,0,0,0.25));
 }
 .sr-name { font-weight: 700; font-size: 0.85rem; }
+
+.raise-section {
+  margin: 0.55rem 0 0.35rem;
+}
+.raise-section h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  color: var(--gold);
+  font-weight: 800;
+}
+.raise-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.3rem;
+  border-radius: 10px;
+  border-left: 3px solid var(--ac, var(--gold));
+  background: color-mix(in srgb, var(--ac, #888) 14%, rgba(0, 0, 0, 0.28));
+  font-size: 0.84rem;
+}
+.raise-row .field.tiny {
+  margin: 0;
+  font-size: 0.72rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.raise-row .field.tiny input {
+  width: 4.2rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+}
+.pc-money.debt { color: #ff8a80; }
 
 #btn-modal-restore {
   position: fixed;
@@ -977,6 +1122,7 @@ button:disabled { opacity: .45; cursor: default; }
     max-height: 38vh;
   }
   #players-panel { max-height: 18vh; }
+  .sh-table { max-height: min(16vh, 140px); }
   #modal {
     padding: 0 0.55rem 42vh 0.55rem;
     place-items: end end;

@@ -122,6 +122,23 @@ export function createAudio() {
       tone(659, 0.1, 'triangle', 0.08, 0.08);
       tone(784, 0.16, 'triangle', 0.1, 0.16);
     },
+    /** 5倍買い — 衝撃的な奪取ファンファーレ（長め・派手） */
+    fiveBuy() {
+      noiseBurst(0.22, 0.2);
+      tone(70, 0.45, 'sawtooth', 0.14);
+      tone(95, 0.38, 'square', 0.1, 0.05);
+      tone(140, 0.3, 'sawtooth', 0.09, 0.12);
+      tone(55, 0.5, 'sine', 0.08, 0.02);
+      // 低音インパクトのあと派手に上昇
+      [196, 247, 294, 370, 440, 554, 659, 784, 988, 1175].forEach((f, i) => {
+        tone(f, 0.32, i < 4 ? 'square' : 'triangle', 0.12 - i * 0.007, 0.28 + i * 0.085);
+      });
+      tone(1480, 0.7, 'sine', 0.12, 1.15);
+      tone(1760, 0.55, 'triangle', 0.08, 1.35);
+      noiseBurst(0.16, 0.14);
+      tone(80, 0.55, 'sawtooth', 0.11, 1.2);
+      tone(60, 0.65, 'sine', 0.07, 1.45);
+    },
     toll() {
       tone(180, 0.18, 'sawtooth', 0.05);
       tone(140, 0.22, 'sawtooth', 0.04, 0.1);
