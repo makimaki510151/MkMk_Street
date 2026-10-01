@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import {
   createGame,
   calcToll,
+  hasAreaMonopoly,
+  tryGrantMonopolyBonus,
+  MONOPOLY_BONUS_RATE,
+  getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
   getPlayerAssets,
+  getMaxExtraInvest,
+  getRemainingInvest,
+  getAreaMonopolyRate,
+  investMultiByMonopolyRate,
+  applyCappedShopBoost,
   getLiquidatableValue,
   preTurnSell,
   canSellStockOnTurn,
@@ -16,6 +25,9 @@ import {
   getForwardNexts,
   continueMove,
   updateAreaStockPrices,
+  buildGameResults,
+  createEmptyStats,
+  ensureStats,
   cpuAct,
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
@@ -76,10 +88,51 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].cash, 2000);
   });
 
-  it('computes toll multipliers by area ownership', () => {
-    assert.equal(getTollMulti(1), 1);
-    assert.equal(getTollMulti(2), 1.25);
-    assert.equal(getTollMulti(4), 5);
+  it('computes toll multipliers by area size and ownership', () => {
+    assert.equal(getTollMulti(1, 4), 1);
+    assert.equal(getTollMulti(2, 4), 1.25);
+    assert.equal(getTollMulti(3, 4), 2.5);
+    assert.equal(getTollMulti(4, 4), 5);
+    // 5軒エリアは4軒所有でも独占倍率にならない
+    assert.equal(getTollMulti(4, 5), 3.25);
+    assert.equal(getTollMulti(5, 5), 6);
+  });
+
+  it('scales invest cap by area monopoly rate', () => {
+    assert.equal(investMultiByMonopolyRate(0.25), 0.5);
+    assert.equal(investMultiByMonopolyRate(0.5), 1);
+    assert.equal(investMultiByMonopolyRate(0.75), 3);
+    assert.equal(investMultiByMonopolyRate(1), 9);
+
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.equal(shops.length, 4);
+    const sq = shops[0];
+    sq.owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 0.25);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 0.5));
+
+    shops[1].owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 0.5);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 1));
+
+    shops[2].owner = 0;
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 3));
+
+    shops[3].owner = 0;
+    assert.equal(getAreaMonopolyRate(g, 0, area), 1);
+    assert.equal(getMaxExtraInvest(g, sq), Math.floor(sq.basePrice * 9));
+
+    // 枠を超えて載せられない
+    const rem = getRemainingInvest(g, sq);
+    const added = applyCappedShopBoost(g, sq, rem + 500);
+    assert.equal(added, rem);
+    assert.equal(getRemainingInvest(g, sq), 0);
+    assert.equal(applyCappedShopBoost(g, sq, 50), 0);
   });
 
   it('raises toll when owning multiple shops in an area', () => {
@@ -95,6 +148,37 @@ describe('MkMk Street engine', () => {
     const tollMax = calcToll(g, shops[0]);
     assert.ok(getPlayerAreaCount(g, 0, area) >= 2);
     assert.ok(tollMax > toll1);
+    assert.equal(hasAreaMonopoly(g, 0, area), true);
+    assert.equal(getTollMulti(shops.length, shops.length), 5);
+  });
+
+  it('grants monopoly cash bonus when completing an area', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.ok(shops.length >= 3);
+    for (let i = 0; i < shops.length - 1; i++) shops[i].owner = 0;
+    assert.equal(hasAreaMonopoly(g, 0, area), false);
+
+    const last = shops[shops.length - 1];
+    g.players[0].cash = 50000;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: last.id, price: last.price };
+    const cashBefore = g.players[0].cash;
+    const value = shops.reduce((s, sq) => s + sq.price, 0);
+    const expectedBonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
+    const result = applyChoice(g, { action: 'buy' });
+    assert.equal(result.ok, true);
+    assert.equal(result.monopoly, true);
+    assert.equal(result.bonus, expectedBonus);
+    assert.equal(hasAreaMonopoly(g, 0, area), true);
+    // 購入費を引いたあとボーナスが載る
+    assert.equal(g.players[0].cash, cashBefore - last.price + expectedBonus);
+    // 二重付与されない
+    assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
   });
 
   it('updates stock prices from shop values', () => {
@@ -610,6 +694,43 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
   });
 
+  it('pick_invest event lets player choose a shop to boost', () => {
+    const pickId = EVENT_CATALOG.findIndex((e) => e.effect === 'pick_invest');
+    assert.ok(pickId >= 0, 'catalog has pick_invest');
+    const amount = EVENT_CATALOG[pickId].amount || 80;
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+      cash: 3000,
+    });
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const a = shops[0];
+    const b = shops[1];
+    a.owner = 0;
+    b.owner = 0;
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = pickId + 1;
+    cell.label = EVENT_CATALOG[pickId].label;
+    cell.scratched = false;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.pickInvest, true);
+    assert.equal(g.pending?.type, 'pick_invest');
+    assert.equal(g.pending.amount, amount);
+    assert.ok(g.pending.shopIds.includes(a.id));
+    assert.ok(g.pending.shopIds.includes(b.id));
+
+    const priceBefore = b.price;
+    const invested = applyChoice(g, { action: 'invest', shopId: b.id });
+    assert.equal(invested.ok, true);
+    assert.equal(invested.pickInvest, true);
+    assert.equal(b.price, priceBefore + amount);
+    assert.equal(b.extraInvest, amount);
+    assert.equal(a.extraInvest || 0, 0);
+  });
+
   it('scratch paints cell with opener player color', () => {
     const g = createGame({
       players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
@@ -661,6 +782,57 @@ describe('MkMk Street engine', () => {
     assert.ok(r.matchBonus >= 150);
     assert.ok(who.cash >= before + 150);
     assert.match(r.messages.join(' '), /そろい×3/);
+  });
+
+  it('scratch match requires contiguous cells (no spaced matches)', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 9,
+      cash: 1000,
+    });
+    const table = g.sharedEventTable;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // とびとび: 0, 2, 4（間の1,3は未開封）→ 3つあっても隣接していないので不発
+    for (const i of [0, 2]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[4].eventId = rollAgainId;
+    const before = who.cash;
+    const r = scratchCell(g, who, 4);
+    assert.equal(r.ok, true);
+    assert.equal((r.matches || []).filter((m) => m.lineKey === 'r0').length, 0);
+    assert.equal(r.matchBonus || 0, 0);
+    assert.equal(who.cash, before);
+  });
+
+  it('scratch match fires only for the contiguous block, ignoring spaced extras', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 13,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 隣接3つ (0,1,2) と、離れたもう1つ (5) → カウントは隣接の3のみ
+    for (const i of [0, 1, 5]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[2].eventId = rollAgainId;
+    const r = scratchCell(g, who, 2);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => x.lineKey === 'r0');
+    assert.ok(m, 'contiguous row match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((a, b) => a - b), [0, 1, 2]);
+    assert.ok(!m.cellIds.includes(5), 'spaced cell excluded');
   });
 
   it('assigns distinct CPU personalities by seat', () => {
@@ -736,5 +908,70 @@ describe('MkMk Street engine', () => {
     const blocked = preTurnSell(g, 0, area, 1);
     assert.equal(blocked.ok, false);
     assert.equal(blocked.error, 'bad_phase');
+  });
+
+  it('tracks player stats and builds endgame results with awards', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 42,
+      goal: 50000,
+      cash: 5000,
+    });
+    assert.ok(g.players[0].stats);
+    assert.equal(g.players[0].stats.rolls, 0);
+    assert.deepEqual(Object.keys(createEmptyStats()).sort(), Object.keys(g.players[0].stats).sort());
+
+    // サイコロ統計
+    g.phase = 'await_roll';
+    const rolled = rollDice(g);
+    assert.equal(rolled.ok, true);
+    assert.equal(g.players[0].stats.rolls, 1);
+    assert.equal(g.players[0].stats.diceTotal, g.dice);
+
+    // 店購入・独占統計
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    for (let i = 0; i < shops.length - 1; i++) shops[i].owner = 0;
+    const last = shops[shops.length - 1];
+    g.players[0].cash = last.price + 1000;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: last.id, price: last.price };
+    const buy = applyChoice(g, { action: 'buy' });
+    assert.equal(buy.ok, true);
+    assert.equal(g.players[0].stats.shopsBought, 1);
+    assert.ok(g.players[0].stats.monopolyCount >= 1);
+    assert.ok(g.players[0].stats.monopolyBonus > 0);
+
+    // 資産をばらしてアワードが付くようにする
+    g.players[0].stats.tollEarned = 5000;
+    g.players[1].stats.stockBought = 40;
+    g.players[1].stocks[area] = 30;
+    g.players[2].stats.scratchCount = 5;
+    g.players[2].stats.matchBonus = 200;
+    g.players[1].cash = 800;
+    g.players[2].cash = 600;
+    updateAreaStockPrices(g);
+    g.winnerId = 0;
+    g.phase = 'gameover';
+    g.turn = 12;
+
+    const results = buildGameResults(g);
+    assert.equal(results.winnerId, 0);
+    assert.equal(results.ranking.length, 3);
+    assert.equal(results.ranking[0].rank, 1);
+    assert.equal(results.ranking[0].id, 0);
+    assert.ok(results.ranking[0].assets.total > 0);
+    assert.ok(results.awards.length >= 3);
+    const titles = new Set(results.awards.map((a) => a.id));
+    assert.ok(titles.has('toll_king'));
+    assert.ok(titles.has('landlord') || titles.has('monopoly_king'));
+    assert.ok(titles.has('scratch_king'));
+
+    // 欠けた stats でも ensure / build できる
+    delete g.players[1].stats;
+    ensureStats(g.players[1]);
+    assert.equal(g.players[1].stats.rolls, 0);
+    const again = buildGameResults(g);
+    assert.equal(again.ranking.length, 3);
   });
 });

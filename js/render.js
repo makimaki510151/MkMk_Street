@@ -1,7 +1,7 @@
 /** MkMk Street — ボード描画 */
 
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { calcToll } from './engine.js';
+import { calcToll, hasAreaMonopoly, getPlayerAreaCount, getAreaShops, getTollMulti } from './engine.js';
 
 const TYPE_ICON = {
   bank: '銀',
@@ -32,6 +32,8 @@ export function createRenderer(canvas) {
     pulse: 0,
     /** @type {Record<number, {fromId:number,toId:number,start:number,dur:number}>} */
     moves: {},
+    /** @type {Record<number, {fromId:number,toId:number,start:number,dur:number,color?:string}>} */
+    warps: {},
     diceSpin: 0,
   };
   let raf = 0;
@@ -87,8 +89,56 @@ export function createRenderer(canvas) {
     };
   }
 
+  /** ワープ移動（高い弧＋ビーム）。どこへ飛んだかを見せる */
+  function animateWarp(playerId, fromId, toId, dur = 1200, color) {
+    delete anim.moves[playerId];
+    anim.warps[playerId] = {
+      fromId,
+      toId,
+      start: performance.now(),
+      dur,
+      color,
+    };
+  }
+
+  function warpProgress(wv) {
+    return Math.min(1, (performance.now() - wv.start) / wv.dur);
+  }
+
+  /** 0..1 → 飛行フェーズ（出発待機を除く） */
+  function warpFlyT(t) {
+    if (t < 0.12) return 0;
+    if (t > 0.88) return 1;
+    const u = (t - 0.12) / 0.76;
+    return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  }
+
+  function warpBezier(a, b, t, lift) {
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2 - lift;
+    const omt = 1 - t;
+    return {
+      x: omt * omt * a.x + 2 * omt * t * mx + t * t * b.x,
+      y: omt * omt * a.y + 2 * omt * t * my + t * t * b.y,
+    };
+  }
+
   function tokenDrawPos(g, p, stackIndex, stackCount) {
     const oxf = (stackIndex - (stackCount - 1) / 2) * layout.size * 0.22;
+    const wv = anim.warps[p.id];
+    if (wv) {
+      const t = warpProgress(wv);
+      const a = nodeCenter(g, wv.fromId);
+      const b = nodeCenter(g, wv.toId);
+      if (a && b) {
+        const lift = Math.max(layout.size * 1.8, Math.hypot(b.x - a.x, b.y - a.y) * 0.35);
+        const fly = warpFlyT(t);
+        const pt = warpBezier(a, b, fly, lift);
+        if (t >= 1) delete anim.warps[p.id];
+        const land = t > 0.88 ? Math.sin(((t - 0.88) / 0.12) * Math.PI) * layout.size * 0.08 : 0;
+        return { x: pt.x + oxf, y: pt.y + layout.size * 0.28 - land };
+      }
+    }
     const mv = anim.moves[p.id];
     if (mv) {
       const t = Math.min(1, (performance.now() - mv.start) / mv.dur);
@@ -104,6 +154,82 @@ export function createRenderer(canvas) {
     const c = nodeCenter(g, p.pos);
     if (!c) return null;
     return { x: c.x + oxf, y: c.y + layout.size * 0.28 };
+  }
+
+  function drawWarpEffects(g) {
+    const size = layout.size;
+    for (const pid of Object.keys(anim.warps)) {
+      const wv = anim.warps[pid];
+      const t = warpProgress(wv);
+      const a = nodeCenter(g, wv.fromId);
+      const b = nodeCenter(g, wv.toId);
+      if (!a || !b) continue;
+      const p = g.players.find((x) => x.id === Number(pid));
+      const col = wv.color || p?.color || '#c4a574';
+      const lift = Math.max(size * 1.8, Math.hypot(b.x - a.x, b.y - a.y) * 0.35);
+      const fly = warpFlyT(t);
+
+      // 出発・到着マスの枠
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = t < 0.35 ? 0.85 : Math.max(0.2, 1 - t);
+      roundRect(ctx, a.x - size * 0.42, a.y - size * 0.42, size * 0.84, size * 0.84, 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.35 + Math.min(1, t * 1.4) * 0.55;
+      const pulse = 1 + Math.sin(t * Math.PI * 3) * 0.04;
+      roundRect(
+        ctx,
+        b.x - size * 0.42 * pulse,
+        b.y - size * 0.42 * pulse,
+        size * 0.84 * pulse,
+        size * 0.84 * pulse,
+        2,
+      );
+      ctx.stroke();
+      ctx.restore();
+
+      // 軌道ビーム
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 7]);
+      ctx.lineDashOffset = -t * 40;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo((a.x + b.x) / 2, (a.y + b.y) / 2 - lift, b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 進行点の残像
+      for (let i = 0; i < 5; i++) {
+        const u = Math.max(0, fly - i * 0.06);
+        const pt = warpBezier(a, b, u, lift);
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3 + (4 - i) * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.15 + (4 - i) * 0.1;
+        ctx.fill();
+      }
+
+      // 到着ラベル
+      if (t > 0.2) {
+        const dest = g.map.find((n) => n.id === wv.toId);
+        const label = (dest?.label || dest?.type || '？').slice(0, 6);
+        ctx.globalAlpha = Math.min(1, (t - 0.2) / 0.25);
+        ctx.fillStyle = 'rgba(20, 24, 28, 0.82)';
+        const tw = Math.max(size * 0.9, label.length * size * 0.22);
+        roundRect(ctx, b.x - tw / 2, b.y - size * 0.72, tw, size * 0.28, 2);
+        ctx.fill();
+        ctx.fillStyle = '#e8e4dc';
+        ctx.font = `700 ${Math.max(10, size * 0.18)}px "Zen Kaku Gothic New", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, b.x, b.y - size * 0.58);
+      }
+      ctx.restore();
+    }
   }
 
   function draw(g) {
@@ -310,32 +436,39 @@ export function createRenderer(canvas) {
       }
     }
 
+    drawWarpEffects(g);
+
     // コマ
     const byPos = {};
     g.players.forEach((p) => {
       if (p.bankrupt) return;
-      if (!byPos[p.pos]) byPos[p.pos] = [];
-      byPos[p.pos].push(p);
+      const key = anim.warps[p.id] ? anim.warps[p.id].fromId : p.pos;
+      if (!byPos[key]) byPos[key] = [];
+      byPos[key].push(p);
     });
 
     for (const p of g.players) {
       if (p.bankrupt) continue;
-      const list = byPos[p.pos] || [p];
+      const key = anim.warps[p.id] ? anim.warps[p.id].fromId : p.pos;
+      const list = byPos[key] || [p];
       const idx = list.indexOf(p);
       const pos = tokenDrawPos(g, p, Math.max(0, idx), list.length);
       if (!pos) continue;
       const rad = layout.size * 0.16;
+      const warping = !!anim.warps[p.id];
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, rad, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, rad * (warping ? 1.08 : 1), 0, Math.PI * 2);
       ctx.fillStyle = p.color;
+      ctx.globalAlpha = warping ? 0.92 : 1;
       ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = warping ? 2.5 : 2;
       ctx.stroke();
-      if (g.currentPlayerIdx === p.id) {
+      if (g.currentPlayerIdx === p.id || warping) {
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, rad + 4 + Math.sin(anim.pulse) * 2, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,224,120,0.85)';
+        ctx.strokeStyle = warping ? p.color : 'rgba(255,224,120,0.85)';
         ctx.stroke();
       }
     }
@@ -402,7 +535,17 @@ export function createRenderer(canvas) {
     stockHighlightArea = null;
   }
 
-  return { resize, draw, startLoop, stop, hitTest, animateToken, setStockHighlight, clearStockHighlight };
+  return {
+    resize,
+    draw,
+    startLoop,
+    stop,
+    hitTest,
+    animateToken,
+    animateWarp,
+    setStockHighlight,
+    clearStockHighlight,
+  };
 }
 
 function fillShopPattern(ctx, x, y, w, h, r, meta) {
@@ -510,5 +653,17 @@ export function shopTooltip(g, sq) {
   const toll = calcToll(g, sq);
   const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
-  return `${ownTag} ${sq.label} / ${AREA_META[sq.area]?.name || ''} / 価格${sq.price}G / 料${toll}G${closed}`;
+  const areaName = AREA_META[sq.area]?.name || '';
+  let mono = '';
+  if (sq.owner >= 0) {
+    const areaSize = getAreaShops(g, sq.area).length;
+    const cnt = getPlayerAreaCount(g, sq.owner, sq.area);
+    const multi = getTollMulti(cnt, areaSize);
+    if (hasAreaMonopoly(g, sq.owner, sq.area)) {
+      mono = `／独占×${multi}`;
+    } else if (cnt > 1) {
+      mono = `／${cnt}/${areaSize}軒×${multi}`;
+    }
+  }
+  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price}G / 料${toll}G${mono}${closed}`;
 }
