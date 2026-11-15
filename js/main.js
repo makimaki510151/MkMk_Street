@@ -3810,7 +3810,7 @@ function showChoiceModal(g) {
         <p class="modal-lead"><strong>${escapeHtml(p?.name || '')}</strong></p>
         <p class="levelup-levels">Lv.${pend.from} → <strong>Lv.${pend.to}</strong></p>
         <p class="levelup-bonus">Lv.${pend.to} 昇進賞金 <strong>+${Number(pend.bonus || 0).toLocaleString()}G</strong></p>
-        <p class="hint">賞金は昇進後レベルが高いほど増えます</p>
+        <p class="hint">賞金はレベルごとに全員同じ額です（高いほど増えます）</p>
       </div>
       <div class="modal-actions">
         <button class="btn primary large" id="m-levelup">お祝いする</button>

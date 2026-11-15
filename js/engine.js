@@ -741,17 +741,13 @@ export function getLiquidatableValue(g, p) {
 }
 
 /**
- * マーク揃え昇進の賞金。
+ * マーク揃え昇進の賞金（レベルのみ。誰が取っても同額）。
  * @param {number|null} [toLevel] 昇進後レベル（省略時は現在レベル基準＝イベント用）
  */
-export function getLevelBonus(g, p, toLevel = null) {
-  const lv = Math.max(1, Number(toLevel != null ? toLevel : p.level) || 1);
-  // 昇進先が高いほど厚い（Lv2:700 / Lv3:950 / Lv4:1200 …）+ 所持店価の10%
-  const base = 200 + 250 * lv;
-  const shopTotal = g.map
-    .filter((s) => s.type === 'shop' && s.owner === p.id)
-    .reduce((s, sq) => s + sq.price, 0);
-  return Math.floor(base + shopTotal * 0.1);
+export function getLevelBonus(_g, p, toLevel = null) {
+  const lv = Math.max(1, Number(toLevel != null ? toLevel : p?.level) || 1);
+  // 昇進先が高いほど厚い（Lv2:700 / Lv3:950 / Lv4:1200 …）
+  return 200 + 250 * lv;
 }
 
 export function hasFullMarks(p) {
