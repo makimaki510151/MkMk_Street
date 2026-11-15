@@ -1242,9 +1242,48 @@ describe('MkMk Street engine', () => {
     const r = applyChoice(g, { action: 'spin' });
     assert.equal(r.ok, true);
     assert.equal(r.reveal.game, 'slot');
-    assert.equal(r.reveal.outcome.symbols.length, 3);
-    assert.ok(['jackpot', 'pair', 'miss'].includes(r.reveal.tier));
+    assert.equal(r.reveal.outcome.symbols.length, 5);
+    assert.ok(Array.isArray(r.reveal.outcome.hitIndices));
+    assert.ok(
+      ['jackpot', 'quad', 'fullhouse', 'triple', 'two_pair', 'pair', 'miss'].includes(r.reveal.tier)
+    );
     assert.ok(r.reveal.detail);
+  });
+
+  it('5-reel slot pays jackpot / quad / pair tiers with adjusted prizes', () => {
+    const SLOT_TIERS = ['jackpot', 'quad', 'fullhouse', 'triple', 'two_pair', 'pair', 'miss'];
+    const seen = new Set();
+    for (let seed = 1; seed <= 400 && seen.size < SLOT_TIERS.length; seed++) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed,
+        cash: 1000,
+      });
+      g.phase = 'await_choice';
+      g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+      const before = g.players[0].cash;
+      const r = applyChoice(g, { action: 'spin' });
+      assert.equal(r.ok, true);
+      assert.equal(r.reveal.outcome.symbols.length, 5);
+      assert.ok(SLOT_TIERS.includes(r.reveal.tier));
+      seen.add(r.reveal.tier);
+      const prize = g.players[0].cash - before;
+      if (r.reveal.tier === 'jackpot') {
+        assert.ok(prize >= 900);
+        assert.equal(r.reveal.win, true);
+      } else if (r.reveal.tier === 'quad') {
+        assert.ok(prize >= 420);
+        assert.equal(r.reveal.win, true);
+      } else if (r.reveal.tier === 'pair') {
+        assert.ok(prize >= 45);
+        assert.equal(r.reveal.win, true);
+      } else if (r.reveal.tier === 'miss') {
+        assert.equal(r.reveal.win, false);
+        // 参加賞のみ（自分も受け取る）
+        assert.ok(prize >= 22);
+      }
+    }
+    assert.ok(seen.has('pair') || seen.has('two_pair') || seen.has('triple'));
   });
 
   it('scratch all_cash / minigame catalog entries apply correctly', () => {

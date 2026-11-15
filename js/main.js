@@ -2211,11 +2211,16 @@ async function playMinigameReveal(reveal) {
   detail.textContent = reveal.detail || (reveal.messages || []).join(' / ');
   overlay.classList.add('show-result');
 
-  if (reveal.tier === 'jackpot' || reveal.tier === 'exact') audio.sfx.slotWin(true);
-  else if (reveal.win) audio.sfx.slotWin(false);
-  else audio.sfx.buy();
+  if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
+    audio.sfx.slotWin(true);
+  } else if (reveal.win) {
+    audio.sfx.slotWin(false);
+  } else {
+    audio.sfx.buy();
+  }
 
-  await wait(reveal.tier === 'jackpot' ? 1600 : 1100);
+  const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'fullhouse';
+  await wait(bigHold ? 1600 : 1100);
   overlay.hidden = true;
   overlay.classList.remove('show-result');
   body.innerHTML = '';
@@ -2223,10 +2228,13 @@ async function playMinigameReveal(reveal) {
 }
 
 async function animateSlotReveal(body, reveal) {
-  const finals = reveal.outcome?.symbols || ['★', '♪', 'G'];
+  const finals = reveal.outcome?.symbols || ['★', '♪', 'G', '♦', '♣'];
+  const reelCount = finals.length || 5;
   body.innerHTML = `
-    <div class="mg-slot">
-      ${[0, 1, 2].map((i) => `<div class="mg-reel spinning" data-i="${i}"><span>${SLOT_SYMS[i]}</span></div>`).join('')}
+    <div class="mg-slot mg-slot-5">
+      ${Array.from({ length: reelCount }, (_, i) => (
+        `<div class="mg-reel spinning" data-i="${i}"><span>${SLOT_SYMS[i % SLOT_SYMS.length]}</span></div>`
+      )).join('')}
     </div>`;
   const reels = [...body.querySelectorAll('.mg-reel')];
   const spans = reels.map((r) => r.querySelector('span'));
@@ -2243,9 +2251,9 @@ async function animateSlotReveal(body, reveal) {
     }
   })();
 
-  await wait(500);
-  for (let i = 0; i < 3; i++) {
-    await wait(380 + i * 120);
+  await wait(420);
+  for (let i = 0; i < reelCount; i++) {
+    await wait(280 + i * 90);
     reels[i].classList.remove('spinning');
     reels[i].classList.add('stopped');
     spans[i].textContent = finals[i];
@@ -2254,13 +2262,20 @@ async function animateSlotReveal(body, reveal) {
   spinning = false;
   await spinLoop;
 
-  const [a, b, c] = finals;
-  if (a === b && b === c) reels.forEach((r) => r.classList.add('hit'));
-  else {
-    if (a === b) { reels[0].classList.add('hit'); reels[1].classList.add('hit'); }
-    if (b === c) { reels[1].classList.add('hit'); reels[2].classList.add('hit'); }
-    if (a === c && a !== b) { reels[0].classList.add('hit'); reels[2].classList.add('hit'); }
-  }
+  const hitSet = new Set(
+    Array.isArray(reveal.outcome?.hitIndices)
+      ? reveal.outcome.hitIndices
+      : (() => {
+          const counts = new Map();
+          for (const s of finals) counts.set(s, (counts.get(s) || 0) + 1);
+          return finals
+            .map((s, i) => ((counts.get(s) || 0) >= 2 ? i : -1))
+            .filter((i) => i >= 0);
+        })()
+  );
+  hitSet.forEach((i) => {
+    if (reels[i]) reels[i].classList.add('hit');
+  });
   await wait(350);
 }
 
