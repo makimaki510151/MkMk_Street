@@ -15,6 +15,7 @@ import {
   getPlayerAssets,
   buildGameResults,
   createEmptyStats,
+  ensureStats,
   updateAreaStockPrices,
   getLiquidatableValue,
   calcToll,
@@ -1081,6 +1082,11 @@ function seedResultsDemo(g) {
   }
 
   updateAreaStockPrices(g);
+  // 株価更新後にデモ用リターンを上書き（価格変動分で上書きされないように）
+  const demoReturns = [640, 1280, -180, -90];
+  g.players.forEach((p, i) => {
+    ensureStats(p).stockReturn = demoReturns[i] ?? 0;
+  });
 
   // 本家風グラフ用の仮推移
   const startCash = 2000;
