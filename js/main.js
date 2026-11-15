@@ -1212,26 +1212,7 @@ function enterGame() {
   app.renderer.resize();
   window.addEventListener('resize', () => app.renderer?.resize());
   app.renderer.startLoop(() => app.game);
-  canvas.onclick = (e) => {
-    if (!app.game) return;
-    const hit = app.renderer.hitTest(app.game, e.clientX, e.clientY);
-    if (!hit) return;
-
-    // マス情報は演出中でも常に更新
-    app.inspectedId = hit.id;
-    updateInspectPanel();
-
-    if (app.busy) return;
-
-    if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
-      const mine = app.mode === 'local'
-        ? !app.game.players[app.game.pending.playerId]?.isCPU
-        : app.game.pending.playerId === app.localSeat;
-      if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
-        sendAction({ type: 'choice', choice: { nextId: hit.id } });
-      }
-    }
-  };
+  bindBoardZoomControls(canvas);
   bindGameControls();
   bindModalTools();
   bindModalDrag();
@@ -1486,6 +1467,98 @@ function renderForkRails(pend) {
       sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
     };
   });
+}
+
+/** マップ拡大縮小・ドラッグパン・ホイールズーム */
+function bindBoardZoomControls(canvas) {
+  const syncZoomButtons = () => {
+    const z = app.renderer?.getZoom?.() ?? 1;
+    const out = $('#btn-zoom-out');
+    const inn = $('#btn-zoom-in');
+    if (out) out.disabled = z <= (app.renderer?.ZOOM_MIN ?? 0.65) + 0.001;
+    if (inn) inn.disabled = z >= (app.renderer?.ZOOM_MAX ?? 2.5) - 0.001;
+  };
+
+  $('#btn-zoom-in')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    app.renderer?.zoomIn();
+    syncZoomButtons();
+  });
+  $('#btn-zoom-out')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    app.renderer?.zoomOut();
+    syncZoomButtons();
+  });
+  $('#btn-zoom-fit')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    app.renderer?.zoomFit();
+    syncZoomButtons();
+  });
+
+  canvas.addEventListener('wheel', (e) => {
+    if (!app.renderer) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const ax = e.clientX - rect.left;
+    const ay = e.clientY - rect.top;
+    if (e.deltaY < 0) app.renderer.zoomIn(ax, ay);
+    else app.renderer.zoomOut(ax, ay);
+    syncZoomButtons();
+  }, { passive: false });
+
+  let pan = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !app.renderer) return;
+    pan = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+      canPan: (app.renderer.getZoom?.() || 1) > 1.001,
+    };
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pan || e.pointerId !== pan.id || !app.renderer) return;
+    const dx = e.clientX - pan.x;
+    const dy = e.clientY - pan.y;
+    if (!pan.moved && Math.hypot(dx, dy) < 6) return;
+    if (!pan.canPan) {
+      pan.moved = true;
+      return;
+    }
+    pan.moved = true;
+    canvas.classList.add('is-panning');
+    app.renderer.panBy(dx, dy);
+    pan.x = e.clientX;
+    pan.y = e.clientY;
+  });
+  const endPan = (e) => {
+    if (!pan || (e && e.pointerId !== pan.id)) return;
+    const wasClick = !pan.moved;
+    const clientX = e?.clientX ?? pan.x;
+    const clientY = e?.clientY ?? pan.y;
+    canvas.classList.remove('is-panning');
+    try { canvas.releasePointerCapture(pan.id); } catch { /* ignore */ }
+    pan = null;
+    if (!wasClick || !app.game || !app.renderer) return;
+    const hit = app.renderer.hitTest(app.game, clientX, clientY);
+    if (!hit) return;
+    app.inspectedId = hit.id;
+    updateInspectPanel();
+    if (app.busy) return;
+    if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
+      const mine = app.mode === 'local'
+        ? !app.game.players[app.game.pending.playerId]?.isCPU
+        : app.game.pending.playerId === app.localSeat;
+      if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
+        sendAction({ type: 'choice', choice: { nextId: hit.id } });
+      }
+    }
+  };
+  canvas.addEventListener('pointerup', endPan);
+  canvas.addEventListener('pointercancel', endPan);
+  syncZoomButtons();
 }
 
 /** ゲストが局所解放したとき、ホスト側の残留告知も捨てさせる */
