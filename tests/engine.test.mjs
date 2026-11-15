@@ -43,6 +43,9 @@ import {
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
   getLevelBonus,
+  cpuCashReserve,
+  cpuCanAffordSpend,
+  cpuEstimateMaxToll,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
 import {
@@ -1264,6 +1267,83 @@ describe('MkMk Street engine', () => {
     const tycoonSpend = mk('tycoon');
     assert.ok(brokerSpend > 0, 'broker buys stock');
     assert.ok(brokerSpend >= tycoonSpend, 'broker spends at least as much as tycoon on stocks');
+  });
+
+  it('CPU keeps a cash reserve and will not spend below it on stocks', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 44,
+      cash: 900,
+    });
+    // 高額通行料がある盤面を想定してクッションを上げる
+    const enemyShop = g.map.find((n) => n.type === 'shop');
+    enemyShop.owner = 0;
+    enemyShop.extraInvest = enemyShop.basePrice * 3;
+    enemyShop.price = enemyShop.basePrice + enemyShop.extraInvest;
+    g.players[0].cash = 5000;
+    const reserve = cpuCashReserve(g, g.players[1]);
+    assert.ok(reserve >= 400);
+    assert.ok(cpuEstimateMaxToll(g, g.players[1]) >= calcToll(g, enemyShop));
+
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 1, bankVisit: true, maxBuys: 1 };
+    const before = g.players[1].cash;
+    cpuAct(g);
+    assert.ok(g.players[1].cash >= Math.min(before, reserve) - 1, 'cash stays near reserve');
+    assert.ok(g.players[1].cash >= reserve * 0.95 || g.players[1].cash === before);
+  });
+
+  it('CPU cancels optional raise_funds instead of going bankrupt', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 55,
+      cash: 50,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    g.currentPlayerIdx = 1;
+    g.players[1].cash = 50;
+    g.players[1].stocks = {};
+    // 店も株も無いので購入資金を作れない
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'raise_funds',
+      playerId: 1,
+      targetCash: 500,
+      reason: 'buy_shop',
+      resume: { type: 'buy_shop', shopId: shop.id, price: 500 },
+    };
+    const r = cpuAct(g);
+    assert.equal(r?.ok, true);
+    assert.equal(g.players[1].bankrupt, false, 'must not bankrupt on failed optional buy');
+    assert.equal(g.phase === 'await_choice' && g.pending?.type === 'raise_funds', false);
+  });
+
+  it('CPU invests only within cash reserve', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 66,
+      cash: 800,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    shop.extraInvest = 0;
+    shop.price = shop.basePrice;
+    g.currentPlayerIdx = 1;
+    g.players[1].cash = 800;
+    const reserve = cpuCashReserve(g, g.players[1]);
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'invest',
+      playerId: 1,
+      shopId: shop.id,
+      landedShopId: shop.id,
+      shopIds: [shop.id],
+      remaining: getRemainingInvest(g, shop),
+    };
+    cpuAct(g);
+    assert.ok(g.players[1].cash >= reserve - 1, `cash ${g.players[1].cash} reserve ${reserve}`);
+    assert.equal(cpuCanAffordSpend(g, g.players[1], 0), true);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
