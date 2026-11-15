@@ -235,6 +235,31 @@ button:disabled { opacity: .42; cursor: default; }
 #net-status[data-kind="ok"] { color: var(--ok); }
 #net-status[data-kind="error"] { color: var(--danger); }
 #net-status[data-kind="warn"] { color: var(--accent); }
+.reconnect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(8, 10, 16, 0.72);
+  backdrop-filter: blur(4px);
+}
+.reconnect-overlay[hidden] { display: none !important; }
+.reconnect-card {
+  width: min(420px, 94vw);
+  padding: 1.15rem 1.2rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: linear-gradient(165deg, rgba(28, 32, 44, 0.98), rgba(16, 18, 26, 0.98));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.reconnect-card h3 {
+  margin: 0 0 0.45rem;
+  font-family: var(--display);
+  font-size: 1.25rem;
+}
+.reconnect-card .hint { margin: 0 0 0.9rem; }
 .howto ol { padding-left: 1.15rem; display: grid; gap: 0.5rem; color: var(--muted); line-height: 1.5; }
 .howto strong { color: var(--ink); }
 .hint { font-size: 0.78rem; color: var(--muted); }

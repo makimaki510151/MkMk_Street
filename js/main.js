@@ -137,6 +137,7 @@ function readRejoinSession(roomCode) {
     const raw = sessionStorage.getItem('mkmk_rejoin');
     if (!raw) return null;
     const j = JSON.parse(raw);
+    if (!roomCode) return j;
     if (j?.room === roomCode) return j;
   } catch (_) { /* ignore */ }
   return null;
@@ -251,22 +252,174 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-function showHostReconnectPrompt() {
-  const rejoin = readRejoinSession(app.net?.roomCode || '');
-  const room = app.net?.roomCode || rejoin?.room || '';
-  const name = app.localName || rejoin?.name || '';
+function hideReconnectOverlay() {
+  const el = $('#reconnect-overlay');
+  if (el) el.hidden = true;
+}
+
+/** ゲスト切断時：ゲーム画面を残したまま再接続を促す */
+function showGuestReconnectOverlay({ room, name, detail } = {}) {
+  const overlay = $('#reconnect-overlay');
+  if (!overlay) {
+    // フォールバック：タイトルへ誘導
+    const joinBtn = $('#btn-join');
+    if (joinBtn && room) {
+      joinBtn.dataset.prefillRoom = room;
+      joinBtn.dataset.prefillName = name || '';
+    }
+    toast(room ? `部屋 ${room} に同じ名前で再接続できます` : 'タイトルから再接続してください');
+    showScreen('screen-title');
+    return;
+  }
+  const title = $('#reconnect-title');
+  const detailEl = $('#reconnect-detail');
+  if (title) title.textContent = '接続が切れました';
+  if (detailEl) {
+    detailEl.textContent = detail
+      || (room
+        ? `部屋 ${room} に「${name || '同じ名前'}」で再接続できます。`
+        : '同じ部屋コード・同じ名前で再接続できます。');
+  }
+  overlay.hidden = false;
+
+  const btnNow = $('#btn-reconnect-now');
+  const btnTitle = $('#btn-reconnect-title');
+  if (btnNow) {
+    btnNow.disabled = false;
+    btnNow.textContent = '再接続';
+    btnNow.onclick = async () => {
+      audio.sfx.click();
+      btnNow.disabled = true;
+      btnNow.textContent = '再接続中…';
+      const ok = await attemptGuestReconnect({ room, name });
+      btnNow.disabled = false;
+      btnNow.textContent = '再接続';
+      if (ok) hideReconnectOverlay();
+    };
+  }
+  if (btnTitle) {
+    btnTitle.onclick = () => {
+      audio.sfx.click();
+      hideReconnectOverlay();
+      abandonGuestSessionToTitle({ room, name });
+    };
+  }
+}
+
+function abandonGuestSessionToTitle({ room, name } = {}) {
   app.net?.destroy();
   app.net = null;
   app.game = null;
   clearAllDisconnectTimers();
-  showScreen('screen-title');
-  // タイトルから再参加しやすく部屋コードを渡す
   const joinBtn = $('#btn-join');
   if (joinBtn && room) {
     joinBtn.dataset.prefillRoom = room;
-    joinBtn.dataset.prefillName = name;
+    joinBtn.dataset.prefillName = name || '';
   }
+  showScreen('screen-title');
   toast(room ? `部屋 ${room} に同じ名前で再接続できます` : 'タイトルから再接続してください');
+}
+
+/**
+ * ゲストの再接続を試みる。成功時 true。
+ * 既存 net があれば reconnect()、なければ同じ部屋で新規接続。
+ */
+async function attemptGuestReconnect({ room, name } = {}) {
+  const roomCode = (room || app.net?.roomCode || readRejoinSession('')?.room || '').toUpperCase();
+  const nm = (name || app.localName || '').trim() || 'プレイヤー';
+  if (!roomCode || roomCode.length < 4) {
+    toast('部屋コードがありません');
+    return false;
+  }
+  app.localName = nm;
+  app.mode = 'guest';
+  try {
+    let info;
+    if (app.net && app.net.role === 'guest' && app.net.roomCode === roomCode) {
+      info = await app.net.reconnect();
+    } else {
+      app.net?.destroy();
+      app.net = createNet({
+        role: 'guest',
+        roomCode,
+        onStatus: ({ msg, kind }) => setStatus(msg, kind),
+        onEvent: handleNetEvent,
+      });
+      info = await app.net.start();
+    }
+    const rejoin = readRejoinSession(roomCode);
+    const sent = app.net.sendToHost({
+      type: 'hello',
+      name: nm,
+      peerId: info.peerId,
+      rejoinSeat: rejoin?.seat ?? app.localSeat,
+    });
+    if (!sent) throw new Error('ホストへ送れませんでした');
+    toast('再接続を要求しました…');
+    return true;
+  } catch (e) {
+    setStatus(e.message || String(e), 'error');
+    toast('再接続に失敗しました');
+    return false;
+  }
+}
+
+function showHostReconnectPrompt() {
+  const rejoin = readRejoinSession(app.net?.roomCode || '');
+  const room = app.net?.roomCode || rejoin?.room || '';
+  const name = app.localName || rejoin?.name || '';
+  // ゲーム中：画面を残して再接続 UI
+  if (app.game && app.mode === 'guest') {
+    showGuestReconnectOverlay({ room, name });
+    return;
+  }
+  // ロビー：ネットを残し「再接続」を出す
+  if (app.mode === 'guest' && !app.game) {
+    syncLobbyRoomControls({ roomOpen: true });
+    setStatus(
+      room
+        ? `接続が切れました。部屋 ${room} へ「再接続」できます`
+        : '接続が切れました。「再接続」または「接続」でもう一度',
+      'error',
+    );
+    toast('接続が切れました。再接続できます');
+    return;
+  }
+  abandonGuestSessionToTitle({ room, name });
+}
+
+/** ホストのロビー：部屋作成／解体ボタンの表示を同期 */
+function syncLobbyRoomControls({ roomOpen }) {
+  const connect = $('#btn-lobby-connect');
+  const dismantle = $('#btn-lobby-dismantle');
+  const reconnect = $('#btn-lobby-reconnect');
+  const role = app.mode;
+  if (role === 'host') {
+    if (connect) {
+      connect.textContent = '部屋作成';
+      connect.hidden = !!roomOpen;
+    }
+    if (dismantle) dismantle.hidden = !roomOpen;
+    if (reconnect) reconnect.hidden = true;
+  } else {
+    if (connect) {
+      connect.textContent = '接続';
+      connect.hidden = false;
+    }
+    if (dismantle) dismantle.hidden = true;
+    if (reconnect) reconnect.hidden = !roomOpen;
+  }
+}
+
+function dismantleHostRoom() {
+  app.net?.destroy();
+  app.net = null;
+  app.lobbyPlayers = [];
+  $('#lobby-players').innerHTML = '';
+  $('#lobby-code-display').textContent = '------';
+  syncLobbyRoomControls({ roomOpen: false });
+  setStatus('部屋を解体しました。「部屋作成」で新しい部屋を開けます', 'info');
+  toast('部屋を解体しました');
 }
 
 function bindVolumeUI() {
@@ -420,6 +573,13 @@ function readSeatEditors() {
 }
 
 async function openLobby(role, prefill = {}) {
+  hideReconnectOverlay();
+  // 既存ネットはロビー入室時にクリア（建て直しは解体ボタン経由）
+  if (app.net) {
+    app.net.destroy();
+    app.net = null;
+  }
+  app.lobbyPlayers = [];
   app.mode = role;
   showScreen('screen-lobby');
   $('#lobby-role').textContent = role === 'host' ? 'ホスト（部屋を作る）' : 'ゲスト（部屋に入る）';
@@ -429,6 +589,7 @@ async function openLobby(role, prefill = {}) {
   $('#btn-add-cpu').hidden = role !== 'host';
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
+  syncLobbyRoomControls({ roomOpen: false });
   if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal');
   if (prefill.name) $('#lobby-name').value = prefill.name;
   if (prefill.room && role === 'guest') {
@@ -439,21 +600,63 @@ async function openLobby(role, prefill = {}) {
   if (role === 'guest' && rejoin?.name && !$('#lobby-name').value.trim()) {
     $('#lobby-name').value = rejoin.name;
   }
-  setStatus(role === 'host' ? '「接続」で部屋を開きます' : '部屋コードを入れて「接続」（切断後は同じ名前で再接続）');
+  setStatus(
+    role === 'host'
+      ? '「部屋作成」で部屋を開きます。建て直すときは先に「部屋を解体」してください'
+      : '部屋コードを入れて「接続」。切断後は「再接続」か同じ名前でもう一度接続',
+  );
 
   $('#btn-lobby-back').onclick = () => {
     app.net?.destroy();
     app.net = null;
+    app.lobbyPlayers = [];
+    syncLobbyRoomControls({ roomOpen: false });
     showScreen('screen-title');
+  };
+
+  $('#btn-lobby-dismantle').onclick = () => {
+    audio.sfx.click();
+    if (role !== 'host') return;
+    if (!app.net) {
+      toast('開いている部屋がありません');
+      return;
+    }
+    if (app.game) {
+      toast('ゲーム中はロビーから解体できません');
+      return;
+    }
+    dismantleHostRoom();
+  };
+
+  $('#btn-lobby-reconnect').onclick = async () => {
+    audio.sfx.click();
+    if (role !== 'guest') return;
+    const name = $('#lobby-name').value.trim() || 'プレイヤー';
+    const roomInput = $('#lobby-room').value.trim().toUpperCase();
+    if (roomInput.length < 4) return toast('部屋コードを入力してください');
+    const ok = await attemptGuestReconnect({ room: roomInput, name });
+    if (ok) syncLobbyRoomControls({ roomOpen: true });
   };
 
   $('#btn-lobby-connect').onclick = async () => {
     try {
+      if (role === 'host' && app.net) {
+        toast('先に「部屋を解体」してから新しい部屋を作成してください');
+        return;
+      }
       const name = $('#lobby-name').value.trim() || 'プレイヤー';
       app.localName = name;
       const roomInput = $('#lobby-room').value.trim().toUpperCase();
       if (role === 'guest' && roomInput.length < 4) return toast('部屋コードを入力してください');
 
+      // ゲストの再接続（既存接続がある／切断後）は張り直し
+      if (role === 'guest' && app.net?.roomCode === roomInput) {
+        const ok = await attemptGuestReconnect({ room: roomInput, name });
+        if (ok) syncLobbyRoomControls({ roomOpen: true });
+        return;
+      }
+
+      app.net?.destroy();
       app.net = createNet({
         role,
         roomCode: role === 'guest' ? roomInput : undefined,
@@ -462,27 +665,33 @@ async function openLobby(role, prefill = {}) {
       });
       const info = await app.net.start();
       $('#lobby-code-display').textContent = info.roomCode;
+      syncLobbyRoomControls({ roomOpen: true });
       if (role === 'host') {
         app.lobbyPlayers = [{ peerId: info.peerId, name, color: PLAYER_COLORS[0], isHost: true }];
         renderLobbyPlayers();
         app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        setStatus(`部屋 ${info.roomCode} を公開中。建て直すときは「部屋を解体」`, 'ok');
       } else {
-        const rejoin = readRejoinSession(roomInput);
+        const rejoinSeat = readRejoinSession(roomInput);
         app.net.sendToHost({
           type: 'hello',
           name,
           peerId: info.peerId,
-          rejoinSeat: rejoin?.seat,
+          rejoinSeat: rejoinSeat?.seat,
         });
       }
     } catch (e) {
+      app.net?.destroy();
+      app.net = null;
+      syncLobbyRoomControls({ roomOpen: false });
       setStatus(e.message || String(e), 'error');
-      toast('接続に失敗しました');
+      toast(role === 'host' ? '部屋作成に失敗しました' : '接続に失敗しました');
     }
   };
 
   $('#btn-lobby-start').onclick = () => {
     if (app.mode !== 'host') return;
+    if (!app.net) return toast('先に「部屋作成」してください');
     if (app.lobbyPlayers.length < 2) return toast('あと1人以上待ってください（またはCPUを追加）');
     const goal = Number($('#lobby-goal').value) || 10000;
     const mapId = selectedMapId('#lobby-map-options');
@@ -500,6 +709,7 @@ async function openLobby(role, prefill = {}) {
   };
 
   $('#btn-add-cpu').onclick = () => {
+    if (!app.net) return toast('先に「部屋作成」してください');
     if (app.lobbyPlayers.length >= 4) return toast('最大4人です');
     const i = app.lobbyPlayers.length;
     app.lobbyPlayers.push({
@@ -636,6 +846,7 @@ function handleNetEvent({ from, data }) {
       return;
     }
     if (data.type === 'game_start' || data.type === 'game_rejoin') {
+      hideReconnectOverlay();
       app.game = restoreState(data.state);
       const myPeer = app.net.peerId;
       if (data.type === 'game_rejoin' && typeof data.seat === 'number') {

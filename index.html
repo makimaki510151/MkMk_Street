@@ -35,7 +35,7 @@
         <li>銀行・証券で<strong>エリア株</strong>を買えます。そのエリアで買い物料が発生すると、保有株に応じて<strong>わけ前</strong>（銀行から）が入ります。</li>
         <li>四隅の♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり止まる</strong>か<strong>スクラッチマス</strong>に止まると、1〜200番イベント表を1マス削れます。縦横斜めに同じ色が<strong>隣接して</strong>3つ以上そろうとセルが回り、<strong>そろった枚数×50G</strong>がその色のプレイヤーへ（とびとびは無効）。</li>
         <li>マークを集めて銀行に戻ると<strong>昇進 → 株1種類（持ち金の限り）→ 進む方向</strong>の順。昇進賞金は<strong>レベルごとに全員同額</strong>（高いほど増加）です。スクラッチやチャンスにもレベル連動の報酬があります。<strong>増資半額</strong>所持中は画面上部とプレイヤー欄に表示されます。マップは<strong>中央クロス／貝がら港</strong>（スイッチで経路変化）／<strong>がけした島</strong>（ワープで離れ小島へ）から選べます。右側の<strong>手番／所持／記録</strong>どのタブでもサイコロを振れます。総資産が<strong>目標に達したプレイヤーがいるとBGMが変わり</strong>エンドゲーム感が出ます。総資産が目標以上なら<strong>銀行に止まる／通過する</strong>と勝利し、<strong>順位・統計・アワード</strong>が表示されます。</li>
-        <li>オンラインはホストが部屋コードを共有。ゲストはそのコードで参加します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。ホストは切断プレイヤーを<strong>CPU化／キック</strong>でき、一定時間で自動CPU化します。</li>
+        <li>オンラインはホストが<strong>部屋作成</strong>で部屋コードを共有し、ゲストはコードで入ります。部屋を建て直すときは先に<strong>部屋を解体</strong>します。通信が切れても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。ホストは切断プレイヤーを<strong>CPU化／キック</strong>でき、一定時間で自動CPU化します。</li>
         <li>イベント表スクラッチは<strong>全員共通</strong>。開けた人の色で塗られ、同じ色が<strong>隣り合って</strong>そろえばボーナス。<strong>ラッキー</strong>は他者の買い物料の20%を銀行から受け取れます（次の自分の番まで）。相手の<strong>エリア独占</strong>を崩す打開イベント（店奪取・独占税・3倍買いクーポン等）もあります。東は<strong>サイコロ</strong>、南は<strong>スロット</strong>のミニゲームマスです。CPUには<strong>店舗王／株マニア／独占屋／勝負師</strong>の個性があります。</li>
         <li>選択は必要時に表示。「隠す」で一時退避。分岐は盤の端。出来事は盤面中央に表示され、<strong>手番プレイヤーがつづけるまでゲームは止まります</strong>（NPC手番はNPCが確認して進みます）。左上のフィードでもさかのぼれます。盤面右下の<strong>＋／−／全体</strong>やマウスホイールでマップを拡大縮小でき、拡大中はドラッグで移動できます。</li>
       </ol>
@@ -96,11 +96,25 @@
       <div id="lobby-players"></div>
       <div class="row-actions">
         <button class="btn" id="btn-lobby-back">戻る</button>
-        <button class="btn primary" id="btn-lobby-connect">接続</button>
+        <button class="btn primary" id="btn-lobby-connect">部屋作成</button>
+        <button class="btn danger ghost" id="btn-lobby-dismantle" hidden>部屋を解体</button>
+        <button class="btn" id="btn-lobby-reconnect" hidden>再接続</button>
         <button class="btn primary" id="btn-lobby-start">ゲーム開始</button>
       </div>
     </div>
   </section>
+
+  <!-- 切断時の再接続オーバーレイ（ゲスト） -->
+  <div id="reconnect-overlay" class="reconnect-overlay" hidden>
+    <div class="reconnect-card">
+      <h3 id="reconnect-title">接続が切れました</h3>
+      <p id="reconnect-detail" class="hint">同じ部屋コード・同じ名前で再接続できます。</p>
+      <div class="row-actions">
+        <button class="btn" id="btn-reconnect-title">タイトルへ</button>
+        <button class="btn primary" id="btn-reconnect-now">再接続</button>
+      </div>
+    </div>
+  </div>
 
   <!-- GAME -->
   <section id="screen-game" class="screen">
