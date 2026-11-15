@@ -412,11 +412,22 @@ export function createRenderer(canvas) {
           ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.95)';
           ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 + size * 0.16);
         } else {
-          ctx.font = `700 ${Math.max(9, size * 0.2)}px "Zen Maru Gothic", sans-serif`;
-          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.02);
-          ctx.font = `600 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
-          ctx.fillStyle = 'rgba(255,255,255,0.92)';
-          ctx.fillText(`${n.price}G`, x + size / 2, y + size / 2 + size * 0.24);
+          ctx.font = `700 ${Math.max(9, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.14);
+          ctx.font = `800 ${Math.max(8, size * 0.15)}px "Zen Maru Gothic", sans-serif`;
+          if (n.owner >= 0) {
+            // 所有店は「止まると払う料」を主表示（価格より重要）
+            const closed = !!g.players[n.owner]?.shopsClosed;
+            const toll = calcToll(g, n);
+            ctx.fillStyle = closed ? 'rgba(255, 196, 150, 0.95)' : '#ffc2b4';
+            ctx.fillText(closed ? '店休・料0' : `料${toll.toLocaleString()}`, x + size / 2, y + size / 2 + size * 0.12);
+            ctx.font = `600 ${Math.max(7, size * 0.12)}px "Zen Maru Gothic", sans-serif`;
+            ctx.fillStyle = 'rgba(255,255,255,0.72)';
+            ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.32);
+          } else {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.18);
+          }
         }
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
@@ -666,7 +677,7 @@ export function shopTooltip(g, sq) {
     }
   }
   const tollLabel = sq.owner >= 0
-    ? `買い物料 ${toll.toLocaleString()}G`
-    : '買い物料なし';
+    ? `止まると買い物料 ${toll.toLocaleString()}G`
+    : '空き店（買い物料なし）';
   return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}`;
 }
