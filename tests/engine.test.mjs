@@ -28,6 +28,9 @@ import {
   buildGameResults,
   createEmptyStats,
   ensureStats,
+  payAreaStockDividend,
+  STOCK_DIVIDEND_PER_SHARE,
+  STOCK_DIVIDEND_MAX_RATE,
   cpuAct,
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
@@ -150,6 +153,48 @@ describe('MkMk Street engine', () => {
     assert.ok(tollMax > toll1);
     assert.equal(hasAreaMonopoly(g, 0, area), true);
     assert.equal(getTollMulti(shops.length, shops.length), 5);
+  });
+
+  it('pays a small stock cut when an area earns toll revenue', () => {
+    const g = createGame({
+      players: [{ name: 'Holder' }, { name: 'Other' }, { name: 'Owner' }],
+      seed: 7,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 2;
+    g.players[1].stocks[area] = 1;
+    g.players[0].cash = 1000;
+    g.players[1].cash = 1000;
+    g.players[2].cash = 1000;
+
+    const revenue = 1000;
+    const before0 = g.players[0].cash;
+    const before1 = g.players[1].cash;
+    const before2 = g.players[2].cash;
+    const result = payAreaStockDividend(g, area, revenue);
+
+    const expectedPool = Math.floor(
+      revenue * Math.min(STOCK_DIVIDEND_MAX_RATE, STOCK_DIVIDEND_PER_SHARE * 3),
+    );
+    assert.equal(expectedPool, Math.floor(revenue * 0.09));
+    assert.equal(result.pool, expectedPool);
+    assert.equal(result.payouts.length, 2);
+    assert.equal(g.players[0].cash - before0 + (g.players[1].cash - before1), expectedPool);
+    assert.equal(g.players[2].cash, before2);
+    assert.ok(g.players[0].cash - before0 > g.players[1].cash - before1);
+    assert.equal(g.players[0].stats.dividendEarned, g.players[0].cash - before0);
+    assert.ok(g.logs.some((l) => l.kind === 'stock' && /株わけ前/.test(l.text)));
+  });
+
+  it('pays no stock cut without holders or revenue', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    assert.equal(payAreaStockDividend(g, area, 500).pool, 0);
+    g.players[0].stocks[area] = 2;
+    assert.equal(payAreaStockDividend(g, area, 0).pool, 0);
   });
 
   it('grants monopoly cash bonus when completing an area', () => {
