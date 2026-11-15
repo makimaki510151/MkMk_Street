@@ -33,6 +33,8 @@ import {
   buildGameResults,
   createEmptyStats,
   ensureStats,
+  recordWorthSnapshot,
+  syncStockValueSnap,
   payAreaStockDividend,
   STOCK_DIVIDEND_PER_SHARE,
   STOCK_DIVIDEND_MAX_RATE,
@@ -1424,16 +1426,30 @@ describe('MkMk Street engine', () => {
 
     // 資産をばらしてアワードが付くようにする
     g.players[0].stats.tollEarned = 5000;
+    g.players[0].stats.tollSaleCount = 8;
+    g.players[0].stats.tollSaleMax = 900;
+    g.players[0].stats.tollPayCount = 2;
+    g.players[0].stats.tollPaid = 400;
+    g.players[0].stats.tollPayMax = 250;
+    g.players[0].stats.stockReturn = 300;
     g.players[1].stats.stockBought = 40;
     g.players[1].stocks[area] = 30;
+    g.players[1].stats.stockReturn = 120;
     g.players[2].stats.scratchCount = 5;
     g.players[2].stats.matchBonus = 200;
+    g.players[2].stats.tollPayCount = 10;
+    g.players[2].stats.tollPaid = 3000;
     g.players[1].cash = 800;
     g.players[2].cash = 600;
     updateAreaStockPrices(g);
     g.winnerId = 0;
     g.phase = 'gameover';
     g.turn = 12;
+    g.worthHistory = [
+      { turn: 1, values: { 0: 2000, 1: 2000, 2: 2000 } },
+      { turn: 6, values: { 0: 4500, 1: 3200, 2: 2800 } },
+      { turn: 12, values: { 0: 9000, 1: 5000, 2: 3500 } },
+    ];
 
     const results = buildGameResults(g);
     assert.equal(results.winnerId, 0);
@@ -1441,11 +1457,18 @@ describe('MkMk Street engine', () => {
     assert.equal(results.ranking[0].rank, 1);
     assert.equal(results.ranking[0].id, 0);
     assert.ok(results.ranking[0].assets.total > 0);
+    assert.equal(results.ranking[0].sales.count, 8);
+    assert.equal(results.ranking[0].sales.greatest, 900);
+    assert.equal(results.ranking[0].sales.average, Math.floor(5000 / 8));
+    assert.ok(results.ranking[0].nextSalary > 0);
+    assert.ok(results.worthHistory.length >= 1);
     assert.ok(results.awards.length >= 3);
     const titles = new Set(results.awards.map((a) => a.id));
     assert.ok(titles.has('toll_king'));
     assert.ok(titles.has('landlord') || titles.has('monopoly_king'));
     assert.ok(titles.has('scratch_king'));
+    assert.ok(titles.has('shopaholic'));
+    assert.ok(titles.has('big_sale'));
 
     // 欠けた stats でも ensure / build できる
     delete g.players[1].stats;
@@ -1453,5 +1476,31 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[1].stats.rolls, 0);
     const again = buildGameResults(g);
     assert.equal(again.ranking.length, 3);
+  });
+
+  it('tracks stock return from price changes and worth history snapshots', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 7,
+      goal: 50000,
+      cash: 3000,
+    });
+    assert.ok(Array.isArray(g.worthHistory));
+    assert.equal(g.worthHistory.length, 1);
+
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 20;
+    syncStockValueSnap(g, g.players[0]);
+    assert.equal(g.players[0].stats.stockReturn, 0);
+
+    g.areas[area].B = Math.floor(g.areas[area].B * 1.5);
+    const changes = updateAreaStockPrices(g);
+    assert.ok(changes.some((c) => c.area === area));
+    assert.ok(g.players[0].stats.stockReturn > 0);
+
+    g.turn = 2;
+    recordWorthSnapshot(g);
+    assert.ok(g.worthHistory.length >= 2);
+    assert.equal(g.worthHistory[g.worthHistory.length - 1].turn, 2);
   });
 });
