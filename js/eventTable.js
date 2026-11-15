@@ -192,18 +192,18 @@ function buildCatalog() {
     ['rank_celebration', '階級のお祝い', 60, 30],
   ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'all_cash' }));
 
-  // ── ミニゲーム（勝利者＋全員に参加賞）────────────────────
+  // ── ミニゲーム（別名ごとにルールを変える）────────────────
   [
     ['mini_dice', 'サイコロ当て', 'guess_dice'],
     ['mini_highlow', 'ハイ＆ロー', 'high_low'],
     ['mini_coin', 'コイントス', 'coin'],
     ['mini_slot', 'ファイブスロット', 'slot'],
-    ['dice_carnival', '賽のカーニバル', 'guess_dice'],
-    ['lucky_flip', 'ラッキーフリップ', 'coin'],
-    ['card_highlow', 'カードハイロー', 'high_low'],
-    ['neon_slot', 'ネオンスロット', 'slot'],
-    ['fortune_dice', 'フォーチュンダイス', 'guess_dice'],
-    ['party_coin', 'パーティーコイン', 'coin'],
+    ['dice_carnival', '賽のカーニバル', 'dice_parity'],
+    ['lucky_flip', 'ラッキーフリップ', 'coin_double'],
+    ['card_highlow', 'カードハイロー', 'card_duel'],
+    ['neon_slot', 'ネオンスロット', 'neon_slot'],
+    ['fortune_dice', 'フォーチュンダイス', 'dice_band'],
+    ['party_coin', 'パーティーコイン', 'coin_party'],
   ].forEach(([k, l, game]) => push(k, l, { effect: 'minigame', game }));
 
   // ── 相手・分配インタラクション ───────────────────────────
@@ -222,6 +222,19 @@ function buildCatalog() {
   [
     ['position_trade', '場所交換'], ['seat_change', '席替え'],
   ].forEach(([k, l]) => push(k, l, { effect: 'swap_pos' }));
+
+  // ── 全員移動系 ───────────────────────────────────────────
+  [
+    ['all_shuffle', '全員席替え'], ['musical_chairs', 'イス取りゲーム'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'swap_all_pos' }));
+
+  [
+    ['scatter_warp', '全員散開'], ['chaos_teleport', 'カオス転送'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'scatter_all' }));
+
+  [
+    ['all_gather', '全員集合'], ['meetup_warp', '集合ワープ'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'gather_all' }));
 
   // ── 相場・エリア ─────────────────────────────────────────
   [
@@ -866,6 +879,65 @@ function applyEventDef(g, player, def, messages) {
       player.prevPos = null;
       other.prevPos = null;
       messages.push(`${other.name} と場所交換`);
+      break;
+    }
+    case 'swap_all_pos': {
+      const alive = g.players.filter((p) => !p.bankrupt);
+      if (alive.length < 2) {
+        player.flags.extraRoll = true;
+        messages.push('もう一度サイコロ！');
+        break;
+      }
+      const positions = alive.map((p) => p.pos);
+      // 全員が必ず動くよう 1〜n-1 マス分ずらして再配置
+      const offset = 1 + Math.floor(Math.random() * (alive.length - 1));
+      alive.forEach((p, i) => {
+        const to = positions[(i + offset) % alive.length];
+        recordWarp(g, p.id, p.pos, to);
+        p.prevPos = null;
+        p.pos = to;
+      });
+      messages.push(`全員の位置を入れ替え（${alive.length}人）`);
+      break;
+    }
+    case 'scatter_all': {
+      const alive = g.players.filter((p) => !p.bankrupt);
+      const walkable = g.map.filter((n) => n.type !== 'junction');
+      if (!alive.length || !walkable.length) {
+        player.flags.extraRoll = true;
+        messages.push('もう一度サイコロ！');
+        break;
+      }
+      const pool = walkable.map((n) => n.id);
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = pool[i];
+        pool[i] = pool[j];
+        pool[j] = tmp;
+      }
+      alive.forEach((p, i) => {
+        const to = pool[i % pool.length];
+        recordWarp(g, p.id, p.pos, to);
+        p.prevPos = null;
+        p.pos = to;
+      });
+      messages.push(`全員がバラバラのマスへ飛んだ（${alive.length}人）`);
+      break;
+    }
+    case 'gather_all': {
+      const alive = g.players.filter((p) => !p.bankrupt);
+      const dest = pickRandom(g.map.filter((n) => n.type !== 'junction'));
+      if (!alive.length || !dest) {
+        player.flags.extraRoll = true;
+        messages.push('もう一度サイコロ！');
+        break;
+      }
+      alive.forEach((p) => {
+        recordWarp(g, p.id, p.pos, dest.id);
+        p.prevPos = null;
+        p.pos = dest.id;
+      });
+      messages.push(`全員が「${dest.label || dest.type}」に集合！`);
       break;
     }
     case 'bump_area_stock': {

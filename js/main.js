@@ -2194,14 +2194,18 @@ async function playMinigameReveal(reveal) {
   audio.sfx.minigameDrum();
 
   const game = reveal.game || 'slot';
-  if (game === 'slot') {
+  if (game === 'slot' || game === 'neon_slot') {
     await animateSlotReveal(body, reveal);
-  } else if (game === 'guess_dice') {
+  } else if (game === 'guess_dice' || game === 'dice_parity' || game === 'dice_band') {
     await animateDiceGuessReveal(body, reveal);
   } else if (game === 'high_low') {
     await animateHighLowReveal(body, reveal);
-  } else if (game === 'coin') {
+  } else if (game === 'card_duel') {
+    await animateCardDuelReveal(body, reveal);
+  } else if (game === 'coin' || game === 'coin_party') {
     await animateCoinReveal(body, reveal);
+  } else if (game === 'coin_double') {
+    await animateCoinDoubleReveal(body, reveal);
   } else {
     body.innerHTML = `<div class="mg-hl-card landed">?</div>`;
     await wait(400);
@@ -2229,11 +2233,12 @@ async function playMinigameReveal(reveal) {
 
 async function animateSlotReveal(body, reveal) {
   const finals = reveal.outcome?.symbols || ['★', '♪', 'G', '♦', '♣'];
+  const spinPool = [...new Set([...finals, ...SLOT_SYMS])];
   const reelCount = finals.length || 5;
   body.innerHTML = `
     <div class="mg-slot mg-slot-5">
       ${Array.from({ length: reelCount }, (_, i) => (
-        `<div class="mg-reel spinning" data-i="${i}"><span>${SLOT_SYMS[i % SLOT_SYMS.length]}</span></div>`
+        `<div class="mg-reel spinning" data-i="${i}"><span>${spinPool[i % spinPool.length]}</span></div>`
       )).join('')}
     </div>`;
   const reels = [...body.querySelectorAll('.mg-reel')];
@@ -2243,7 +2248,7 @@ async function animateSlotReveal(body, reveal) {
     while (spinning) {
       spans.forEach((sp, i) => {
         if (reels[i].classList.contains('spinning')) {
-          sp.textContent = SLOT_SYMS[Math.floor(Math.random() * SLOT_SYMS.length)];
+          sp.textContent = spinPool[Math.floor(Math.random() * spinPool.length)];
         }
       });
       audio.sfx.slotSpin();
@@ -2280,11 +2285,18 @@ async function animateSlotReveal(body, reveal) {
 }
 
 async function animateDiceGuessReveal(body, reveal) {
-  const pick = reveal.outcome?.pick ?? reveal.pick ?? '?';
+  const rawPick = reveal.outcome?.pick ?? reveal.pick ?? '?';
+  const pickLabel = ({
+    odd: '奇数',
+    even: '偶数',
+    low: '小',
+    mid: '中',
+    high: '大',
+  })[rawPick] || String(rawPick);
   const roll = reveal.outcome?.roll ?? 1;
   body.innerHTML = `
     <div class="mg-dice-row">
-      <div class="mg-dice-col"><small>予想</small><div class="mg-die">${pick}</div></div>
+      <div class="mg-dice-col"><small>予想</small><div class="mg-die">${pickLabel}</div></div>
       <div class="mg-vs">VS</div>
       <div class="mg-dice-col"><small>出目</small><div class="mg-die rolling" id="mg-roll-die">?</div></div>
     </div>`;
@@ -2347,6 +2359,62 @@ async function animateCoinReveal(body, reveal) {
   coin.classList.remove('flipping');
   coin.classList.add('landed');
   audio.sfx.coinLand();
+  await wait(450);
+}
+
+async function animateCoinDoubleReveal(body, reveal) {
+  const faces = Array.isArray(reveal.outcome?.faces)
+    ? reveal.outcome.faces
+    : ['heads', 'tails'];
+  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'tails' ? 'うら' : 'おもて';
+  body.innerHTML = `
+    <div>
+      <div class="mg-dice-row">
+        <div class="mg-coin flipping" data-i="0">？</div>
+        <div class="mg-coin flipping" data-i="1">？</div>
+      </div>
+      <div class="mg-hl-band">予想：${pickLabel}×2</div>
+    </div>`;
+  const coins = [...body.querySelectorAll('.mg-coin')];
+  const labels = ['おもて', 'うら'];
+  for (let i = 0; i < 10; i++) {
+    coins.forEach((c) => { c.textContent = labels[i % 2]; });
+    audio.sfx.coinFlip();
+    await wait(85);
+  }
+  for (let i = 0; i < coins.length; i++) {
+    const faceLabel = faces[i] === 'tails' ? 'うら' : 'おもて';
+    coins[i].textContent = faceLabel;
+    coins[i].classList.remove('flipping');
+    coins[i].classList.add('landed');
+    audio.sfx.coinLand();
+    await wait(220);
+  }
+  await wait(300);
+}
+
+async function animateCardDuelReveal(body, reveal) {
+  const first = reveal.outcome?.first ?? 1;
+  const second = reveal.outcome?.second ?? 1;
+  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'high' ? 'ハイ' : 'ロー';
+  body.innerHTML = `
+    <div class="mg-dice-row">
+      <div class="mg-dice-col"><small>1枚目</small><div class="mg-hl-card landed" id="mg-card-a">${first}</div></div>
+      <div class="mg-vs">→</div>
+      <div class="mg-dice-col"><small>2枚目</small><div class="mg-hl-card spinning" id="mg-card-b">?</div></div>
+    </div>
+    <div class="mg-hl-band">予想：${pickLabel}</div>`;
+  const cardB = body.querySelector('#mg-card-b');
+  audio.sfx.minigameDrum();
+  const start = performance.now();
+  while (performance.now() - start < 900) {
+    cardB.textContent = String(1 + Math.floor(Math.random() * 13));
+    await wait(65);
+  }
+  cardB.textContent = String(second);
+  cardB.classList.remove('spinning');
+  cardB.classList.add('landed');
+  audio.sfx.diceLand(Math.min(6, second));
   await wait(450);
 }
 
@@ -4239,6 +4307,28 @@ function showChoiceModal(g) {
           sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.pick) } });
         };
       });
+    } else if (game === 'dice_parity') {
+      body.innerHTML = `
+        <p class="modal-lead">出目は奇数？ 偶数？</p>
+        <p class="hint">賽のカーニバル！当たれば報酬。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-odd">奇数（1・3・5）</button>
+          <button class="btn" id="m-even">偶数（2・4・6）</button>
+        </div>`;
+      $('#m-odd').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'odd' } }); };
+      $('#m-even').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'even' } }); };
+    } else if (game === 'dice_band') {
+      body.innerHTML = `
+        <p class="modal-lead">出目の帯を当てよう！</p>
+        <p class="hint">フォーチュンダイス：小・中・大の3択。外れても全員に参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-band-low">小（1-2）</button>
+          <button class="btn primary" id="m-band-mid">中（3-4）</button>
+          <button class="btn primary" id="m-band-high">大（5-6）</button>
+        </div>`;
+      $('#m-band-low').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
+      $('#m-band-mid').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'mid' } }); };
+      $('#m-band-high').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
     } else if (game === 'high_low') {
       body.innerHTML = `
         <p class="modal-lead">次の数字はハイ？ ロー？</p>
@@ -4249,20 +4339,51 @@ function showChoiceModal(g) {
         </div>`;
       $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
-    } else if (game === 'coin') {
+    } else if (game === 'card_duel') {
       body.innerHTML = `
-        <p class="modal-lead">コインの裏表を予想！</p>
-        <p class="hint">当たればボーナス。外れても全員に参加賞。</p>
+        <p class="modal-lead">次のカードは高い？ 低い？</p>
+        <p class="hint">1〜13のカードを2枚。1枚目のあと、2枚目の高低を予想（同値は引き分け賞）。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-hi">ハイ（より高い）</button>
+          <button class="btn" id="m-lo">ロー（より低い）</button>
+        </div>`;
+      $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
+      $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
+    } else if (game === 'coin' || game === 'coin_party') {
+      const party = game === 'coin_party';
+      body.innerHTML = `
+        <p class="modal-lead">${party ? 'みんなでコイン予想！' : 'コインの裏表を予想！'}</p>
+        <p class="hint">${party
+          ? '当たると本人賞は控えめ、全員の参加賞が厚め。外れても参加賞あり。'
+          : '当たればボーナス。外れても全員に参加賞。'}</p>
         <div class="modal-actions">
           <button class="btn primary" id="m-heads">おもて</button>
           <button class="btn" id="m-tails">うら</button>
         </div>`;
       $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
+    } else if (game === 'coin_double') {
+      body.innerHTML = `
+        <p class="modal-lead">同じ面を2回当てよう！</p>
+        <p class="hint">ラッキーフリップ：2枚とも一致で高額、1枚一致でも小賞。外れても参加賞。</p>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-heads">おもて</button>
+          <button class="btn" id="m-tails">うら</button>
+        </div>`;
+      $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
+      $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
+    } else if (game === 'neon_slot') {
+      body.innerHTML = `
+        <p class="modal-lead">ネオンペイラインを回そう！</p>
+        <p class="hint">左端からの連続揃いだけで判定。5連続は特大ジャックポット。</p>
+        <div class="modal-actions">
+          <button class="btn primary large" id="m-spin">回す！</button>
+        </div>`;
+      $('#m-spin').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'spin' } }); };
     } else {
       body.innerHTML = `
         <p class="modal-lead">スロットを回そう！</p>
-        <p class="hint">3つ揃いでジャックポット。2つ揃いでも報酬。外れても全員に参加賞。</p>
+        <p class="hint">5リールの役（5揃い／4揃い／フルハウスなど）で報酬。外れても全員に参加賞。</p>
         <div class="modal-actions">
           <button class="btn primary large" id="m-spin">回す！</button>
         </div>`;
