@@ -83,6 +83,8 @@ const app = {
   /** 表示中イベントの確認担当プレイヤー */
   eventFlashReaderId: null,
   eventFlashNpcTimer: null,
+  /** 移動アニメ中はイベントUIを出さず、着地後にまとめて表示 */
+  deferEventFlash: false,
   /** @type {Record<number, number>|null} */
   prevCash: null,
   moneyFxTimer: null,
@@ -882,6 +884,7 @@ function enterGame() {
   app.eventFlashHoldingBusy = false;
   app.actionActorId = null;
   app.eventFlashReaderId = null;
+  app.deferEventFlash = false;
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
   const flash = $('#event-flash');
@@ -1234,10 +1237,13 @@ async function applyLocalAction(action) {
     // 銀行通過後：進行方向選択 or 移動再開
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
       app.busy = true;
+      app.deferEventFlash = true;
       await continueAdvancing();
+      resumeAfterMovement();
+    } else if (clearBusyUnlessEventUi()) {
       refreshGameUI();
+      scheduleCpu();
     }
-    if (clearBusyUnlessEventUi()) scheduleCpu();
     return;
   }
 
@@ -1267,14 +1273,14 @@ async function resolveForkChoice(nextId) {
   if (result.state) app.game = restoreState(result.state);
   hideModal();
   app.busy = true;
+  app.deferEventFlash = true;
   app.renderer?.animateToken(pid, from, nextId, 400);
   audio.sfx.step();
   syncState({ anim: { pid, from, to: nextId } });
   refreshGameUI();
   await wait(420);
   await continueAdvancing();
-  refreshGameUI();
-  if (clearBusyUnlessEventUi()) scheduleCpu();
+  resumeAfterMovement();
 }
 
 async function runDiceAndMove(face) {
@@ -1292,22 +1298,14 @@ async function runDiceAndMove(face) {
   }
   syncState({ hideDice: false });
   refreshGameUI();
-  if (roller) {
-    enqueueBanner({
-      kicker: `${roller.name} のサイコロ`,
-      title: `${face}`,
-      detail: `${face} マス進みます`,
-      kind: 'dice',
-      color: roller.color,
-      actorId: roller.id,
-    });
-  }
+  // サイコロ結果はオーバーレイ済み。ここでイベントUIを出すと着地モーダルが塞がるため出さない
+  app.deferEventFlash = true;
   await continueAdvancing();
-  refreshGameUI();
-  if (clearBusyUnlessEventUi()) scheduleCpu();
+  resumeAfterMovement();
 }
 
 async function continueAdvancing() {
+  app.deferEventFlash = true;
   while (app.game?.move && app.game.phase === 'moving') {
     const pid = app.game.currentPlayerIdx;
     const from = app.game.players[pid].pos;
@@ -1838,10 +1836,13 @@ async function handleHostAction(from, data) {
     refreshGameUI();
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
       app.busy = true;
+      app.deferEventFlash = true;
       await continueAdvancing();
+      resumeAfterMovement();
+    } else if (clearBusyUnlessEventUi()) {
       refreshGameUI();
+      scheduleCpu();
     }
-    if (clearBusyUnlessEventUi()) scheduleCpu();
     return;
   }
 
@@ -1930,15 +1931,18 @@ function scheduleCpu() {
       if (result.state) app.game = restoreState(result.state);
       if (result.stepped) {
         app.busy = true;
+        app.deferEventFlash = true;
         app.renderer?.animateToken(pid, result.from, result.to, 400);
         audio.sfx.step();
         syncState({ anim: { pid, from: result.from, to: result.to } });
         refreshGameUI();
         await wait(420);
         await continueAdvancing();
+        resumeAfterMovement();
+      } else {
+        refreshGameUI();
+        if (clearBusyUnlessEventUi()) scheduleCpu();
       }
-      refreshGameUI();
-      if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
 
@@ -1961,10 +1965,13 @@ function scheduleCpu() {
       refreshGameUI();
       if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
         app.busy = true;
+        app.deferEventFlash = true;
         await continueAdvancing();
+        resumeAfterMovement();
+      } else if (clearBusyUnlessEventUi()) {
         refreshGameUI();
+        scheduleCpu();
       }
-      if (clearBusyUnlessEventUi()) scheduleCpu();
     }
   }, 550 + Math.random() * 350);
 }
@@ -2304,6 +2311,8 @@ function eventFlashBlocked() {
 function queueEventFlash(payload) {
   if (!payload?.title) return;
   app.eventFlashQueue.push(payload);
+  // 移動中はキューに積むだけ（着地前に busy を掴むとマス選択UIが出ない）
+  if (app.deferEventFlash) return;
   // 待ち行列に入った時点で進行を止める（ホスト／ローカル）
   if (app.mode !== 'guest') {
     app.eventFlashHoldingBusy = true;
@@ -2314,6 +2323,7 @@ function queueEventFlash(payload) {
 }
 
 function pumpEventFlash() {
+  if (app.deferEventFlash) return;
   if (app.eventFlashOpen) return;
   if (eventFlashBlocked()) return;
   const payload = app.eventFlashQueue.shift();
@@ -2330,6 +2340,24 @@ function pumpEventFlash() {
     return;
   }
   presentEventFlash(payload);
+}
+
+/** 移動完了後: 遅延したイベントUIを出し、なければ選択UI／次手番へ */
+function resumeAfterMovement() {
+  app.deferEventFlash = false;
+  refreshGameUI();
+  if (app.eventFlashQueue.length > 0 || app.eventFlashOpen) {
+    if (app.mode !== 'guest') {
+      app.eventFlashHoldingBusy = true;
+      app.busy = true;
+      clearTimeout(app.cpuTimer);
+    }
+    pumpEventFlash();
+  }
+  if (clearBusyUnlessEventUi()) {
+    refreshGameUI();
+    scheduleCpu();
+  }
 }
 
 function eventFlashReader(payload) {
