@@ -3521,28 +3521,72 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'invest') {
-    const sq = getNode(g, pend.shopId);
-    const rem = getRemainingInvest(g, sq);
-    const maxInv = getMaxExtraInvest(g, sq);
-    const owned = getPlayerAreaCount(g, pend.playerId, sq.area);
-    const total = getAreaShops(g, sq.area).length;
-    const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
-    const multi = investMultiByMonopolyRate(rate);
-    const pct = Math.round(rate * 100);
-    title.textContent = '増資する？';
-    body.innerHTML = `
-      <p class="modal-lead"><strong>${sq.label}</strong></p>
-      <p>買い物料 ${calcToll(g, sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
-      <p class="hint">独占率 ${owned}/${total}（${pct}%）→ 上限倍率×${multi}（上限 ${maxInv.toLocaleString()}G）</p>
-      <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" ${rem <= 0 ? 'disabled' : ''} /></label>
-      <div class="modal-actions">
-        <button class="btn primary" id="m-inv" ${rem <= 0 ? 'disabled' : ''}>${rem <= 0 ? '増資上限です' : '増資する'}</button>
-      </div>`;
-    $('#m-inv').onclick = () => {
-      const amount = Number($('#m-amt').value) || 0;
-      hideModal();
-      sendAction({ type: 'choice', choice: { action: 'invest', amount } });
+    const landedId = pend.landedShopId ?? pend.shopId;
+    const landed = getNode(g, landedId);
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    let selectedId = Number(landedId);
+    if (!ids.includes(selectedId) && ids.length) selectedId = ids[0];
+
+    const shopMeta = (id) => {
+      const sq = getNode(g, id);
+      if (!sq) return null;
+      const rem = getRemainingInvest(g, sq);
+      const maxInv = getMaxExtraInvest(g, sq);
+      const owned = getPlayerAreaCount(g, pend.playerId, sq.area);
+      const total = getAreaShops(g, sq.area).length;
+      const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
+      const multi = investMultiByMonopolyRate(rate);
+      const pct = Math.round(rate * 100);
+      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      return { sq, rem, maxInv, owned, total, multi, pct, area };
     };
+
+    title.textContent = '好きな店へ増資';
+    const rows = ids.map((id) => {
+      const m = shopMeta(id);
+      if (!m) return '';
+      const landedTag = id === landedId ? '<span class="invest-landed-tag">止まった店</span>' : '';
+      return `<button type="button" class="btn pick-invest-shop invest-pick-shop${id === selectedId ? ' selected' : ''}" data-shop="${id}" style="--ac:${AREA_META[m.sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(m.sq.label)}</strong>${landedTag}
+        <span class="pick-invest-gain">枠 ${m.rem.toLocaleString()}G</span>
+        <small>${escapeHtml(m.area)} · 料 ${calcToll(g, m.sq).toLocaleString()}G · 独占 ${m.owned}/${m.total}（×${m.multi}）</small>
+      </button>`;
+    }).join('');
+
+    const renderAmount = () => {
+      const m = shopMeta(selectedId);
+      const rem = m?.rem || 0;
+      const panel = $('#invest-amount-panel');
+      if (!panel || !m) return;
+      panel.innerHTML = `
+        <p class="modal-lead">選択中: <strong>${escapeHtml(m.sq.label)}</strong></p>
+        <p>買い物料 ${calcToll(g, m.sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
+        <p class="hint">独占率 ${m.owned}/${m.total}（${m.pct}%）→ 上限倍率×${m.multi}（上限 ${m.maxInv.toLocaleString()}G）</p>
+        <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" ${rem <= 0 ? 'disabled' : ''} /></label>
+        <div class="modal-actions">
+          <button class="btn primary" id="m-inv" ${rem <= 0 ? 'disabled' : ''}>${rem <= 0 ? '増資上限です' : '増資する'}</button>
+        </div>`;
+      $('#m-inv').onclick = () => {
+        const amount = Number($('#m-amt').value) || 0;
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'invest', shopId: selectedId, amount } });
+      };
+    };
+
+    body.innerHTML = `
+      <p class="hint">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}好きな自分の店へ増資できます</p>
+      <div class="pick-invest-list invest-pick-list">${rows || '<p class="hint">所持店がありません</p>'}</div>
+      <div id="invest-amount-panel"></div>`;
+    $$('.invest-pick-shop').forEach((btn) => {
+      btn.onclick = () => {
+        selectedId = Number(btn.dataset.shop);
+        $$('.invest-pick-shop').forEach((b) => b.classList.toggle('selected', Number(b.dataset.shop) === selectedId));
+        renderAmount();
+      };
+    });
+    renderAmount();
     return;
   }
 
@@ -3705,8 +3749,8 @@ function showChoiceModal(g) {
         <div class="levelup-badge">LEVEL UP</div>
         <p class="modal-lead"><strong>${escapeHtml(p?.name || '')}</strong></p>
         <p class="levelup-levels">Lv.${pend.from} → <strong>Lv.${pend.to}</strong></p>
-        <p class="levelup-bonus">昇進賞金 <strong>+${Number(pend.bonus || 0).toLocaleString()}G</strong></p>
-        <p class="hint">マークを揃えて銀行へ到達！</p>
+        <p class="levelup-bonus">Lv.${pend.to} 昇進賞金 <strong>+${Number(pend.bonus || 0).toLocaleString()}G</strong></p>
+        <p class="hint">賞金は昇進後レベルが高いほど増えます</p>
       </div>
       <div class="modal-actions">
         <button class="btn primary large" id="m-levelup">お祝いする</button>
