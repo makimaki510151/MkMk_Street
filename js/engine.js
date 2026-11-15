@@ -99,6 +99,65 @@ const TOLL_MULTI_BY_AREA = {
 export const MONOPOLY_BONUS_RATE = 0.15;
 export { investMultiByMonopolyRate };
 
+/**
+ * エリア収益（買い物料など）に対する株わけ前。
+ * 1株あたり収益の STOCK_DIVIDEND_PER_SHARE、合計は収益の最大 STOCK_DIVIDEND_MAX_RATE。
+ * 支払いは銀行から（本家の株配当イメージ）。
+ */
+export const STOCK_DIVIDEND_PER_SHARE = 0.03;
+export const STOCK_DIVIDEND_MAX_RATE = 0.15;
+
+/**
+ * エリアの収益に応じて、そのエリア株の保有者へわけ前を分配する。
+ * @returns {{ area: number, pool: number, payouts: { pid: number, name: string, shares: number, amount: number }[] }}
+ */
+export function payAreaStockDividend(g, area, revenue) {
+  const a = Number(area);
+  const base = Math.max(0, Math.floor(Number(revenue) || 0));
+  const empty = { area: a, pool: 0, payouts: [] };
+  if (!g?.areas?.[a] || base <= 0) return empty;
+
+  const holders = (g.players || []).filter((pl) => !pl.bankrupt && (pl.stocks?.[a] || 0) > 0);
+  if (!holders.length) return empty;
+
+  const totalShares = holders.reduce((s, pl) => s + (pl.stocks[a] || 0), 0);
+  if (totalShares <= 0) return empty;
+
+  const rate = Math.min(STOCK_DIVIDEND_MAX_RATE, STOCK_DIVIDEND_PER_SHARE * totalShares);
+  const pool = Math.floor(base * rate);
+  if (pool <= 0) return empty;
+
+  const ordered = [...holders].sort((x, y) => (y.stocks[a] || 0) - (x.stocks[a] || 0) || x.id - y.id);
+  const payouts = ordered.map((pl) => ({
+    pid: pl.id,
+    name: pl.name,
+    shares: pl.stocks[a] || 0,
+    amount: Math.floor((pool * (pl.stocks[a] || 0)) / totalShares),
+  }));
+  let paid = payouts.reduce((s, p) => s + p.amount, 0);
+  let rest = pool - paid;
+  for (const p of payouts) {
+    if (rest <= 0) break;
+    p.amount += 1;
+    rest -= 1;
+  }
+  for (const p of payouts) {
+    if (p.amount <= 0) continue;
+    const pl = g.players[p.pid];
+    if (!pl) continue;
+    pl.cash += p.amount;
+    bumpStat(pl, 'dividendEarned', p.amount);
+  }
+  const given = payouts.filter((p) => p.amount > 0);
+  if (given.length) {
+    const areaName = g.areas[a]?.name || `A${a}`;
+    const detail = given.map((p) => `${p.name}+${p.amount}G`).join(' / ');
+    addLog(g, `A${a}「${areaName}」株わけ前 ${detail}（収益 ${base}G の一部）`, 'stock');
+  }
+
+  return { area: a, pool: given.reduce((s, p) => s + p.amount, 0), payouts: given };
+}
+
 /** プレイヤーごとの累積統計（終了画面用） */
 export function createEmptyStats() {
   return {
@@ -1188,23 +1247,6 @@ function payToll(g, payer, sq) {
     addLog(g, `${owner.name} の家主印章で買い物料アップ！`, 'event');
   }
 
-  // 配当（銀行から株保有者へ）
-  const holders = g.players.filter((pl) => !pl.bankrupt && (pl.stocks[sq.area] || 0) > 0);
-  let divTotal = 0;
-  let totalShares = 0;
-  if (holders.length) {
-    totalShares = holders.reduce((s, pl) => s + (pl.stocks[sq.area] || 0), 0);
-    const capShares = Math.min(totalShares, 5);
-    divTotal = Math.floor(toll * capShares * 0.04);
-    for (const pl of holders) {
-      const share = Math.floor((divTotal * (pl.stocks[sq.area] || 0)) / totalShares);
-      if (share > 0) {
-        pl.cash += share;
-        bumpStat(pl, 'dividendEarned', share);
-      }
-    }
-  }
-
   // ラッキー分け前
   for (const lp of g.players) {
     if (lp.lucky && lp.id !== payer.id && lp.id !== owner.id && !lp.bankrupt) {
@@ -1220,6 +1262,9 @@ function payToll(g, payer, sq) {
   bumpStat(payer, 'tollPaid', toll);
   bumpStat(owner, 'tollEarned', toll);
   addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll}G`, 'toll');
+
+  // 同エリアの株保有者へ、収益の一部をわけ前（銀行から）
+  payAreaStockDividend(g, sq.area, toll);
 
   if (payer.cash < 0) {
     openRaiseFunds(g, payer, {

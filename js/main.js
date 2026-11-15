@@ -30,6 +30,7 @@ import {
   getAreaMonopolyRate,
   getMaxExtraInvest,
   investMultiByMonopolyRate,
+  payAreaStockDividend,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -622,6 +623,27 @@ function maybeDemoLanding() {
     refreshGameUI();
     return;
   }
+  if (demo === 'stock-div' || demo === 'dividend') {
+    // エリア収益の株わけ前デモ（ログ＋現金演出）
+    const area = Number(Object.keys(app.game.areas)[0]);
+    const areaName = app.game.areas[area]?.name || `A${area}`;
+    p.stocks[area] = Math.max(p.stocks[area] || 0, 3);
+    const other = app.game.players[1];
+    if (other) other.stocks[area] = Math.max(other.stocks[area] || 0, 1);
+    app.prevCash = Object.fromEntries(app.game.players.map((pl) => [pl.id, pl.cash]));
+    payAreaStockDividend(app.game, area, 1000);
+    enqueueBanner({
+      kicker: '株わけ前',
+      title: 'エリア収益の分配',
+      detail: app.game.logs.find((l) => /株わけ前/.test(l.text))?.text
+        || `A${area}「${areaName}」株わけ前（収益 1000G の一部）`,
+      kind: 'stock',
+      color: '#3d8bfd',
+      mine: true,
+    });
+    refreshGameUI();
+    return;
+  }
   if (demo === 'minigame' || demo === 'slot' || demo === 'coin' || demo === 'high_low') {
     const game = demo === 'minigame' ? 'guess_dice' : demo;
     const labels = {
@@ -665,6 +687,7 @@ function maybeDemoLanding() {
       { kicker: '昇進！', title: 'レベルアップ', detail: 'あか 昇進！ Lv.2→3', kind: 'level', color: '#e85d75' },
       { kicker: 'マーク入手！', title: '♠', detail: 'あかがマーク♠を入手', kind: 'mark', color: '#e85d75' },
       { kicker: '株式取引', title: '株を購入', detail: 'あかが A1株×10 購入', kind: 'stock', color: '#3d8bfd' },
+      { kicker: '株わけ前', title: 'エリア収益の分配', detail: 'A1「さくら通り」株わけ前 あか+60G（収益 1000G の一部）', kind: 'stock', color: '#3d8bfd' },
     ];
     // 最初の1件は即時表示（スクショ確認用）。以降は順に再生
     enqueueBanner({ ...demos[0], mine: true });
@@ -684,7 +707,7 @@ function maybeDemoLanding() {
     const p1 = app.game.players[1];
     app.prevCash = Object.fromEntries(app.game.players.map((p) => [p.id, p.cash]));
     if (demo === 'money-loss') {
-      // 買い物料＝ショック
+      // 買い物料の支払い表示確認
       app.game.logs.unshift({
         text: `${p0.name} → ${p1?.name || 'あお'}「さくら茶屋」買い物料 420G`,
         kind: 'toll',
@@ -696,7 +719,7 @@ function maybeDemoLanding() {
       return;
     }
     if (demo === 'money-invest') {
-      // 通常購入＝投資（ショックにしない）
+      // 通常購入＝投資扱いの表示確認
       const price = 290;
       app.game.logs.unshift({
         text: `${p0.name} が「青空マーケット」を購入（${price}G）`,
@@ -707,7 +730,7 @@ function maybeDemoLanding() {
       refreshGameUI();
       return;
     }
-    // 収入 → 買い物料ショック → 大きなゲット
+    // 収入 → 買い物料 → 臨時収入（本番と同じ現金表示経路）
     app.game.logs.unshift({ text: `${p0.name} 昇進！ 賞金 +850G`, kind: 'level', t: Date.now() });
     p0.cash += 850;
     refreshGameUI();
@@ -1138,9 +1161,9 @@ async function applyLocalAction(action) {
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
       const fivePayload = {
-        kicker: '衝撃！',
-        title: '5倍買い！',
-        detail: 'お店を奪取した！',
+        kicker: '5倍買い',
+        title: 'お店を奪取',
+        detail: '店価×5でお店を買収した',
         kind: 'shop',
         color: currentPlayer(app.game)?.color || '#ffe08a',
         mine: true,
@@ -2104,9 +2127,15 @@ function bannerFromLog(g, l) {
     title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
     detail = l.text;
   } else if (kind === 'stock') {
-    kicker = mine ? '株式取引' : `${player?.name || ''} の株`;
-    title = /売却/.test(l.text) ? '株を売却' : '株を購入';
-    detail = l.text;
+    if (/わけ前|配当/.test(l.text)) {
+      kicker = '株わけ前';
+      title = 'エリア収益の分配';
+      detail = l.text;
+    } else {
+      kicker = mine ? '株式取引' : `${player?.name || ''} の株`;
+      title = /売却/.test(l.text) ? '株を売却' : '株を購入';
+      detail = l.text;
+    }
   } else if (kind === 'event') {
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
@@ -2226,7 +2255,10 @@ function resolveEventVisual(payload) {
       chips.unshift('ミニゲーム');
     }
   } else if (kind === 'stock') {
-    if (/売却|売った/.test(text)) chips.unshift('売却');
+    if (/わけ前|配当/.test(text)) {
+      base.glyph = '％';
+      chips.unshift('わけ前');
+    } else if (/売却|売った/.test(text)) chips.unshift('売却');
     else chips.unshift('購入');
   } else if (kind === 'dice') {
     const n = (String(payload.title).match(/^\d+$/) || [])[0];
@@ -2238,9 +2270,10 @@ function resolveEventVisual(payload) {
 
 /**
  * 直近ログから現金変化の意味を判定。
- * - toll_loss: 他人の店での買い物料（ショック）
- * - invest: 通常の店購入・増資・株購入（投資・ショックにしない）
- * - five_buy: 5倍買い（衝撃）
+ * - toll_loss: 他人の店での買い物料
+ * - invest: 通常の店購入・増資・株購入
+ * - five_buy: 5倍買い
+ * - dividend: エリア収益の株わけ前
  * - gain / toll_gain: 収入
  * - loss: その他の強制出費
  */
@@ -2264,9 +2297,11 @@ function classifyMoneyMood(g, p, amount) {
       if (/購入|増資/.test(t) && amount <= 0) return 'invest';
     }
     if (l.kind === 'stock' && t.includes(name)) {
+      if (/わけ前|配当/.test(t) && amount > 0) return 'dividend';
       if (/購入/.test(t) && amount < 0) return 'invest';
       if (/売却/.test(t) && amount > 0) return 'gain';
     }
+    if (l.kind === 'stock' && /わけ前|配当/.test(t) && amount > 0) return 'dividend';
     if ((l.kind === 'level' || l.kind === 'win') && t.includes(name) && amount > 0) return 'gain';
     if (l.kind === 'event' && t.includes(name)) {
       if (amount > 0) return 'gain';
@@ -2423,6 +2458,19 @@ function resolveMoneyFxCopy(focus) {
       title: '買い物料の収入',
       amount: signed,
       who: who ? `${who} が買い物料を受け取り` : '買い物料の受け取り',
+      coinMode: 'gain',
+      se: 'gain',
+      floatClass: 'gain',
+    };
+  }
+  if (mood === 'dividend') {
+    return {
+      mood: 'gain',
+      color: '#6e8fad',
+      face: '株',
+      title: '株わけ前',
+      amount: signed,
+      who: who ? `${who} がエリア収益のわけ前を受け取り` : 'エリア収益のわけ前',
       coinMode: 'gain',
       se: 'gain',
       floatClass: 'gain',
@@ -3256,6 +3304,7 @@ function renderStockPanel(g) {
     <div class="stocks-prices">${priceChips}</div>
     <div class="stocks-holdings">
       <div class="sh-title">株の所持（全員）</div>
+      <p class="hint">そのエリアで買い物料が発生すると、保有に応じてわけ前が入ります</p>
       <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
     </div>
     ${sellBlock}`;
