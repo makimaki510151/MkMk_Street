@@ -457,10 +457,59 @@ button:disabled { opacity: .42; cursor: default; }
   color: var(--muted);
 }
 .pc-flag.closed { color: var(--warn); }
+.pc-flag.offline {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
 .pc-flag.cpu-style {
   background: transparent;
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+#disconnect-panel {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.45rem 0.5rem;
+  margin-bottom: 0.35rem;
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
+  border-radius: var(--radius);
+}
+#disconnect-panel[hidden] { display: none !important; }
+.dc-title {
+  font-family: var(--display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.dc-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.dc-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+.dc-name {
+  flex: 1;
+  min-width: 3.5rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--pc, var(--ink));
+}
+.btn.danger {
+  background: color-mix(in srgb, var(--danger) 22%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+  color: #ffd0d0;
+}
+#event-flash[data-visual="toll"] .ef-title {
+  font-size: clamp(1.55rem, 5vw, 2.1rem);
+  letter-spacing: 0.02em;
+  color: #ffb4a8;
 }
 .pc-stocks {
   display: flex; flex-wrap: wrap; gap: 0.2rem;

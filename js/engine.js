@@ -1261,7 +1261,7 @@ function payToll(g, payer, sq) {
   owner.cash += toll;
   bumpStat(payer, 'tollPaid', toll);
   bumpStat(owner, 'tollEarned', toll);
-  addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll}G`, 'toll');
+  addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll.toLocaleString()}G`, 'toll');
 
   // 同エリアの株保有者へ、収益の一部をわけ前（銀行から）
   payAreaStockDividend(g, sq.area, toll);
@@ -1342,9 +1342,12 @@ function sellStockForCash(g, p, area, count) {
   return { ok: true, got };
 }
 
-function declareBankrupt(g, p) {
+export function declareBankrupt(g, p) {
   p.cash = 0;
   p.bankrupt = true;
+  p.offline = false;
+  p.peerId = null;
+  p.isCPU = false;
   for (const sq of g.map.filter((s) => s.type === 'shop' && s.owner === p.id)) {
     sq.owner = -1;
     sq.extraInvest = 0;
@@ -1353,6 +1356,38 @@ function declareBankrupt(g, p) {
   p.stocks = {};
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
+}
+
+/** 切断プレイヤーをCPUに切り替えて進行を続ける */
+export function convertPlayerToCpu(g, pid) {
+  const p = g.players[pid];
+  if (!p || p.bankrupt) return { ok: false, error: 'invalid' };
+  p.isCPU = true;
+  p.offline = false;
+  p.peerId = null;
+  if (!p.personality) {
+    p.personality = CPU_PERSONALITY_KEYS[pid % CPU_PERSONALITY_KEYS.length];
+  }
+  if (!p.flags) p.flags = {};
+  p.flags.reclaimableHuman = true;
+  addLog(g, `${p.name} をCPUに切り替え（同じ名前で再接続可）`, 'system');
+  return { ok: true, state: serializeState(g) };
+}
+
+/** 切断プレイヤーをキック（破産）して進行を続ける */
+export function kickDisconnectedPlayer(g, pid) {
+  const p = g.players[pid];
+  if (!p || p.bankrupt) return { ok: false, error: 'invalid' };
+  addLog(g, `${p.name} をキック`, 'system');
+  declareBankrupt(g, p);
+  if (g.pending?.playerId === pid) {
+    g.pending = null;
+    g.phase = 'await_roll';
+  }
+  if (g.currentPlayerIdx === pid || g.players.filter((x) => !x.bankrupt).length <= 1) {
+    endTurn(g);
+  }
+  return { ok: true, state: serializeState(g) };
 }
 
 function resumeAfterRaiseFunds(g, p, resume) {

@@ -651,7 +651,7 @@ export function shopTooltip(g, sq) {
   if (sq.type !== 'shop') return `${sq.label}`;
   const owner = sq.owner >= 0 ? g.players[sq.owner]?.name : '空き';
   const toll = calcToll(g, sq);
-  const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中' : '';
+  const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中（買い物料0）' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
   const areaName = AREA_META[sq.area]?.name || '';
   let mono = '';
@@ -665,5 +665,8 @@ export function shopTooltip(g, sq) {
       mono = `／${cnt}/${areaSize}軒×${multi}`;
     }
   }
-  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price}G / 料${toll}G${mono}${closed}`;
+  const tollLabel = sq.owner >= 0
+    ? `買い物料 ${toll.toLocaleString()}G`
+    : '買い物料なし';
+  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}`;
 }
