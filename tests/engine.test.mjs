@@ -740,10 +740,23 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('minigame'), 'expected minigame events');
     assert.ok(kinds.has('seize_mono_shop'), 'expected monopoly-break seize events');
     assert.ok(kinds.has('five_buy_coupon'), 'expected cheap takeover coupon events');
+    assert.ok(kinds.has('swap_all_pos'), 'expected all-position shuffle events');
+    assert.ok(kinds.has('scatter_all'), 'expected scatter-all warp events');
+    assert.ok(kinds.has('gather_all'), 'expected gather-all warp events');
     const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
     const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
     assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
     assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
+    const miniGames = new Set(
+      EVENT_CATALOG.filter((e) => e.effect === 'minigame').map((e) => e.game)
+    );
+    assert.ok(miniGames.size >= 8, `expected distinct minigame rules, got ${[...miniGames]}`);
+    assert.ok(miniGames.has('dice_parity'));
+    assert.ok(miniGames.has('dice_band'));
+    assert.ok(miniGames.has('card_duel'));
+    assert.ok(miniGames.has('coin_double'));
+    assert.ok(miniGames.has('coin_party'));
+    assert.ok(miniGames.has('neon_slot'));
   });
 
   it('keeps lucky status until the start of the next own turn', () => {
@@ -1313,6 +1326,97 @@ describe('MkMk Street engine', () => {
     const scratched2 = scratchCell(g, g.players[0], 1);
     assert.equal(scratched2.ok, true);
     assert.equal(g.players[0].flags.pendingMinigame?.game, 'guess_dice');
+  });
+
+  it('scratch swap_all_pos / scatter_all / gather_all move every player', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 7,
+      cash: 2000,
+    });
+    const walkable = g.map.filter((n) => n.type !== 'junction');
+    assert.ok(walkable.length >= 3);
+    g.players[0].pos = walkable[0].id;
+    g.players[1].pos = walkable[1].id;
+    g.players[2].pos = walkable[2].id;
+
+    const shuffleId = EVENT_CATALOG.findIndex((e) => e.effect === 'swap_all_pos');
+    assert.ok(shuffleId >= 0);
+    const before = g.players.map((p) => p.pos);
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = shuffleId + 1;
+    cell.label = EVENT_CATALOG[shuffleId].label;
+    cell.scratched = false;
+    const r1 = scratchCell(g, g.players[0], 0);
+    assert.equal(r1.ok, true);
+    const afterShuffle = g.players.map((p) => p.pos);
+    assert.notDeepEqual(afterShuffle, before);
+    assert.deepEqual([...afterShuffle].sort(), [...before].sort());
+
+    const scatterId = EVENT_CATALOG.findIndex((e) => e.effect === 'scatter_all');
+    assert.ok(scatterId >= 0);
+    const cell2 = g.sharedEventTable.cells[1];
+    cell2.eventId = scatterId + 1;
+    cell2.label = EVENT_CATALOG[scatterId].label;
+    cell2.scratched = false;
+    const beforeScatter = g.players.map((p) => p.pos);
+    const r2 = scratchCell(g, g.players[0], 1);
+    assert.equal(r2.ok, true);
+    const afterScatter = g.players.map((p) => p.pos);
+    assert.equal(new Set(afterScatter).size, afterScatter.length, 'scatter should prefer unique tiles');
+    assert.ok(afterScatter.every((id) => g.map.some((n) => n.id === id && n.type !== 'junction')));
+    assert.ok(
+      afterScatter.some((id, i) => id !== beforeScatter[i]),
+      'at least one player should move on scatter'
+    );
+
+    const gatherId = EVENT_CATALOG.findIndex((e) => e.effect === 'gather_all');
+    assert.ok(gatherId >= 0);
+    const cell3 = g.sharedEventTable.cells[2];
+    cell3.eventId = gatherId + 1;
+    cell3.label = EVENT_CATALOG[gatherId].label;
+    cell3.scratched = false;
+    const r3 = scratchCell(g, g.players[0], 2);
+    assert.equal(r3.ok, true);
+    const dest = g.players[0].pos;
+    assert.ok(g.players.every((p) => p.pos === dest));
+  });
+
+  it('named minigame variants use distinct rules', () => {
+    const run = (game, label, choice) => {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed: 3,
+        cash: 1000,
+      });
+      g.currentPlayerIdx = 0;
+      g.phase = 'await_choice';
+      g.pending = { type: 'minigame', playerId: 0, game, label };
+      const r = applyChoice(g, choice);
+      assert.equal(r.ok, true);
+      assert.equal(r.reveal.game, game);
+      return r;
+    };
+
+    const parity = run('dice_parity', '賽のカーニバル', { action: 'pick', value: 'odd' });
+    assert.ok(parity.reveal.outcome.roll >= 1 && parity.reveal.outcome.roll <= 6);
+
+    const band = run('dice_band', 'フォーチュンダイス', { action: 'pick', value: 'mid' });
+    assert.ok(band.reveal.outcome.band);
+
+    const card = run('card_duel', 'カードハイロー', { action: 'pick', value: 'high' });
+    assert.ok(card.reveal.outcome.first >= 1 && card.reveal.outcome.second >= 1);
+
+    const dub = run('coin_double', 'ラッキーフリップ', { action: 'pick', value: 'heads' });
+    assert.equal(dub.reveal.outcome.faces.length, 2);
+
+    const party = run('coin_party', 'パーティーコイン', { action: 'pick', value: 'tails' });
+    assert.ok(party.reveal.outcome.face);
+
+    const neon = run('neon_slot', 'ネオンスロット', { action: 'spin' });
+    assert.equal(neon.reveal.outcome.symbols.length, 5);
+    assert.ok(neon.reveal.outcome.payline >= 1);
+    assert.ok(['jackpot', 'quad', 'triple', 'pair', 'miss'].includes(neon.reveal.tier));
   });
 
   it('pick_invest event lets player choose a shop to boost', () => {
