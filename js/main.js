@@ -678,26 +678,51 @@ function maybeDemoLanding() {
     setTimeout(tick, 1400);
     return;
   }
-  if (demo === 'money-fx' || demo === 'money-loss') {
+  if (demo === 'money-fx' || demo === 'money-loss' || demo === 'money-invest') {
     refreshGameUI();
     const p0 = app.game.players[0];
     const p1 = app.game.players[1];
     app.prevCash = Object.fromEntries(app.game.players.map((p) => [p.id, p.cash]));
     if (demo === 'money-loss') {
+      // 買い物料＝ショック
+      app.game.logs.unshift({
+        text: `${p0.name} → ${p1?.name || 'あお'}「さくら茶屋」買い物料 420G`,
+        kind: 'toll',
+        t: Date.now(),
+      });
       p0.cash -= 420;
       if (p1) p1.cash += 420;
       refreshGameUI();
       return;
     }
-    // 即時ゲット（スクショ／確認用）→ ロス → 大ゲット
+    if (demo === 'money-invest') {
+      // 通常購入＝投資（ショックにしない）
+      const price = 290;
+      app.game.logs.unshift({
+        text: `${p0.name} が「青空マーケット」を購入（${price}G）`,
+        kind: 'shop',
+        t: Date.now(),
+      });
+      p0.cash -= price;
+      refreshGameUI();
+      return;
+    }
+    // 収入 → 買い物料ショック → 大きなゲット
+    app.game.logs.unshift({ text: `${p0.name} 昇進！ 賞金 +850G`, kind: 'level', t: Date.now() });
     p0.cash += 850;
     refreshGameUI();
     setTimeout(() => {
+      app.game.logs.unshift({
+        text: `${p0.name} → ${p1?.name || 'あお'}「さくら茶屋」買い物料 420G`,
+        kind: 'toll',
+        t: Date.now(),
+      });
       p0.cash -= 420;
       if (p1) p1.cash += 420;
       refreshGameUI();
     }, 1600);
     setTimeout(() => {
+      app.game.logs.unshift({ text: `${p0.name} 臨時収入 +1600G`, kind: 'event', t: Date.now() });
       p0.cash += 1600;
       refreshGameUI();
     }, 3200);
@@ -2211,7 +2236,47 @@ function resolveEventVisual(payload) {
   return { glyph: base.glyph, chips: [...new Set(chips)].slice(0, 3) };
 }
 
-/** 現金増減を検知して喜び／悲しみの演出を出す */
+/**
+ * 直近ログから現金変化の意味を判定。
+ * - toll_loss: 他人の店での買い物料（ショック）
+ * - invest: 通常の店購入・増資・株購入（投資・ショックにしない）
+ * - five_buy: 5倍買い（衝撃）
+ * - gain / toll_gain: 収入
+ * - loss: その他の強制出費
+ */
+function classifyMoneyMood(g, p, amount) {
+  const name = p.name;
+  const recent = (g.logs || []).slice(0, 14);
+  for (const l of recent) {
+    const t = l.text || '';
+    if (l.kind === 'toll') {
+      const m = t.match(/^(.+?)\s*→\s*(.+?)[「\s]/);
+      if (m) {
+        const payer = m[1].trim();
+        const owner = m[2].trim();
+        if (amount < 0 && (payer === name || payer.includes(name))) return 'toll_loss';
+        if (amount > 0 && (owner === name || owner.includes(name))) return 'toll_gain';
+      }
+      if (amount < 0 && t.startsWith(name)) return 'toll_loss';
+    }
+    if (l.kind === 'shop' && t.includes(name)) {
+      if (/5倍/.test(t)) return amount < 0 ? 'five_buy' : 'gain';
+      if (/購入|増資/.test(t) && amount <= 0) return 'invest';
+    }
+    if (l.kind === 'stock' && t.includes(name)) {
+      if (/購入/.test(t) && amount < 0) return 'invest';
+      if (/売却/.test(t) && amount > 0) return 'gain';
+    }
+    if ((l.kind === 'level' || l.kind === 'win') && t.includes(name) && amount > 0) return 'gain';
+    if (l.kind === 'event' && t.includes(name)) {
+      if (amount > 0) return 'gain';
+      if (amount < 0 && /税|出費|支払|−|-/.test(t)) return 'loss';
+    }
+  }
+  return amount > 0 ? 'gain' : 'loss';
+}
+
+/** 現金増減を検知して内容が分かる演出を出す */
 function maybePresentMoneyFx(g) {
   if (!g?.players) return;
   const next = {};
@@ -2232,6 +2297,7 @@ function maybePresentMoneyFx(g) {
       color: p.color,
       amount,
       cash: p.cash,
+      mood: classifyMoneyMood(g, p, amount),
       mine: app.mode === 'local' ? !p.isCPU : p.id === app.localSeat,
     });
   }
@@ -2253,7 +2319,7 @@ function moneyFxBlocked() {
     || !$('#minigame-overlay')?.hidden;
 }
 
-/** 本番: 所持金デルタから感情演出。競合中はキューして後で再生 */
+/** 本番: 所持金デルタから内容表示。競合中はキューして後で再生 */
 function presentMoneyFx(deltas, { remote = false } = {}) {
   if (!deltas?.length) return;
   for (const d of deltas) spawnPlayerCashFloat(d);
@@ -2270,7 +2336,14 @@ function mergeMoneyDeltas(prev, next) {
   for (const d of [...(prev || []), ...next]) {
     const cur = map.get(d.pid);
     if (!cur) map.set(d.pid, { ...d });
-    else map.set(d.pid, { ...cur, amount: cur.amount + d.amount, cash: d.cash ?? cur.cash });
+    else {
+      map.set(d.pid, {
+        ...cur,
+        amount: cur.amount + d.amount,
+        cash: d.cash ?? cur.cash,
+        mood: d.mood || cur.mood,
+      });
+    }
   }
   return [...map.values()].filter((d) => d.amount);
 }
@@ -2283,36 +2356,117 @@ function flushPendingMoneyFx() {
   showMoneyFxOverlay(queued);
 }
 
+/** 文言は事実のみ（感情表現は入れない） */
+function resolveMoneyFxCopy(focus) {
+  const mood = focus.mood || (focus.amount > 0 ? 'gain' : 'loss');
+  const abs = Math.abs(focus.amount);
+  const signed = `${focus.amount > 0 ? '+' : '−'}${abs.toLocaleString()}G`;
+  const who = focus.mine ? '' : focus.name;
+
+  if (mood === 'invest') {
+    return {
+      mood: 'invest',
+      color: '#c4a574',
+      face: '店',
+      title: 'お店・株の購入',
+      amount: signed,
+      who: who ? `${who} のお店／株への出費` : 'お店／株への出費',
+      coinMode: 'invest',
+      se: 'invest',
+      floatClass: 'invest',
+    };
+  }
+  if (mood === 'five_buy') {
+    return {
+      mood: 'five_buy',
+      color: '#e09a6a',
+      face: '×5',
+      title: '5倍買い',
+      amount: signed,
+      who: who ? `${who} がお店を5倍買い` : 'お店を5倍買い',
+      coinMode: 'impact',
+      se: 'impact',
+      floatClass: 'impact',
+    };
+  }
+  if (mood === 'toll_loss') {
+    return {
+      mood: 'loss',
+      color: '#ff8a80',
+      face: 'G',
+      title: '買い物料',
+      amount: signed,
+      who: who ? `${who} が買い物料を支払い` : '買い物料の支払い',
+      coinMode: 'loss',
+      se: 'loss',
+      floatClass: 'loss',
+    };
+  }
+  if (mood === 'loss' && focus.amount < 0) {
+    return {
+      mood: 'loss',
+      color: '#ff8a80',
+      face: 'G',
+      title: '現金の減少',
+      amount: signed,
+      who: who ? `${who} の現金が減少` : '現金が減少',
+      coinMode: 'loss',
+      se: 'loss',
+      floatClass: 'loss',
+    };
+  }
+  if (mood === 'toll_gain') {
+    return {
+      mood: 'gain',
+      color: '#8fd4a8',
+      face: 'G',
+      title: '買い物料の収入',
+      amount: signed,
+      who: who ? `${who} が買い物料を受け取り` : '買い物料の受け取り',
+      coinMode: 'gain',
+      se: 'gain',
+      floatClass: 'gain',
+    };
+  }
+  return {
+    mood: 'gain',
+    color: '#8fd4a8',
+    face: 'G',
+    title: '現金の増加',
+    amount: signed,
+    who: who ? `${who} の現金が増加` : '現金が増加',
+    coinMode: 'gain',
+    se: 'gain',
+    floatClass: 'gain',
+  };
+}
+
 function showMoneyFxOverlay(deltas, { remote = false } = {}) {
   const focus = deltas.find((d) => d.mine)
     || [...deltas].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))[0];
   if (!focus || !focus.amount) return;
 
-  const gain = focus.amount > 0;
+  const copy = resolveMoneyFxCopy(focus);
   const abs = Math.abs(focus.amount);
   const tier = moneyTier(abs);
-  const color = gain ? '#8fd4a8' : '#ff8a80';
   const seq = ++app.moneyFxSeq;
   const overlay = $('#money-fx');
   if (!overlay) return;
 
   clearTimeout(app.moneyFxTimer);
-  overlay.dataset.mood = gain ? 'gain' : 'loss';
-  overlay.style.setProperty('--mfc', color);
-  $('#mf-face').textContent = gain ? '♪' : '…';
-  $('#mf-mood').textContent = gain
-    ? (focus.mine ? 'ゲット！' : '収入')
-    : (focus.mine ? 'ショック…' : '支出');
-  $('#mf-amount').textContent = `${gain ? '+' : '−'}${abs.toLocaleString()}G`;
-  $('#mf-who').textContent = focus.mine
-    ? (gain ? 'お金が増えた！' : 'お金が減った…')
-    : `${focus.name} の現金が${gain ? '増えた' : '減った'}`;
+  overlay.dataset.mood = copy.mood;
+  overlay.style.setProperty('--mfc', copy.color);
+  $('#mf-face').textContent = copy.face;
+  $('#mf-mood').textContent = copy.title;
+  $('#mf-amount').textContent = copy.amount;
+  $('#mf-who').textContent = copy.who;
 
   const coins = $('#mf-coins');
   const count = 6 + tier * 4;
+  const rising = copy.coinMode === 'gain' || copy.coinMode === 'invest' || copy.coinMode === 'impact';
   coins.innerHTML = Array.from({ length: count }, () => {
     const x = 8 + Math.random() * 84;
-    const y = gain ? 55 + Math.random() * 30 : 18 + Math.random() * 28;
+    const y = rising ? 55 + Math.random() * 30 : 18 + Math.random() * 28;
     const drift = Math.round((Math.random() - 0.5) * 70);
     const delay = (Math.random() * 0.28).toFixed(2);
     const dur = (0.75 + Math.random() * 0.45).toFixed(2);
@@ -2326,8 +2480,12 @@ function showMoneyFxOverlay(deltas, { remote = false } = {}) {
     overlay.classList.add('show');
   });
 
-  if (gain) audio.sfx.cashGain(tier);
-  else audio.sfx.cashLoss(tier);
+  // 5倍買い本体のファンファーレと二重にならないよう、金額演出は短めのSEに留める
+  if (copy.se === 'gain' || copy.se === 'invest' || copy.se === 'impact') {
+    audio.sfx.cashGain(copy.se === 'impact' ? Math.max(2, tier) : tier);
+  } else {
+    audio.sfx.cashLoss(tier);
+  }
 
   $('#event-feed-wrap')?.classList.remove('feed-collapsed');
 
@@ -2346,15 +2504,15 @@ function showMoneyFxOverlay(deltas, { remote = false } = {}) {
 function spawnPlayerCashFloat(delta) {
   const card = document.querySelector(`.player-card[data-pid="${delta.pid}"]`);
   if (!card) return;
+  const copy = resolveMoneyFxCopy(delta);
   const money = card.querySelector('.pc-money');
   if (money) {
-    money.classList.remove('gain-pulse', 'loss-pulse');
-    // reflow to restart animation
+    money.classList.remove('gain-pulse', 'loss-pulse', 'invest-pulse', 'impact-pulse');
     void money.offsetWidth;
-    money.classList.add(delta.amount > 0 ? 'gain-pulse' : 'loss-pulse');
+    money.classList.add(`${copy.floatClass}-pulse`);
   }
   const floater = document.createElement('div');
-  floater.className = `pc-cash-float ${delta.amount > 0 ? 'gain' : 'loss'}`;
+  floater.className = `pc-cash-float ${copy.floatClass}`;
   floater.textContent = `${delta.amount > 0 ? '+' : '−'}${Math.abs(delta.amount).toLocaleString()}G`;
   card.appendChild(floater);
   setTimeout(() => floater.remove(), 1000);
