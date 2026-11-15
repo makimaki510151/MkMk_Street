@@ -348,6 +348,11 @@ button:disabled { opacity: .42; cursor: default; }
 }
 .side-pane.active { display: flex; }
 .side-pane[hidden] { display: none !important; }
+.side-controls {
+  flex: 0 0 auto;
+  margin: 0 0.65rem 0.65rem;
+  z-index: 2;
+}
 
 #players-panel {
   display: grid;
@@ -585,6 +590,10 @@ button:disabled { opacity: .42; cursor: default; }
 .event-stamp {
   --eb: var(--accent);
   flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.35rem 0.45rem;
+  align-items: start;
   padding: 0.4rem 0.55rem;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface) 90%, var(--eb));
@@ -592,22 +601,36 @@ button:disabled { opacity: .42; cursor: default; }
   animation: stampIn 0.14s ease-out both;
 }
 .event-stamp[data-mine="1"] { border-color: color-mix(in srgb, var(--eb) 80%, #fff); }
+.event-stamp .eb-glyph {
+  grid-row: 1 / span 3;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--eb) 22%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--eb) 45%, var(--line));
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--eb) 80%, #fff);
+  line-height: 1;
+}
 .event-stamp .eb-kicker {
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: color-mix(in srgb, var(--eb) 75%, #fff);
-  margin-bottom: 0.08rem;
+  margin-bottom: 0;
 }
 .event-stamp .eb-title {
   font-family: var(--display);
-  font-size: clamp(0.95rem, 2.4vw, 1.15rem);
+  font-size: clamp(0.92rem, 2.4vw, 1.1rem);
   font-weight: 700;
   line-height: 1.2;
   color: var(--ink);
 }
 .event-stamp .eb-detail {
-  margin-top: 0.15rem;
   font-size: 0.72rem;
   font-weight: 500;
   color: var(--muted);
@@ -617,6 +640,127 @@ button:disabled { opacity: .42; cursor: default; }
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: none; }
 }
+
+/* board-center event flash */
+#event-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 42%, color-mix(in srgb, var(--efc, var(--accent)) 22%, transparent), transparent 58%),
+    rgba(12, 14, 16, 0.28);
+}
+#event-flash[hidden] { display: none !important; }
+.ef-stage {
+  position: relative;
+  text-align: center;
+  min-width: min(280px, 72%);
+  max-width: min(420px, 88%);
+  padding: 1.1rem 1.25rem 1rem;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--efc, var(--accent)) 14%, transparent), transparent 55%),
+    color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--efc, var(--accent)) 55%, var(--line));
+  box-shadow: var(--shadow);
+  transform: scale(0.86) translateY(10px);
+  opacity: 0;
+  transition: transform .28s cubic-bezier(.2,.85,.2,1), opacity .22s ease;
+}
+#event-flash.show .ef-stage {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.ef-burst {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 20deg, transparent 0 12%, color-mix(in srgb, var(--efc, var(--accent)) 35%, transparent) 14% 18%, transparent 20% 45%, color-mix(in srgb, var(--efc, var(--accent)) 28%, transparent) 47% 52%, transparent 54% 78%, color-mix(in srgb, var(--efc, var(--accent)) 30%, transparent) 80% 85%, transparent 87% 100%);
+  opacity: 0;
+  pointer-events: none;
+}
+#event-flash.show .ef-burst {
+  animation: efBurst 1.05s ease-out both;
+}
+.ef-icon {
+  width: 3.4rem;
+  height: 3.4rem;
+  margin: 0 auto 0.45rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  font-family: var(--display);
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: #1a1510;
+  background: var(--efc, var(--accent-strong));
+  border: 1px solid color-mix(in srgb, var(--efc, var(--accent)) 55%, #000);
+  animation: efIconPop .45s cubic-bezier(.2,.9,.2,1) both;
+}
+.ef-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: color-mix(in srgb, var(--efc, var(--accent)) 70%, #fff);
+  margin-bottom: 0.2rem;
+}
+.ef-title {
+  font-family: var(--display);
+  font-size: clamp(1.35rem, 3.6vw, 1.9rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--ink);
+}
+.ef-detail {
+  margin-top: 0.3rem;
+  font-size: 0.84rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.ef-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+}
+.ef-chip {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.18rem 0.42rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--efc, var(--accent)) 40%, var(--line));
+  background: color-mix(in srgb, var(--efc, var(--accent)) 16%, var(--surface-2));
+  color: var(--ink);
+  animation: efChipIn .35s ease both;
+  animation-delay: calc(0.12s + var(--i, 0) * 55ms);
+}
+@keyframes efBurst {
+  0% { opacity: 0; transform: scale(0.6) rotate(0deg); }
+  35% { opacity: 0.55; }
+  100% { opacity: 0; transform: scale(1.25) rotate(28deg); }
+}
+@keyframes efIconPop {
+  from { transform: scale(0.55) rotate(-8deg); opacity: 0; }
+  to { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+@keyframes efChipIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+#event-flash[data-visual="toll"] .ef-icon { background: #c48a6a; }
+#event-flash[data-visual="shop"] .ef-icon { background: #6f9e8a; }
+#event-flash[data-visual="level"] .ef-icon { background: #d8bc8e; }
+#event-flash[data-visual="mark"] .ef-icon { background: #6e8fad; color: #f4f1ea; }
+#event-flash[data-visual="stock"] .ef-icon { background: #6e8fad; color: #f4f1ea; }
+#event-flash[data-visual="event"] .ef-icon { background: #c4a574; }
+#event-flash[data-visual="win"] .ef-icon { background: #e6c57a; }
+#event-flash[data-visual="system"] .ef-icon { background: #9aa3ad; }
+#event-flash[data-visual="dice"] .ef-icon { background: var(--accent-strong); }
 
 /* volume — collapsed */
 #vol-dock {

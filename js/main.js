@@ -70,9 +70,25 @@ const app = {
   feedPinnedBottom: true,
   inspectedId: null,
   restSkipTimer: null,
+  eventFlashTimer: null,
+  eventFlashSeq: 0,
 };
 
-const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system']);
+const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
+
+/** イベント種別ごとの視覚アイコン／チップ */
+const EVENT_VISUALS = {
+  toll: { glyph: 'G', chips: ['買い物料'] },
+  shop: { glyph: '店', chips: ['お店'] },
+  level: { glyph: 'Lv', chips: ['昇進'] },
+  mark: { glyph: '◆', chips: ['マーク'] },
+  event: { glyph: '!', chips: ['イベント'] },
+  stock: { glyph: '株', chips: ['株式'] },
+  win: { glyph: '★', chips: ['勝利'] },
+  system: { glyph: '・', chips: ['状況'] },
+  dice: { glyph: '出', chips: ['サイコロ'] },
+  info: { glyph: 'i', chips: [] },
+};
 
 function saveRejoinSession() {
   if (app.mode === 'local' || !app.net?.roomCode) return;
@@ -484,7 +500,10 @@ function playRemoteFx(data) {
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
   }
-  if (data.kind === 'fiveBuy') audio.sfx.fiveBuy();
+  if (data.kind === 'fiveBuy') {
+    audio.sfx.fiveBuy();
+    if (data.payload) enqueueBanner(data.payload);
+  }
   if (data.kind === 'monopoly') {
     audio.sfx.monopoly();
     if (data.payload) enqueueBanner(data.payload);
@@ -619,6 +638,38 @@ function maybeDemoLanding() {
   if (demo === 'results') {
     seedResultsDemo(app.game);
     refreshGameUI();
+    return;
+  }
+  if (demo === 'event-fx' || demo === 'roll-tabs') {
+    // 所持タブでもサイコロが使えること＋イベントフラッシュのデモ
+    $$('.side-tab').forEach((b) => {
+      const on = b.dataset.sideTab === 'holdings';
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $$('.side-pane').forEach((pane) => {
+      const on = pane.dataset.pane === 'holdings';
+      pane.classList.toggle('active', on);
+      pane.hidden = !on;
+    });
+    refreshGameUI();
+    const demos = [
+      { kicker: '買い物料', title: '支払い発生', detail: 'あか → あお「さくら茶屋」買い物料 420G', kind: 'toll', color: '#e85d75' },
+      { kicker: 'お店', title: '購入！', detail: 'あかが「青空マーケット」を購入', kind: 'shop', color: '#e85d75' },
+      { kicker: '昇進！', title: 'レベルアップ', detail: 'あか 昇進！ Lv.2→3', kind: 'level', color: '#e85d75' },
+      { kicker: 'マーク入手！', title: '♠', detail: 'あかがマーク♠を入手', kind: 'mark', color: '#e85d75' },
+      { kicker: '株式取引', title: '株を購入', detail: 'あかが A1株×10 購入', kind: 'stock', color: '#3d8bfd' },
+    ];
+    // 最初の1件は即時表示（スクショ確認用）。以降は順に再生
+    enqueueBanner({ ...demos[0], mine: true });
+    let i = 1;
+    const tick = () => {
+      if (i >= demos.length) return;
+      enqueueBanner({ ...demos[i], mine: true });
+      i += 1;
+      setTimeout(tick, 1400);
+    };
+    setTimeout(tick, 1400);
   }
 }
 
@@ -1028,15 +1079,16 @@ async function applyLocalAction(action) {
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
-      broadcastFx({ kind: 'fiveBuy' });
-      enqueueBanner({
+      const fivePayload = {
         kicker: '衝撃！',
         title: '5倍買い！',
         detail: 'お店を奪取した！',
         kind: 'shop',
         color: currentPlayer(app.game)?.color || '#ffe08a',
         mine: true,
-      });
+      };
+      broadcastFx({ kind: 'fiveBuy', payload: fivePayload });
+      enqueueBanner(fivePayload);
     }
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
@@ -1991,6 +2043,10 @@ function bannerFromLog(g, l) {
     kicker = mine ? 'お店' : `${player?.name || ''} のお店`;
     title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
     detail = l.text;
+  } else if (kind === 'stock') {
+    kicker = mine ? '株式取引' : `${player?.name || ''} の株`;
+    title = /売却/.test(l.text) ? '株を売却' : '株を購入';
+    detail = l.text;
   } else if (kind === 'event') {
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
@@ -2049,20 +2105,137 @@ function bannerFromLog(g, l) {
 
 function enqueueBanner(payload) {
   if (!payload?.title) return;
-  pushEventStamp(payload);
+  const visual = resolveEventVisual(payload);
+  pushEventStamp({ ...payload, visual });
+  presentEventFlash({ ...payload, visual });
+}
+
+function resolveEventVisual(payload) {
+  const kind = payload.kind || 'info';
+  const text = `${payload.kicker || ''} ${payload.title || ''} ${payload.detail || ''}`;
+  const base = { ...(EVENT_VISUALS[kind] || EVENT_VISUALS.info) };
+  const chips = [...(base.chips || [])];
+
+  if (kind === 'shop') {
+    if (/5倍|奪取/.test(text)) {
+      base.glyph = '×5';
+      chips.unshift('5倍買い');
+    } else if (/増資/.test(text)) {
+      base.glyph = '+';
+      chips.unshift('増資');
+    } else if (/購入|買った/.test(text)) {
+      chips.unshift('購入');
+    }
+  } else if (kind === 'level' || /独占/.test(text)) {
+    if (/独占/.test(text)) {
+      base.glyph = '◎';
+      chips.unshift('独占');
+    }
+  } else if (kind === 'mark') {
+    const suit = (text.match(/[♠♥♦♣]/) || [])[0];
+    if (suit) base.glyph = suit;
+  } else if (kind === 'toll') {
+    const amt = (text.match(/([\d,]+)\s*G/) || [])[1];
+    if (amt) chips.push(`${amt}G`);
+  } else if (kind === 'system') {
+    if (/休憩|休み/.test(text)) {
+      base.glyph = 'Z';
+      chips.unshift('休憩');
+    } else if (/店休|営業/.test(text)) {
+      base.glyph = '休';
+      chips.unshift('店休');
+    } else if (/破産/.test(text)) {
+      base.glyph = '×';
+      chips.unshift('破産');
+    } else if (/売却/.test(text)) {
+      base.glyph = '売';
+      chips.unshift('売却');
+    }
+  } else if (kind === 'event') {
+    if (/ワープ/.test(text)) {
+      base.glyph = '↗';
+      chips.unshift('ワープ');
+    } else if (/スクラッチ|そろい/.test(text)) {
+      base.glyph = '◇';
+      chips.unshift('スクラッチ');
+    } else if (/ラッキー/.test(text)) {
+      base.glyph = '★';
+      chips.unshift('ラッキー');
+    } else if (/ミニゲーム|当たり|ハズレ|ジャックポット/.test(text)) {
+      base.glyph = 'MG';
+      chips.unshift('ミニゲーム');
+    }
+  } else if (kind === 'stock') {
+    if (/売却|売った/.test(text)) chips.unshift('売却');
+    else chips.unshift('購入');
+  } else if (kind === 'dice') {
+    const n = (String(payload.title).match(/^\d+$/) || [])[0];
+    if (n) base.glyph = n;
+  }
+
+  return { glyph: base.glyph, chips: [...new Set(chips)].slice(0, 3) };
+}
+
+/** 盤面中央に視覚的なイベントフラッシュを出す */
+function presentEventFlash(payload) {
+  const overlay = $('#event-flash');
+  if (!overlay || !payload?.title) return;
+  // 既存の専用オーバーレイが出ているときは二重にしない
+  if (!$('#dice-overlay')?.hidden) return;
+  if (!$('#warp-overlay')?.hidden) return;
+  if (!$('#scratch-match-overlay')?.hidden) return;
+  if (!$('#minigame-overlay')?.hidden) return;
+
+  const visual = payload.visual || resolveEventVisual(payload);
+  const kind = payload.kind || 'info';
+  const color = payload.color || '#c4a574';
+  const seq = ++app.eventFlashSeq;
+
+  clearTimeout(app.eventFlashTimer);
+  overlay.dataset.visual = kind;
+  overlay.style.setProperty('--efc', color);
+  $('#ef-icon').textContent = visual.glyph || '!';
+  $('#ef-kicker').textContent = payload.kicker || '';
+  $('#ef-title').textContent = payload.title || '';
+  $('#ef-detail').textContent = payload.detail || '';
+  const chips = $('#ef-chips');
+  chips.innerHTML = (visual.chips || [])
+    .map((c, i) => `<span class="ef-chip" style="--i:${i}">${escapeHtml(c)}</span>`)
+    .join('');
+
+  overlay.hidden = false;
+  overlay.classList.remove('show');
+  requestAnimationFrame(() => {
+    if (app.eventFlashSeq !== seq) return;
+    overlay.classList.add('show');
+  });
+
+  // フィードも開いて出来事を追えるようにする
+  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+
+  app.eventFlashTimer = setTimeout(() => {
+    if (app.eventFlashSeq !== seq) return;
+    overlay.classList.remove('show');
+    setTimeout(() => {
+      if (app.eventFlashSeq !== seq) return;
+      overlay.hidden = true;
+    }, 220);
+  }, 1180);
 }
 
 /** 左上フィードへ即時スタンプ追加（上→下・さかのぼり可） */
-function pushEventStamp({ kicker, title, detail, kind, color, mine }) {
+function pushEventStamp({ kicker, title, detail, kind, color, mine, visual }) {
   const feed = $('#event-feed');
   if (!feed) return;
 
+  const v = visual || resolveEventVisual({ kicker, title, detail, kind });
   const stamp = document.createElement('article');
   stamp.className = 'event-stamp';
   stamp.dataset.kind = kind || 'info';
   stamp.dataset.mine = mine ? '1' : '0';
   stamp.style.setProperty('--eb', color || '#ffe08a');
   stamp.innerHTML = `
+    <div class="eb-glyph" aria-hidden="true">${escapeHtml(v.glyph || '!')}</div>
     <div class="eb-kicker">${escapeHtml(kicker || '')}</div>
     <div class="eb-title">${escapeHtml(title || '')}</div>
     ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
