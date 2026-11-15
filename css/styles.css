@@ -362,6 +362,8 @@ button:disabled { opacity: .42; cursor: default; }
   min-height: 0;
 }
 .player-card {
+  position: relative;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-left: 3px solid var(--pc);
@@ -376,7 +378,60 @@ button:disabled { opacity: .42; cursor: default; }
 .pc-head { display: flex; align-items: center; gap: 0.35rem; }
 .pc-dot { width: 8px; height: 8px; border-radius: 1px; background: var(--pc); }
 .pc-lv { margin-left: auto; font-size: 0.72rem; color: var(--muted); }
-.pc-money { font-size: 1.02rem; font-weight: 700; margin-top: 0.1rem; }
+.pc-money {
+  position: relative;
+  font-size: 1.02rem;
+  font-weight: 700;
+  margin-top: 0.1rem;
+  transition: color .2s ease, transform .2s ease;
+}
+.pc-money.gain-pulse {
+  color: #8fd4a8;
+  animation: moneyPulseGain .55s ease;
+}
+.pc-money.loss-pulse {
+  color: #ff8a80;
+  animation: moneyPulseLoss .55s ease;
+}
+.pc-cash-float {
+  position: absolute;
+  left: 0.55rem;
+  top: 1.55rem;
+  z-index: 2;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 0.92rem;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  animation: cashFloatUp .95s ease-out forwards;
+}
+.pc-cash-float.loss {
+  animation-name: cashFloatDown;
+  color: #ff8a80;
+}
+.pc-cash-float.gain { color: #8fd4a8; }
+@keyframes moneyPulseGain {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes moneyPulseLoss {
+  0% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+@keyframes cashFloatUp {
+  0% { opacity: 0; transform: translateY(6px) scale(0.85); }
+  18% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-28px) scale(1.05); }
+}
+@keyframes cashFloatDown {
+  0% { opacity: 0; transform: translateY(-4px) scale(0.85); }
+  18% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(22px) scale(0.95); }
+}
 .pc-assets { color: var(--accent-strong); font-size: 0.8rem; font-weight: 700; }
 .pc-sub { font-size: 0.7rem; color: var(--muted); }
 .pc-marks { display: flex; gap: 0.22rem; margin-top: 0.2rem; }
@@ -761,6 +816,140 @@ button:disabled { opacity: .42; cursor: default; }
 #event-flash[data-visual="win"] .ef-icon { background: #e6c57a; }
 #event-flash[data-visual="system"] .ef-icon { background: #9aa3ad; }
 #event-flash[data-visual="dice"] .ef-icon { background: var(--accent-strong); }
+
+/* money gain / loss emotion FX */
+#money-fx {
+  position: absolute;
+  inset: 0;
+  z-index: 13;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--mfc, #8fd4a8) 24%, transparent), transparent 58%),
+    rgba(12, 14, 16, 0.22);
+}
+#money-fx[hidden] { display: none !important; }
+#money-fx[data-mood="loss"] {
+  background:
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, #ff8a80 22%, transparent), transparent 58%),
+    rgba(18, 10, 12, 0.32);
+}
+.mf-stage {
+  position: relative;
+  text-align: center;
+  min-width: min(260px, 70%);
+  max-width: min(400px, 86%);
+  padding: 1.15rem 1.2rem 1rem;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--mfc, #8fd4a8) 16%, transparent), transparent 55%),
+    color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mfc, #8fd4a8) 50%, var(--line));
+  box-shadow: var(--shadow);
+  transform: scale(0.82) translateY(12px);
+  opacity: 0;
+  transition: transform .3s cubic-bezier(.2,.9,.2,1), opacity .22s ease;
+  overflow: hidden;
+}
+#money-fx.show .mf-stage {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.mf-coins {
+  position: absolute;
+  inset: -8% -4% 20%;
+  pointer-events: none;
+}
+.mf-coin {
+  position: absolute;
+  left: var(--x, 50%);
+  top: var(--y, 70%);
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 28%, #fff3c8, #e6c57a 42%, #b8923f 78%);
+  border: 1px solid color-mix(in srgb, #8a6a28 55%, #fff);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+  font-size: 0.58rem;
+  font-weight: 800;
+  color: #5a4010;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  animation: mfCoinGain var(--dur, 0.95s) ease-out forwards;
+  animation-delay: var(--delay, 0s);
+}
+.mf-coin::after { content: 'G'; }
+#money-fx[data-mood="loss"] .mf-coin {
+  background:
+    radial-gradient(circle at 30% 28%, #ffd0c8, #c46b6b 45%, #7a3030 80%);
+  border-color: color-mix(in srgb, #5a2020 50%, #fff);
+  color: #3a1010;
+  animation-name: mfCoinLoss;
+}
+.mf-face {
+  width: 3.2rem;
+  height: 3.2rem;
+  margin: 0 auto 0.35rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.7rem;
+  font-weight: 800;
+  line-height: 1;
+  background: color-mix(in srgb, var(--mfc, #8fd4a8) 28%, var(--surface-2));
+  border: 2px solid color-mix(in srgb, var(--mfc, #8fd4a8) 55%, var(--line));
+  animation: mfFacePop .45s cubic-bezier(.2,.95,.2,1) both;
+}
+.mf-mood {
+  font-family: var(--display);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--mfc, #8fd4a8) 75%, #fff);
+  margin-bottom: 0.15rem;
+}
+.mf-amount {
+  font-family: var(--display);
+  font-size: clamp(1.7rem, 5vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--mfc, #8fd4a8);
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--mfc, #8fd4a8) 35%, transparent);
+  animation: mfAmountPop .5s cubic-bezier(.2,.95,.2,1) both;
+}
+#money-fx[data-mood="loss"] .mf-amount {
+  animation-name: mfAmountDrop;
+}
+.mf-who {
+  margin-top: 0.28rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+@keyframes mfCoinGain {
+  0% { opacity: 0; transform: translate(-50%, 18px) scale(0.5) rotate(-20deg); }
+  18% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--drift, 0px)), -72px) scale(1) rotate(25deg); }
+}
+@keyframes mfCoinLoss {
+  0% { opacity: 0; transform: translate(-50%, -12px) scale(0.7) rotate(10deg); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--drift, 0px)), 78px) scale(0.85) rotate(-30deg); }
+}
+@keyframes mfFacePop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes mfAmountPop {
+  from { transform: scale(0.7) translateY(8px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes mfAmountDrop {
+  from { transform: scale(1.15) translateY(-8px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
 
 /* volume — collapsed */
 #vol-dock {

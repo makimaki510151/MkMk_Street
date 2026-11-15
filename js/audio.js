@@ -170,6 +170,38 @@ export function createAudio() {
       tone(180, 0.18, 'sawtooth', 0.05);
       tone(140, 0.22, 'sawtooth', 0.04, 0.1);
     },
+    /** 現金ゲット — 明るいコインが跳ねる感じ */
+    cashGain(tier = 1) {
+      const n = Math.max(1, Math.min(3, tier | 0));
+      noiseBurst(0.05, 0.05);
+      const base = [523, 659, 784, 988, 1175];
+      for (let i = 0; i < 2 + n; i++) {
+        const f = base[i % base.length] * (1 + i * 0.02);
+        tone(f, 0.14 + n * 0.03, i % 2 ? 'triangle' : 'sine', 0.09, i * 0.07);
+      }
+      tone(1318, 0.28 + n * 0.08, 'sine', 0.08, 0.28 + n * 0.05);
+      if (n >= 2) tone(1568, 0.35, 'triangle', 0.07, 0.42);
+      if (n >= 3) {
+        tone(1760, 0.4, 'sine', 0.06, 0.55);
+        noiseBurst(0.08, 0.07);
+      }
+    },
+    /** 現金ロス — 沈む・しょんぼりした下降音 */
+    cashLoss(tier = 1) {
+      const n = Math.max(1, Math.min(3, tier | 0));
+      noiseBurst(0.06, 0.05);
+      tone(220, 0.2, 'sawtooth', 0.06);
+      const down = [392, 330, 262, 196, 147];
+      for (let i = 0; i < 2 + n; i++) {
+        tone(down[i % down.length], 0.18 + n * 0.03, 'triangle', 0.07, 0.1 + i * 0.09);
+      }
+      tone(110, 0.35 + n * 0.08, 'sine', 0.06, 0.35 + n * 0.05);
+      if (n >= 2) tone(82, 0.4, 'sawtooth', 0.05, 0.5);
+      if (n >= 3) {
+        tone(65, 0.5, 'sine', 0.05, 0.62);
+        noiseBurst(0.1, 0.06);
+      }
+    },
     fork() {
       tone(440, 0.08, 'sine', 0.07);
       tone(554, 0.1, 'sine', 0.07, 0.08);
