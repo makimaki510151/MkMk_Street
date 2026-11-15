@@ -1,6 +1,15 @@
 /** MkMk Street — ゲームエンジン（純ロジック / ホスト権威） */
 
-import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
+import {
+  buildBoard,
+  applySwitchState,
+  SUIT_LABELS,
+  DEFAULT_GOAL,
+  DEFAULT_CASH,
+  DEFAULT_MAP_ID,
+  dirLabel,
+  getMapDef,
+} from './board.js';
 import { createEventTable, scratchCell, unscratchedIds, applyAllCash, recordWarp, takeWarpFx } from './eventTable.js';
 import {
   monopolyRate as monopolyRateOf,
@@ -349,9 +358,16 @@ function mulberry32(seed) {
   };
 }
 
-export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), cash } = {}) {
-  const board = buildBoard();
+export function createGame({
+  players,
+  goal,
+  seed = Date.now(),
+  cash,
+  mapId = DEFAULT_MAP_ID,
+} = {}) {
+  const board = buildBoard(mapId);
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
+  const resolvedGoal = goal ?? board.goal ?? DEFAULT_GOAL;
   const rng = mulberry32(seed);
 
   let cpuOrd = 0;
@@ -388,12 +404,14 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
   const g = {
     map: board.nodes,
     areas: board.areas,
+    mapId: board.mapId || getMapDef(mapId).id,
+    mapName: board.mapName || getMapDef(mapId).name,
     /** 全員共通のイベント表（1マスずつ誰かがめくる） */
     sharedEventTable: createEventTable((seed >>> 0) + 7771),
     cols: board.cols,
     rows: board.rows,
     startId: board.startId,
-    goal,
+    goal: resolvedGoal,
     players: plist,
     currentPlayerIdx: 0,
     phase: 'await_roll', // await_roll | await_fork | await_choice | gameover
@@ -404,14 +422,25 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     winnerId: null,
     turn: 1,
     goalPressure: false,
+    switchState: board.switchState || 0,
+    switchGates: board.switchGates || [],
+    switchMoves: board.switchMoves || [],
     worthHistory: [],
     _seed: seed,
     _rngCount: 0,
     _rngState: seed,
   };
+  applySwitchState(g);
   for (const p of plist) syncStockValueSnap(g, p);
   recordWorthSnapshot(g);
   return g;
+}
+
+/** スイッチマス：経路と動くマスを切り替える */
+export function toggleBoardSwitch(g) {
+  g.switchState = g.switchState ? 0 : 1;
+  applySwitchState(g);
+  return g.switchState;
 }
 
 function rngNext(g) {
@@ -887,6 +916,11 @@ export function serializeState(g) {
   return JSON.parse(JSON.stringify({
     map: g.map,
     areas: g.areas,
+    mapId: g.mapId || DEFAULT_MAP_ID,
+    mapName: g.mapName || '',
+    switchState: g.switchState ? 1 : 0,
+    switchGates: g.switchGates || [],
+    switchMoves: g.switchMoves || [],
     cols: g.cols,
     rows: g.rows,
     startId: g.startId,
@@ -922,6 +956,10 @@ export function getSharedEventTable(g) {
 export function restoreState(data) {
   const g = { ...data };
   for (const p of g.players || []) ensureStats(p);
+  if (!Array.isArray(g.switchGates)) g.switchGates = [];
+  if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
+  g.switchState = g.switchState ? 1 : 0;
+  applySwitchState(g);
   return g;
 }
 
@@ -960,7 +998,7 @@ function setForkPending(g, p, options) {
       else side = dr > 0 ? 'down' : 'up';
       return {
         id,
-        label: dirLabel(from, to),
+        label: to?.forkAs || dirLabel(from, to),
         dest: to?.label || `#${id}`,
         side,
       };
@@ -1152,7 +1190,7 @@ export function rollDice(g) {
   return { ok: true, dice: d, needsAdvance: true, state: serializeState(g) };
 }
 
-function resolveLanding(g, p, { passedBank }) {
+function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   const landedOnBank = p.pos === g.startId;
 
   // 銀行にぴったり停止（通過割込み済みなら二重処理しない）
@@ -1173,6 +1211,38 @@ function resolveLanding(g, p, { passedBank }) {
 
   if (sq.type === 'junction') {
     addLog(g, `${p.name} は分岐点に停止`, 'system');
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'warp') {
+    if (fromWarp) {
+      addLog(g, `${p.name} はワープマスに停止`, 'system');
+      finishLanding(g, p);
+      return;
+    }
+    const dest = getNode(g, sq.warpTo);
+    if (!dest) {
+      addLog(g, `${p.name} のワープ先が見つからない…`, 'system');
+      finishLanding(g, p);
+      return;
+    }
+    const fromId = p.pos;
+    recordWarp(g, p.id, fromId, dest.id);
+    p.prevPos = null;
+    p.pos = dest.id;
+    addLog(g, `${p.name} がワープ！ ${sq.label} → ${dest.label}`, 'event');
+    resolveLanding(g, p, { passedBank: false, fromWarp: true });
+    return;
+  }
+
+  if (sq.type === 'switch') {
+    const next = toggleBoardSwitch(g);
+    addLog(
+      g,
+      `${p.name} がスイッチを倒した！ 経路が切り替わった（状態${next + 1}）`,
+      'event',
+    );
     finishLanding(g, p);
     return;
   }

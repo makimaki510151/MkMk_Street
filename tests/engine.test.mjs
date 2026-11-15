@@ -11,6 +11,7 @@ import {
   getGoalPressurePlayers,
   refreshGoalPressure,
   serializeState,
+  restoreState,
   getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
@@ -45,11 +46,13 @@ import {
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
   getLevelBonus,
+  toggleBoardSwitch,
+  getNode,
   cpuCashReserve,
   cpuCanAffordSpend,
   cpuEstimateMaxToll,
 } from '../js/engine.js';
-import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
+import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
 import {
   unscratchedIds,
   EVENT_CATALOG,
@@ -90,6 +93,182 @@ describe('MkMk Street engine', () => {
       // 基本は4件
       assert.equal(count, AREA_SHOP_BASE, `area ${area} should be base ${AREA_SHOP_BASE}, got ${count}`);
     }
+  });
+
+  it('offers multiple maps including a detached island board', () => {
+    assert.ok(MAP_CATALOG.length >= 3);
+    const ids = new Set(MAP_CATALOG.map((m) => m.id));
+    assert.ok(ids.has('central_cross'));
+    assert.ok(ids.has('shell_harbor'));
+    assert.ok(ids.has('cliff_isle'));
+
+    for (const def of MAP_CATALOG) {
+      const board = buildBoard(def.id);
+      assert.equal(board.mapId, def.id);
+      assert.ok(board.nodes.length > 10);
+      assert.ok(board.cols >= 9 && board.rows >= 8);
+      for (const n of board.nodes) {
+        for (const nid of n.nexts) {
+          const other = board.nodes.find((x) => x.id === nid);
+          assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+        }
+      }
+      const counts = {};
+      for (const s of board.nodes.filter((x) => x.type === 'shop')) {
+        counts[s.area] = (counts[s.area] || 0) + 1;
+      }
+      for (const [area, count] of Object.entries(counts)) {
+        assert.ok(count <= AREA_SHOP_MAX, `${def.id} area ${area}: ${count}`);
+        assert.ok(count >= 3, `${def.id} area ${area}: too few (${count})`);
+      }
+    }
+
+    const isle = buildBoard('cliff_isle');
+    assert.ok(isle.areas[11], 'cliff isle should have detached area 11');
+    assert.ok(isle.areas[12], 'cliff isle should have second island area 12');
+    assert.equal(isle.areas[11].name, 'がけしたどおり');
+    assert.equal(isle.areas[12].name, '潮風どおり');
+    assert.ok(isle.nodes.some((n) => n.type === 'warp'));
+    // 小島中央に株マスはない（証券は本島側）
+    const isleNodeIds = new Set();
+    {
+      const warps = isle.nodes.filter((n) => n.type === 'warp');
+      const isleWarp = warps.find((n) => n.label.includes('本島')) || warps.find((n) => n.col >= 10);
+      assert.ok(isleWarp);
+      const q = [isleWarp.id];
+      isleNodeIds.add(isleWarp.id);
+      while (q.length) {
+        const id = q.shift();
+        const node = isle.nodes.find((n) => n.id === id);
+        for (const nid of node.nexts || []) {
+          if (!isleNodeIds.has(nid)) {
+            isleNodeIds.add(nid);
+            q.push(nid);
+          }
+        }
+      }
+      for (const id of isleNodeIds) {
+        const n = isle.nodes.find((x) => x.id === id);
+        assert.notEqual(n.type, 'stockbroker', 'island must not have center stockbroker');
+      }
+    }
+    assert.ok(isle.nodes.some((n) => n.type === 'stockbroker' && n.col < 10), 'main island keeps a stockbroker');
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 2,
+      mapId: 'cliff_isle',
+    });
+    assert.equal(g.mapId, 'cliff_isle');
+    assert.ok(g.cols >= 16);
+
+    // 島は徒歩では到達できない
+    const bank = getNode(g, g.startId);
+    const seen = new Set([bank.id]);
+    const q = [bank.id];
+    while (q.length) {
+      const id = q.shift();
+      for (const nid of getNode(g, id).nexts) {
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          q.push(nid);
+        }
+      }
+    }
+    const isleShop = g.map.find((n) => n.type === 'shop' && n.area === 11);
+    assert.ok(isleShop);
+    assert.equal(seen.has(isleShop.id), false);
+    assert.equal(seen.has(g.map.find((n) => n.type === 'shop' && n.area === 12).id), false);
+
+    // ワープ着地で島へ
+    const mainWarp = g.map.find((n) => n.type === 'warp' && n.label.includes('島'));
+    assert.ok(mainWarp?.warpTo != null);
+    g.players[0].pos = mainWarp.id;
+    g.move = { stepsLeft: 0, path: [mainWarp.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const landed = advanceMove(g);
+    assert.equal(landed.ok, true);
+    assert.ok(landed.warps?.length >= 1);
+    assert.equal(g.players[0].pos, mainWarp.warpTo);
+  });
+
+  it('shell harbor forks offer pier vs coast route labels', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 4,
+      mapId: 'shell_harbor',
+    });
+    const pier = g.map.find((n) => n.forkAs === '北埠頭へ');
+    const coast = g.map.find((n) => n.label === '砂浜カフェ');
+    assert.ok(pier && coast);
+    // 砂浜カフェから前進すると埠頭／海岸のラベル付き分岐になる
+    g.players[0].pos = coast.id;
+    g.players[0].prevPos = g.map.find((n) => n.label === '珊瑚屋').id;
+    g.move = { stepsLeft: 3, path: [coast.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const step = advanceMove(g);
+    assert.equal(step.forked, true);
+    const labels = (g.pending.options || []).map((o) => o.label);
+    assert.ok(labels.includes('北埠頭へ'), labels.join(','));
+    assert.ok(labels.includes('海岸どおり'), labels.join(','));
+  });
+
+  it('all maps keep every square at least 2-connected (no dead ends)', () => {
+    for (const def of MAP_CATALOG) {
+      for (const state of def.id === 'shell_harbor' ? [0, 1] : [0]) {
+        const g = createGame({
+          players: [{ name: 'A' }, { name: 'B' }],
+          seed: 9,
+          mapId: def.id,
+        });
+        if (state === 1) toggleBoardSwitch(g);
+        for (const n of g.map) {
+          assert.ok(
+            (n.nexts?.length || 0) >= 2,
+            `${def.id} state ${g.switchState}: ${n.type}:${n.label} deg=${n.nexts?.length || 0}`,
+          );
+          for (const nid of n.nexts) {
+            const other = getNode(g, nid);
+            assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+            const diag = Math.abs(other.col - n.col) > 0 && Math.abs(other.row - n.row) > 0;
+            assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
+          }
+        }
+      }
+    }
+  });
+
+  it('shell harbor switch toggles routes and movable squares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+      mapId: 'shell_harbor',
+    });
+    assert.ok((g.switchGates || []).length >= 2);
+    assert.ok(g.map.some((n) => n.type === 'switch'));
+    const float = g.map.find((n) => n.label === '屋台船');
+    assert.ok(float);
+    const col0 = float.col;
+    const row0 = float.row;
+    const hub = g.map.find((n) => n.type === 'switch');
+    const nexts0 = [...hub.nexts].sort((a, b) => a - b);
+    const st1 = toggleBoardSwitch(g);
+    assert.equal(st1, 1);
+    const nexts1 = [...getNode(g, hub.id).nexts].sort((a, b) => a - b);
+    assert.notDeepEqual(nexts0, nexts1);
+    const moved = getNode(g, float.id);
+    assert.ok(moved.col !== col0 || moved.row !== row0, 'movable shop should slide');
+
+    // スイッチマス着地でも切り替わる
+    g.players[0].pos = hub.id;
+    g.move = { stepsLeft: 0, path: [hub.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const before = g.switchState;
+    advanceMove(g);
+    assert.equal(g.switchState, before ? 0 : 1);
+
+    const again = restoreState(serializeState(g));
+    assert.equal(again.switchState, g.switchState);
+    assert.ok(Array.isArray(again.switchGates));
   });
 
   it('creates a board with shops and areas', () => {

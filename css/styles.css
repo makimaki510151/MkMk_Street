@@ -529,11 +529,86 @@ body.goal-pressure .board-wrap {
   background: color-mix(in srgb, #ffb020 14%, transparent);
 }
 .pc-flag.lucky { color: #e8b84a; }
+.pc-flag.invest-half {
+  color: #2a1a00;
+  background: linear-gradient(180deg, #ffe08a, #f0c14a);
+  border-color: color-mix(in srgb, #f0a202 55%, transparent);
+  font-weight: 800;
+}
 .pc-flag.coupon { color: #7ec8ff; }
 .pc-flag.offline {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+#buff-chip.buff {
+  color: #2a1a00;
+  background: linear-gradient(180deg, #ffe08a, #f0c14a);
+  border-color: color-mix(in srgb, #f0a202 50%, transparent);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.map-picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.65rem 0.7rem;
+  margin: 0.55rem 0 0.35rem;
+}
+.map-picker legend {
+  font-family: var(--display);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 0.25rem;
+}
+.map-picker-grid {
+  display: grid;
+  gap: 0.4rem;
+}
+.map-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  cursor: pointer;
+}
+.map-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+}
+.map-option input { margin-top: 0.2rem; }
+.map-option-body {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.map-option-body strong { font-size: 0.92rem; }
+.map-option-body small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+.invest-half-banner {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 0.88rem;
+  text-align: center;
+  color: #2a1a00;
+  background: linear-gradient(180deg, #ffe08a, #f0c14a);
+  border: 1px solid color-mix(in srgb, #f0a202 55%, #333);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 0.35rem;
+}
+.invest-half-pay {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--accent-strong);
+  margin: 0.25rem 0 0.15rem;
 }
 .pc-flag.cpu-style {
   background: transparent;

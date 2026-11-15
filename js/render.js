@@ -17,6 +17,8 @@ const TYPE_ICON = {
   lucky: '★',
   rollon: '再',
   junction: '岐',
+  warp: '転',
+  switch: '切',
 };
 
 const MINIGAME_ICON = {
@@ -260,7 +262,7 @@ export function createRenderer(canvas) {
     layout = { size, ox, oy };
     anim.pulse = (anim.pulse + 0.04) % (Math.PI * 2);
 
-    // パス
+    // パス（有効）
     ctx.strokeStyle = 'rgba(255, 210, 120, 0.28)';
     ctx.lineWidth = Math.max(4, size * 0.18);
     ctx.lineJoin = 'round';
@@ -277,6 +279,49 @@ export function createRenderer(canvas) {
     }
     ctx.stroke();
 
+    // スイッチで無効なゲートは点線で残す
+    if (g.switchGates?.length) {
+      const state = g.switchState ? 1 : 0;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 210, 120, 0.12)';
+      ctx.lineWidth = Math.max(2, size * 0.1);
+      ctx.setLineDash([Math.max(3, size * 0.12), Math.max(4, size * 0.16)]);
+      ctx.beginPath();
+      for (const gate of g.switchGates) {
+        if (Number(gate.when) === state) continue;
+        const a = g.map.find((n) => n.id === gate.a);
+        const b = g.map.find((n) => n.id === gate.b);
+        if (!a || !b) continue;
+        ctx.moveTo(ox + a.col * size + size / 2, oy + a.row * size + size / 2);
+        ctx.lineTo(ox + b.col * size + size / 2, oy + b.row * size + size / 2);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ワープ同士の対応を薄い弧で示す
+    ctx.save();
+    ctx.strokeStyle = 'rgba(170, 140, 255, 0.28)';
+    ctx.lineWidth = Math.max(1.5, size * 0.06);
+    ctx.setLineDash([4, 6]);
+    for (const n of g.map) {
+      if (n.type !== 'warp' || n.warpTo == null) continue;
+      if (n.id > n.warpTo) continue;
+      const m = g.map.find((x) => x.id === n.warpTo);
+      if (!m) continue;
+      const ax = ox + n.col * size + size / 2;
+      const ay = oy + n.row * size + size / 2;
+      const bx = ox + m.col * size + size / 2;
+      const by = oy + m.row * size + size / 2;
+      const mx = (ax + bx) / 2;
+      const my = Math.min(ay, by) - size * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.quadraticCurveTo(mx, my, bx, by);
+      ctx.stroke();
+    }
+    ctx.restore();
+
     // マス
     for (const n of g.map) {
       const x = ox + n.col * size;
@@ -289,7 +334,7 @@ export function createRenderer(canvas) {
       let stroke = 'rgba(255,255,255,0.15)';
       const owner = n.type === 'shop' && n.owner >= 0 ? g.players[n.owner] : null;
       if (n.type === 'shop') {
-        fill = AREA_META[n.area]?.color || '#51607a';
+        fill = g.areas[n.area]?.color || AREA_META[n.area]?.color || '#51607a';
         if (owner) stroke = owner.color || '#fff';
       } else if (n.type === 'bank') fill = '#d4a017';
       else if (n.type === 'mark') fill = '#3a2f55';
@@ -303,6 +348,8 @@ export function createRenderer(canvas) {
       else if (n.type === 'lucky') fill = '#b8860b';
       else if (n.type === 'rollon') fill = '#2d6a4f';
       else if (n.type === 'junction') fill = '#5a4a3a';
+      else if (n.type === 'warp') fill = '#5b4a8c';
+      else if (n.type === 'switch') fill = '#8a6b2a';
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
       const stockMode = stockHighlightMode || (g.phase === 'await_choice' && g.pending?.type === 'stock');
@@ -318,7 +365,7 @@ export function createRenderer(canvas) {
       ctx.fill();
 
       if (n.type === 'shop') {
-        const meta = AREA_META[n.area];
+        const meta = g.areas[n.area] || AREA_META[n.area];
         fillShopPattern(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r, meta);
       }
 
@@ -339,13 +386,14 @@ export function createRenderer(canvas) {
           ? 0.4 + Math.sin(anim.pulse) * 0.25
           : 0.22 + Math.sin(anim.pulse) * 0.08;
         ctx.globalAlpha = glow;
-        ctx.strokeStyle = AREA_META[n.area]?.patternInk || AREA_META[n.area]?.color || '#ffe08a';
+        const areaMeta = g.areas[n.area] || AREA_META[n.area];
+        ctx.strokeStyle = areaMeta?.patternInk || areaMeta?.color || '#ffe08a';
         ctx.lineWidth = selected ? 4.5 : 2.5;
         roundRect(ctx, x + pad - 1, y + pad - 1, size - pad * 2 + 2, size - pad * 2 + 2, r + 1);
         ctx.stroke();
         if (selected) {
           ctx.globalAlpha = 0.24 + Math.sin(anim.pulse) * 0.12;
-          ctx.fillStyle = AREA_META[n.area]?.color || '#ffe08a';
+          ctx.fillStyle = areaMeta?.color || '#ffe08a';
           roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
           ctx.fill();
         }
@@ -658,13 +706,21 @@ export function shopTooltip(g, sq) {
   }
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
+  if (sq.type === 'warp') {
+    const dest = g.map.find((n) => n.id === sq.warpTo);
+    return `${sq.label} — 止まると${dest ? `「${dest.label}」へ` : ''}ワープ`;
+  }
+  if (sq.type === 'switch') {
+    const st = g.switchState ? 2 : 1;
+    return `${sq.label} — 止まると経路・動くマスが切り替わる（今は状態${st}）`;
+  }
   if (sq.type === 'rest') return `${sq.label} — 止まると次ターン休み`;
   if (sq.type !== 'shop') return `${sq.label}`;
   const owner = sq.owner >= 0 ? g.players[sq.owner]?.name : '空き';
   const toll = calcToll(g, sq);
   const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中（買い物料0）' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
-  const areaName = AREA_META[sq.area]?.name || '';
+  const areaName = g.areas[sq.area]?.name || AREA_META[sq.area]?.name || '';
   let mono = '';
   if (sq.owner >= 0) {
     const areaSize = getAreaShops(g, sq.area).length;
