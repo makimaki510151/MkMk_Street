@@ -31,6 +31,8 @@ import {
   payAreaStockDividend,
   STOCK_DIVIDEND_PER_SHARE,
   STOCK_DIVIDEND_MAX_RATE,
+  convertPlayerToCpu,
+  kickDisconnectedPlayer,
   cpuAct,
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
@@ -195,6 +197,39 @@ describe('MkMk Street engine', () => {
     assert.equal(payAreaStockDividend(g, area, 500).pool, 0);
     g.players[0].stocks[area] = 2;
     assert.equal(payAreaStockDividend(g, area, 0).pool, 0);
+  });
+
+  it('converts a disconnected human to reclaimable CPU', () => {
+    const g = createGame({
+      players: [{ name: 'Human', isCPU: false }, { name: 'Bot', isCPU: true }],
+      seed: 5,
+    });
+    g.players[0].offline = true;
+    g.players[0].peerId = null;
+    const r = convertPlayerToCpu(g, 0);
+    assert.equal(r.ok, true);
+    assert.equal(g.players[0].isCPU, true);
+    assert.equal(g.players[0].offline, false);
+    assert.equal(g.players[0].flags.reclaimableHuman, true);
+    assert.ok(g.players[0].personality);
+  });
+
+  it('kicks a disconnected player as bankrupt and advances turn', () => {
+    const g = createGame({
+      players: [{ name: 'A', isCPU: false }, { name: 'B', isCPU: false }, { name: 'C', isCPU: true }],
+      seed: 6,
+    });
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 1, shopId: g.startId, price: 100 };
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    const r = kickDisconnectedPlayer(g, 1);
+    assert.equal(r.ok, true);
+    assert.equal(g.players[1].bankrupt, true);
+    assert.equal(shop.owner, -1);
+    assert.equal(g.pending, null);
+    assert.notEqual(g.currentPlayerIdx, 1);
   });
 
   it('pays stock cut automatically when landing on an opponent shop (production path)', () => {
