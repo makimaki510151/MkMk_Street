@@ -211,11 +211,14 @@ function giveAllCash(g, amount) {
 }
 
 const CHANCE_EVENTS = [
-  { id: 'bonus', label: '臨時ボーナス', apply: (g, p) => { const n = 200 + p.level * 50; p.cash += n; return `+${n}G` } },
-  { id: 'salary', label: '給料日っぽい日', apply: (g, p) => { const n = Math.floor(getLevelBonus(g, p) * 0.5); p.cash += n; return `賞金の半分 +${n}G` } },
-  { id: 'payday_all', label: '給料日！', apply: (g) => giveAllCash(g, 120) },
-  { id: 'bonus_wave', label: 'ボーナス支給', apply: (g) => giveAllCash(g, 150) },
-  { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `-${n}G` } },
+  { id: 'bonus', label: '臨時ボーナス', apply: (g, p) => { const n = 200 + p.level * 50; p.cash += n; return `Lv.${p.level}ボーナス +${n}G` } },
+  { id: 'salary', label: '給料日っぽい日', apply: (g, p) => { const n = Math.floor(getLevelBonus(g, p) * 0.5); p.cash += n; return `昇進賞金の半分 +${n}G` } },
+  { id: 'rank_stipend', label: '階級手当', apply: (g, p) => { const n = 120 + p.level * 80; p.cash += n; return `Lv.${p.level}手当 +${n}G` } },
+  { id: 'promotion_fund', label: '昇進準備金', apply: (g, p) => { const n = 80 + p.level * 60; p.cash += n; return `準備金 +${n}G` } },
+  { id: 'payday_all', label: '給料日！', apply: (g, p) => giveAllCash(g, 80 + p.level * 20) },
+  { id: 'bonus_wave', label: 'ボーナス支給', apply: (g, p) => giveAllCash(g, 100 + p.level * 25) },
+  { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `Lv税 -${n}G` } },
+  { id: 'rank_dues', label: '階級維持費', apply: (g, p) => { const n = Math.min(p.cash, 60 + p.level * 40); p.cash -= n; return `維持費 -${n}G` } },
   { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => {
     recordWarp(g, p.id, p.pos, g.startId);
     p.pos = g.startId;
@@ -225,10 +228,19 @@ const CHANCE_EVENTS = [
   { id: 'stock_gift', label: '株のおすそ分け', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
-    p.stocks[a] = (p.stocks[a] || 0) + 10;
-    return `A${a}株 +10`
+    const n = 6 + p.level * 2;
+    p.stocks[a] = (p.stocks[a] || 0) + n;
+    return `A${a}株 +${n}`
   }},
   { id: 'invest_boost', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の自分店増資が半額' } },
+  { id: 'level_shop_aid', label: '階級改装助成', apply: (g, p) => {
+    const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+    if (!shops.length) { p.flags.investCoupon = true; return '所持店なし → 増資半額券'; }
+    const add = 30 + p.level * 25;
+    const sq = shops[Math.floor(Math.random() * shops.length)];
+    const gained = applyCappedShopBoost(g, sq, add);
+    return gained > 0 ? `「${sq.label}」+${gained}G` : '増資枠なし';
+  }},
   { id: 'mini_dice', label: 'サイコロ当て', apply: (g, p) => {
     p.flags.pendingMinigame = { game: 'guess_dice', label: 'サイコロ当て' };
     return 'ミニゲーム！';
@@ -240,15 +252,19 @@ const CHANCE_EVENTS = [
 ];
 
 const BOARD_EVENTS = [
-  { id: 'cash', label: '臨時収入', apply: (g, p) => { const n = 180 + p.level * 40; p.cash += n; return `+${n}G` } },
-  { id: 'festival', label: 'お祭り景気', apply: (g) => giveAllCash(g, 100) },
-  { id: 'stimulus', label: '景気刺激策', apply: (g) => giveAllCash(g, 80) },
-  { id: 'tax', label: '出費', apply: (g, p) => { const n = Math.min(p.cash, 120 + p.level * 25); p.cash -= n; return `-${n}G` } },
+  { id: 'cash', label: '臨時収入', apply: (g, p) => { const n = 180 + p.level * 40; p.cash += n; return `Lv.${p.level}収入 +${n}G` } },
+  { id: 'rank_pocket', label: 'ポケットマネー', apply: (g, p) => { const n = 100 + p.level * 55; p.cash += n; return `+${n}G` } },
+  { id: 'senior_gift', label: '先輩からの祝儀', apply: (g, p) => { const n = 150 + p.level * 70; p.cash += n; return `祝儀 +${n}G` } },
+  { id: 'festival', label: 'お祭り景気', apply: (g, p) => giveAllCash(g, 70 + p.level * 15) },
+  { id: 'stimulus', label: '景気刺激策', apply: (g, p) => giveAllCash(g, 60 + p.level * 12) },
+  { id: 'tax', label: '出費', apply: (g, p) => { const n = Math.min(p.cash, 120 + p.level * 25); p.cash -= n; return `出費 -${n}G` } },
+  { id: 'rank_fee', label: '肩書きコスト', apply: (g, p) => { const n = Math.min(p.cash, 50 + p.level * 35); p.cash -= n; return `コスト -${n}G` } },
   { id: 'stock', label: '株プレゼント', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
-    p.stocks[a] = (p.stocks[a] || 0) + 5;
-    return `A${a}株 +5`;
+    const n = 3 + p.level;
+    p.stocks[a] = (p.stocks[a] || 0) + n;
+    return `A${a}株 +${n}`;
   }},
   { id: 'rollon', label: 'ラッキー再挑戦', apply: (g, p) => { p.flags.extraRoll = true; return 'もう一度サイコロ' } },
   { id: 'invest', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の増資が半額' } },
@@ -649,8 +665,14 @@ export function getLiquidatableValue(g, p) {
   return p.cash + getPlayerAssets(g, p).stockAsset + getShopFireSaleValue(g, p);
 }
 
-export function getLevelBonus(g, p) {
-  const base = 400 + 150 * p.level;
+/**
+ * マーク揃え昇進の賞金。
+ * @param {number|null} [toLevel] 昇進後レベル（省略時は現在レベル基準＝イベント用）
+ */
+export function getLevelBonus(g, p, toLevel = null) {
+  const lv = Math.max(1, Number(toLevel != null ? toLevel : p.level) || 1);
+  // 昇進先が高いほど厚い（Lv2:700 / Lv3:950 / Lv4:1200 …）+ 所持店価の10%
+  const base = 200 + 250 * lv;
   const shopTotal = g.map
     .filter((s) => s.type === 'shop' && s.owner === p.id)
     .reduce((s, sq) => s + sq.price, 0);
@@ -1158,15 +1180,16 @@ function resumeMoveAfterBank(g, p) {
 
 function handleBank(g, p, landed) {
   if (hasFullMarks(p)) {
-    const bonus = getLevelBonus(g, p);
+    const old = p.level;
+    const to = old + 1;
+    const bonus = getLevelBonus(g, p, to);
     p.cash += bonus;
     bumpStat(p, 'salaryEarned', bonus);
     bumpStat(p, 'levelUps', 1);
-    const old = p.level;
-    p.level++;
+    p.level = to;
     p.marks = [false, false, false, false];
-    p.flags.pendingLevelUp = { from: old, to: p.level, bonus };
-    addLog(g, `${p.name} 昇進！ Lv.${old}→${p.level} 賞金 +${bonus}G`, 'level');
+    p.flags.pendingLevelUp = { from: old, to, bonus };
+    addLog(g, `${p.name} 昇進！ Lv.${old}→${to} 賞金 +${bonus}G（Lv.${to}基準）`, 'level');
   }
 
   if (landed) {
