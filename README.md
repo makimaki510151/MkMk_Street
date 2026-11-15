@@ -18,6 +18,7 @@
 デモURL例:
 - `?demo=results` … 終了統計画面
 - `?demo=event-fx` … 所持タブでもサイコロ操作＋イベント視覚フラッシュ
+- `?demo=money-fx` … 現金増減の喜び／悲しみ演出（`money-loss` で支出のみ）
 
 ## ルール概要
 

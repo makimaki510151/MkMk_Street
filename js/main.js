@@ -72,6 +72,10 @@ const app = {
   restSkipTimer: null,
   eventFlashTimer: null,
   eventFlashSeq: 0,
+  /** @type {Record<number, number>|null} */
+  prevCash: null,
+  moneyFxTimer: null,
+  moneyFxSeq: 0,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
@@ -670,6 +674,31 @@ function maybeDemoLanding() {
       setTimeout(tick, 1400);
     };
     setTimeout(tick, 1400);
+    return;
+  }
+  if (demo === 'money-fx' || demo === 'money-loss') {
+    refreshGameUI();
+    const p0 = app.game.players[0];
+    const p1 = app.game.players[1];
+    app.prevCash = Object.fromEntries(app.game.players.map((p) => [p.id, p.cash]));
+    if (demo === 'money-loss') {
+      p0.cash -= 420;
+      if (p1) p1.cash += 420;
+      refreshGameUI();
+      return;
+    }
+    // 即時ゲット（スクショ／確認用）→ ロス → 大ゲット
+    p0.cash += 850;
+    refreshGameUI();
+    setTimeout(() => {
+      p0.cash -= 420;
+      if (p1) p1.cash += 420;
+      refreshGameUI();
+    }, 1600);
+    setTimeout(() => {
+      p0.cash += 1600;
+      refreshGameUI();
+    }, 3200);
   }
 }
 
@@ -780,6 +809,7 @@ function enterGame() {
   audio.startBgm();
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
+  app.prevCash = null;
   app.feedPinnedBottom = true;
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
@@ -1852,9 +1882,9 @@ function refreshGameUI() {
       ? `<div class="pc-stocks">${stockBits.join('')}</div>`
       : '<div class="pc-stocks empty">株なし</div>';
     return `
-      <div class="player-card ${active} ${me}" style="--pc:${p.color}">
-        <div class="pc-head"><span class="pc-dot"></span><strong>${p.name}</strong><span class="pc-lv">Lv.${p.level}</span></div>
-        <div class="pc-money${a.cash < 0 ? ' debt' : ''}">${a.cash.toLocaleString()}G</div>
+      <div class="player-card ${active} ${me}" data-pid="${p.id}" style="--pc:${p.color}">
+        <div class="pc-head"><span class="pc-dot"></span><strong>${escapeHtml(p.name)}</strong><span class="pc-lv">Lv.${p.level}</span></div>
+        <div class="pc-money${a.cash < 0 ? ' debt' : ''}" data-cash="${a.cash}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
         ${stockLine}
@@ -1863,6 +1893,7 @@ function refreshGameUI() {
       </div>
     `;
   }).join('');
+  maybePresentMoneyFx(g);
 
   $('#goal-chip').textContent = `目標 ${g.goal.toLocaleString()}G`;
   $('#turn-chip').textContent = `ターン ${g.turn}`;
@@ -2176,6 +2207,127 @@ function resolveEventVisual(payload) {
   return { glyph: base.glyph, chips: [...new Set(chips)].slice(0, 3) };
 }
 
+/** 現金増減を検知して喜び／悲しみの演出を出す */
+function maybePresentMoneyFx(g) {
+  if (!g?.players) return;
+  const next = {};
+  for (const p of g.players) next[p.id] = p.cash;
+  if (!app.prevCash) {
+    app.prevCash = next;
+    return;
+  }
+  const deltas = [];
+  for (const p of g.players) {
+    const prev = app.prevCash[p.id];
+    if (prev == null || prev === p.cash) continue;
+    const amount = p.cash - prev;
+    if (!amount) continue;
+    deltas.push({
+      pid: p.id,
+      name: p.name,
+      color: p.color,
+      amount,
+      cash: p.cash,
+      mine: app.mode === 'local' ? !p.isCPU : p.id === app.localSeat,
+    });
+  }
+  app.prevCash = next;
+  if (!deltas.length) return;
+  presentMoneyFx(deltas);
+}
+
+function moneyTier(absAmount) {
+  if (absAmount >= 1000) return 3;
+  if (absAmount >= 300) return 2;
+  return 1;
+}
+
+function presentMoneyFx(deltas) {
+  if (!deltas?.length) return;
+  // 専用オーバーレイ中はカード側だけ動かす
+  const blocked = !$('#dice-overlay')?.hidden
+    || !$('#warp-overlay')?.hidden
+    || !$('#scratch-match-overlay')?.hidden
+    || !$('#minigame-overlay')?.hidden;
+
+  for (const d of deltas) spawnPlayerCashFloat(d);
+
+  // ローカル優先、なければ絶対値最大を中央演出
+  const focus = deltas.find((d) => d.mine)
+    || [...deltas].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))[0];
+  if (!focus || blocked) return;
+
+  const gain = focus.amount > 0;
+  const abs = Math.abs(focus.amount);
+  const tier = moneyTier(abs);
+  const color = gain ? '#8fd4a8' : '#ff8a80';
+  const seq = ++app.moneyFxSeq;
+  const overlay = $('#money-fx');
+  if (!overlay) return;
+
+  clearTimeout(app.moneyFxTimer);
+  overlay.dataset.mood = gain ? 'gain' : 'loss';
+  overlay.style.setProperty('--mfc', color);
+  $('#mf-face').textContent = gain ? '♪' : '…';
+  $('#mf-mood').textContent = gain
+    ? (focus.mine ? 'ゲット！' : '収入')
+    : (focus.mine ? 'ショック…' : '支出');
+  $('#mf-amount').textContent = `${gain ? '+' : '−'}${abs.toLocaleString()}G`;
+  $('#mf-who').textContent = focus.mine
+    ? (gain ? 'お金が増えた！' : 'お金が減った…')
+    : `${focus.name} の現金が${gain ? '増えた' : '減った'}`;
+
+  const coins = $('#mf-coins');
+  const count = 6 + tier * 4;
+  coins.innerHTML = Array.from({ length: count }, (_, i) => {
+    const x = 8 + Math.random() * 84;
+    const y = gain ? 55 + Math.random() * 30 : 18 + Math.random() * 28;
+    const drift = Math.round((Math.random() - 0.5) * 70);
+    const delay = (Math.random() * 0.28).toFixed(2);
+    const dur = (0.75 + Math.random() * 0.45).toFixed(2);
+    return `<span class="mf-coin" style="--x:${x}%;--y:${y}%;--drift:${drift}px;--delay:${delay}s;--dur:${dur}s"></span>`;
+  }).join('');
+
+  overlay.hidden = false;
+  overlay.classList.remove('show');
+  requestAnimationFrame(() => {
+    if (app.moneyFxSeq !== seq) return;
+    overlay.classList.add('show');
+  });
+
+  if (gain) audio.sfx.cashGain(tier);
+  else audio.sfx.cashLoss(tier);
+
+  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+
+  app.moneyFxTimer = setTimeout(() => {
+    if (app.moneyFxSeq !== seq) return;
+    overlay.classList.remove('show');
+    setTimeout(() => {
+      if (app.moneyFxSeq !== seq) return;
+      overlay.hidden = true;
+      coins.innerHTML = '';
+    }, 240);
+  }, 1250 + tier * 120);
+}
+
+function spawnPlayerCashFloat(delta) {
+  const card = document.querySelector(`.player-card[data-pid="${delta.pid}"]`);
+  if (!card) return;
+  const money = card.querySelector('.pc-money');
+  if (money) {
+    money.classList.remove('gain-pulse', 'loss-pulse');
+    // reflow to restart animation
+    void money.offsetWidth;
+    money.classList.add(delta.amount > 0 ? 'gain-pulse' : 'loss-pulse');
+  }
+  const floater = document.createElement('div');
+  floater.className = `pc-cash-float ${delta.amount > 0 ? 'gain' : 'loss'}`;
+  floater.textContent = `${delta.amount > 0 ? '+' : '−'}${Math.abs(delta.amount).toLocaleString()}G`;
+  card.appendChild(floater);
+  setTimeout(() => floater.remove(), 1000);
+}
+
 /** 盤面中央に視覚的なイベントフラッシュを出す */
 function presentEventFlash(payload) {
   const overlay = $('#event-flash');
@@ -2185,6 +2337,7 @@ function presentEventFlash(payload) {
   if (!$('#warp-overlay')?.hidden) return;
   if (!$('#scratch-match-overlay')?.hidden) return;
   if (!$('#minigame-overlay')?.hidden) return;
+  if (!$('#money-fx')?.hidden) return;
 
   const visual = payload.visual || resolveEventVisual(payload);
   const kind = payload.kind || 'info';
