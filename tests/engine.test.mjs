@@ -11,6 +11,7 @@ import {
   getGoalPressurePlayers,
   refreshGoalPressure,
   serializeState,
+  restoreState,
   getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
@@ -43,6 +44,8 @@ import {
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
   getLevelBonus,
+  toggleBoardSwitch,
+  getNode,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
 import {
@@ -118,6 +121,7 @@ describe('MkMk Street engine', () => {
     const isle = buildBoard('cliff_isle');
     assert.ok(isle.areas[11], 'cliff isle should have detached area 11');
     assert.equal(isle.areas[11].name, 'がけしたどおり');
+    assert.ok(isle.nodes.some((n) => n.type === 'warp'));
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 2,
@@ -125,6 +129,68 @@ describe('MkMk Street engine', () => {
     });
     assert.equal(g.mapId, 'cliff_isle');
     assert.ok(g.cols >= 14);
+
+    // 島は徒歩では到達できない
+    const bank = getNode(g, g.startId);
+    const seen = new Set([bank.id]);
+    const q = [bank.id];
+    while (q.length) {
+      const id = q.shift();
+      for (const nid of getNode(g, id).nexts) {
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          q.push(nid);
+        }
+      }
+    }
+    const isleShop = g.map.find((n) => n.type === 'shop' && n.area === 11);
+    assert.ok(isleShop);
+    assert.equal(seen.has(isleShop.id), false);
+
+    // ワープ着地で島へ
+    const mainWarp = g.map.find((n) => n.type === 'warp' && n.label.includes('島'));
+    assert.ok(mainWarp?.warpTo != null);
+    g.players[0].pos = mainWarp.id;
+    g.move = { stepsLeft: 0, path: [mainWarp.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const landed = advanceMove(g);
+    assert.equal(landed.ok, true);
+    assert.ok(landed.warps?.length >= 1);
+    assert.equal(g.players[0].pos, mainWarp.warpTo);
+  });
+
+  it('shell harbor switch toggles routes and movable squares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+      mapId: 'shell_harbor',
+    });
+    assert.ok((g.switchGates || []).length >= 2);
+    assert.ok(g.map.some((n) => n.type === 'switch'));
+    const float = g.map.find((n) => n.label === '屋台船');
+    assert.ok(float);
+    const col0 = float.col;
+    const row0 = float.row;
+    const hub = g.map.find((n) => n.type === 'switch');
+    const nexts0 = [...hub.nexts].sort((a, b) => a - b);
+    const st1 = toggleBoardSwitch(g);
+    assert.equal(st1, 1);
+    const nexts1 = [...getNode(g, hub.id).nexts].sort((a, b) => a - b);
+    assert.notDeepEqual(nexts0, nexts1);
+    const moved = getNode(g, float.id);
+    assert.ok(moved.col !== col0 || moved.row !== row0, 'movable shop should slide');
+
+    // スイッチマス着地でも切り替わる
+    g.players[0].pos = hub.id;
+    g.move = { stepsLeft: 0, path: [hub.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const before = g.switchState;
+    advanceMove(g);
+    assert.equal(g.switchState, before ? 0 : 1);
+
+    const again = restoreState(serializeState(g));
+    assert.equal(again.switchState, g.switchState);
+    assert.ok(Array.isArray(again.switchGates));
   });
 
   it('creates a board with shops and areas', () => {
