@@ -120,15 +120,41 @@ describe('MkMk Street engine', () => {
 
     const isle = buildBoard('cliff_isle');
     assert.ok(isle.areas[11], 'cliff isle should have detached area 11');
+    assert.ok(isle.areas[12], 'cliff isle should have second island area 12');
     assert.equal(isle.areas[11].name, 'がけしたどおり');
+    assert.equal(isle.areas[12].name, '潮風どおり');
     assert.ok(isle.nodes.some((n) => n.type === 'warp'));
+    // 小島中央に株マスはない（証券は本島側）
+    const isleNodeIds = new Set();
+    {
+      const warps = isle.nodes.filter((n) => n.type === 'warp');
+      const isleWarp = warps.find((n) => n.label.includes('本島')) || warps.find((n) => n.col >= 10);
+      assert.ok(isleWarp);
+      const q = [isleWarp.id];
+      isleNodeIds.add(isleWarp.id);
+      while (q.length) {
+        const id = q.shift();
+        const node = isle.nodes.find((n) => n.id === id);
+        for (const nid of node.nexts || []) {
+          if (!isleNodeIds.has(nid)) {
+            isleNodeIds.add(nid);
+            q.push(nid);
+          }
+        }
+      }
+      for (const id of isleNodeIds) {
+        const n = isle.nodes.find((x) => x.id === id);
+        assert.notEqual(n.type, 'stockbroker', 'island must not have center stockbroker');
+      }
+    }
+    assert.ok(isle.nodes.some((n) => n.type === 'stockbroker' && n.col < 10), 'main island keeps a stockbroker');
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 2,
       mapId: 'cliff_isle',
     });
     assert.equal(g.mapId, 'cliff_isle');
-    assert.ok(g.cols >= 14);
+    assert.ok(g.cols >= 16);
 
     // 島は徒歩では到達できない
     const bank = getNode(g, g.startId);
@@ -146,6 +172,7 @@ describe('MkMk Street engine', () => {
     const isleShop = g.map.find((n) => n.type === 'shop' && n.area === 11);
     assert.ok(isleShop);
     assert.equal(seen.has(isleShop.id), false);
+    assert.equal(seen.has(g.map.find((n) => n.type === 'shop' && n.area === 12).id), false);
 
     // ワープ着地で島へ
     const mainWarp = g.map.find((n) => n.type === 'warp' && n.label.includes('島'));
@@ -157,6 +184,27 @@ describe('MkMk Street engine', () => {
     assert.equal(landed.ok, true);
     assert.ok(landed.warps?.length >= 1);
     assert.equal(g.players[0].pos, mainWarp.warpTo);
+  });
+
+  it('shell harbor forks offer pier vs coast route labels', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 4,
+      mapId: 'shell_harbor',
+    });
+    const pier = g.map.find((n) => n.forkAs === '北埠頭へ');
+    const coast = g.map.find((n) => n.label === '砂浜カフェ');
+    assert.ok(pier && coast);
+    // 砂浜カフェから前進すると埠頭／海岸のラベル付き分岐になる
+    g.players[0].pos = coast.id;
+    g.players[0].prevPos = g.map.find((n) => n.label === '珊瑚屋').id;
+    g.move = { stepsLeft: 3, path: [coast.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    const step = advanceMove(g);
+    assert.equal(step.forked, true);
+    const labels = (g.pending.options || []).map((o) => o.label);
+    assert.ok(labels.includes('北埠頭へ'), labels.join(','));
+    assert.ok(labels.includes('海岸どおり'), labels.join(','));
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {

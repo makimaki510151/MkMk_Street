@@ -240,23 +240,9 @@ export function buildCentralCross() {
 }
 
 /**
- * 本家「貝がら島」系：外周の長方形リング＋直径1本だけ。
- * スイッチで直径が縦↔横に切り替わり、動くマスもその直径上を移動する。
- * 斜めなし・横枝なし・行き止まりなし。
- *
- *   ♠─店─店─店─SW─店─店─EV─店─♥
- *   │                           │
- *   SC                          店
- *   │                           │
- *   店     船──賽──船            証
- *   │      ↕ 縦直径 ↕            │
- *   銀 ←──── 横直径 ────→
- *   │                           │
- *   店                          店
- *   │                           │
- *   店                          ★
- *   │                           │
- *   ♦─店─店─店─SW─MG─店─CH─店─♣
+ * 本家「貝がら島」系：外周の海岸リング＋並列の埠頭ルート＋直径スイッチ。
+ * 分かれ道は「海岸どおり / 埠頭へ」の二択が基本（十字マップの東西南北分岐とは別物）。
+ * 斜めなし・行き止まりなし。
  */
 export function buildShellHarbor() {
   const { nodes, N } = makeNodeFactory();
@@ -266,21 +252,21 @@ export function buildShellHarbor() {
   const mkSE = N('mark', { label: '♣', mark: 3, col: 9, row: 7 });
   const mkSW = N('mark', { label: '♦', mark: 2, col: 0, row: 7 });
 
-  // 北辺
+  // 北辺（海岸）
   const aN1 = N('shop', { label: '真珠店', area: 1, basePrice: 350, col: 1, row: 0 });
   const aN2 = N('shop', { label: '珊瑚屋', area: 1, basePrice: 240, col: 2, row: 0 });
-  const b1 = N('shop', { label: '砂浜カフェ', area: 2, basePrice: 260, col: 3, row: 0 });
-  const swN = N('switch', { label: 'スイッチ', col: 4, row: 0 });
-  const b2 = N('shop', { label: 'サーフ屋', area: 2, basePrice: 300, col: 5, row: 0 });
+  const b1 = N('shop', { label: '砂浜カフェ', area: 2, basePrice: 260, col: 3, row: 0, forkAs: '海岸どおり' });
+  const swN = N('switch', { label: 'スイッチ', col: 4, row: 0, forkAs: '海岸どおり' });
+  const b2 = N('shop', { label: 'サーフ屋', area: 2, basePrice: 300, col: 5, row: 0, forkAs: '海岸どおり' });
   const b3 = N('shop', { label: 'かき氷', area: 2, basePrice: 140, col: 6, row: 0 });
   const eventN = N('event', { label: 'イベント', col: 7, row: 0 });
   const c1 = N('shop', { label: 'ホテル', area: 3, basePrice: 420, col: 8, row: 0 });
 
   // 東辺
   const c2 = N('shop', { label: '水族館', area: 3, basePrice: 380, col: 9, row: 1 });
-  const c3 = N('shop', { label: '港食堂', area: 3, basePrice: 240, col: 9, row: 2 });
-  const broker = N('stockbroker', { label: '証券', col: 9, row: 3 });
-  const c4 = N('shop', { label: 'ヨット屋', area: 3, basePrice: 360, col: 9, row: 4 });
+  const c3 = N('shop', { label: '港食堂', area: 3, basePrice: 240, col: 9, row: 2, forkAs: '海岸どおり' });
+  const broker = N('stockbroker', { label: '証券', col: 9, row: 3, forkAs: '海岸どおり' });
+  const c4 = N('shop', { label: 'ヨット屋', area: 3, basePrice: 360, col: 9, row: 4, forkAs: '海岸どおり' });
   const d1 = N('shop', { label: '灯台茶屋', area: 4, basePrice: 280, col: 9, row: 5 });
   const luckyE = N('lucky', { label: '★', col: 9, row: 6 });
 
@@ -288,32 +274,47 @@ export function buildShellHarbor() {
   const e1 = N('shop', { label: '温泉宿', area: 4, basePrice: 400, col: 8, row: 7 });
   const chanceS = N('chance', { label: 'チャンス', col: 7, row: 7 });
   const e2 = N('shop', { label: '銭湯', area: 5, basePrice: 170, col: 6, row: 7 });
-  const slot = N('minigame', { label: 'スロット', game: 'slot', col: 5, row: 7 });
-  const swS = N('switch', { label: 'スイッチ', col: 4, row: 7 });
-  const e4 = N('shop', { label: 'うどん', area: 5, basePrice: 150, col: 3, row: 7 });
+  const slot = N('minigame', { label: 'スロット', game: 'slot', col: 5, row: 7, forkAs: '海岸どおり' });
+  const swS = N('switch', { label: 'スイッチ', col: 4, row: 7, forkAs: '海岸どおり' });
+  const e4 = N('shop', { label: 'うどん', area: 5, basePrice: 150, col: 3, row: 7, forkAs: '海岸どおり' });
   const e3 = N('shop', { label: 'たこ焼き', area: 5, basePrice: 110, col: 2, row: 7 });
   const f1 = N('shop', { label: '鮮魚', area: 6, basePrice: 290, col: 1, row: 7 });
 
   // 西辺
   const f2 = N('shop', { label: '海女小屋', area: 6, basePrice: 210, col: 0, row: 6 });
   const f3 = N('shop', { label: '網元', area: 6, basePrice: 250, col: 0, row: 5 });
-  const aW = N('shop', { label: '潮干狩', area: 1, basePrice: 180, col: 0, row: 4 });
-  const bank = N('bank', { label: '銀行', isStart: true, col: 0, row: 3 });
-  const a1 = N('shop', { label: '貝細工', area: 1, basePrice: 220, col: 0, row: 2 });
+  const aW = N('shop', { label: '潮干狩', area: 1, basePrice: 180, col: 0, row: 4, forkAs: '海岸どおり' });
+  const bank = N('bank', { label: '銀行', isStart: true, col: 0, row: 3, forkAs: '海岸どおり' });
+  const a1 = N('shop', { label: '貝細工', area: 1, basePrice: 220, col: 0, row: 2, forkAs: '海岸どおり' });
   const scratch = N('scratch', { label: 'スクラッチ', col: 0, row: 1 });
 
-  // 直径（リング外・ゲートのみで常に2接続）
-  const center = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 4, row: 3 });
-  const boatN = N('shop', { label: '屋台船', area: 2, basePrice: 170, col: 4, row: 2 });
-  const boatS = N('shop', { label: '渡し舟', area: 4, basePrice: 200, col: 4, row: 4 });
+  // 並列埠頭（海岸リングの内側。分岐は「埠頭へ」vs「海岸どおり」）
+  const pierN = N('shop', { label: '浜茶屋', area: 2, basePrice: 190, col: 3, row: 1, forkAs: '北埠頭へ' });
+  const pierN2 = N('rollon', { label: 'もう一回', col: 5, row: 1, forkAs: '北埠頭へ' });
+  const pierS = N('shop', { label: '屋台横丁', area: 5, basePrice: 130, col: 3, row: 6, forkAs: '南埠頭へ' });
+  const pierS2 = N('shop', { label: 'かき小屋', area: 5, basePrice: 200, col: 5, row: 6, forkAs: '南埠頭へ' });
+  const pierE = N('shop', { label: '埠頭食堂', area: 3, basePrice: 210, col: 8, row: 2, forkAs: '東埠頭へ' });
+  const pierE2 = N('chance', { label: 'チャンス', col: 8, row: 4, forkAs: '東埠頭へ' });
+  const pierW = N('shop', { label: '船着場', area: 1, basePrice: 160, col: 1, row: 2, forkAs: '西埠頭へ' });
+  const pierW2 = N('lucky', { label: '★', col: 1, row: 4, forkAs: '西埠頭へ' });
 
-  // 外周リング（直交・一周のみ）
+  // 直径（埠頭の内側・ゲートのみで常に2接続）
+  const center = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 4, row: 3, forkAs: '航路へ' });
+  const boatN = N('shop', { label: '屋台船', area: 4, basePrice: 170, col: 4, row: 2, forkAs: '航路へ' });
+  const boatS = N('shop', { label: '渡し舟', area: 4, basePrice: 200, col: 4, row: 4, forkAs: '航路へ' });
+
+  // 外周海岸リング
   link(
     [mkNW, aN1], [aN1, aN2], [aN2, b1], [b1, swN], [swN, b2], [b2, b3], [b3, eventN], [eventN, c1], [c1, mkNE],
     [mkNE, c2], [c2, c3], [c3, broker], [broker, c4], [c4, d1], [d1, luckyE], [luckyE, mkSE],
     [mkSE, e1], [e1, chanceS], [chanceS, e2], [e2, slot], [slot, swS], [swS, e4], [e4, e3], [e3, f1], [f1, mkSW],
     [mkSW, f2], [f2, f3], [f3, aW], [aW, bank], [bank, a1], [a1, scratch], [scratch, mkNW],
   );
+  // 埠頭の並列ルート（両端で海岸に再合流 → 分岐は常に2択のルート選択）
+  link([b1, pierN], [pierN, pierN2], [pierN2, b2]);
+  link([e4, pierS], [pierS, pierS2], [pierS2, slot]);
+  link([c3, pierE], [pierE, pierE2], [pierE2, c4]);
+  link([a1, pierW], [pierW, pierW2], [pierW2, aW]);
 
   const switchGates = [
     { a: swN.id, b: boatN.id, when: 0 },
@@ -387,7 +388,7 @@ export function buildCliffIsle() {
   const hubW = N('scratch', { label: 'スクラッチ', col: 0, row: 5 });
 
   const e1 = N('shop', { label: '渓流宿', area: 4, basePrice: 280, col: 5, row: 5 });
-  const e2 = N('rollon', { label: 'もう一回', col: 6, row: 5 });
+  const e2 = N('stockbroker', { label: '証券', col: 6, row: 5 });
   const e3 = N('shop', { label: '吊り橋茶屋', area: 4, basePrice: 190, col: 7, row: 5 });
   const mainWarp = N('warp', { label: '島ワープ', col: 8, row: 5 });
 
@@ -427,28 +428,46 @@ export function buildCliffIsle() {
   const se5 = N('shop', { label: '川辺民宿', area: 3, basePrice: 250, col: 8, row: 6 });
   link([hubS, se1], [se1, se2], [se2, mkSE], [mkSE, se3], [se3, se4], [se4, se5], [se5, mainWarp]);
 
-  // 離れ小島：四角ループ（全マス deg>=2）＋ワープ
-  const isleWarp = N('warp', { label: '本島ワープ', col: 12, row: 5 });
-  const isleGate = N('stockbroker', { label: '証券', col: 13, row: 5 });
-  const isle1 = N('shop', { label: 'がけ茶屋', area: 11, basePrice: 260, col: 12, row: 3 });
-  const isle2 = N('shop', { label: '滝つぼ', area: 11, basePrice: 300, col: 14, row: 3 });
-  const isle3 = N('shop', { label: '吊り橋宿', area: 11, basePrice: 380, col: 14, row: 7 });
-  const isle4 = N('shop', { label: 'かもめ屋', area: 11, basePrice: 220, col: 12, row: 7 });
-  const isleN = N('event', { label: '島イベント', col: 13, row: 3 });
-  const isleS = N('chance', { label: 'チャンス', col: 13, row: 7 });
-  const isleE = N('lucky', { label: '★', col: 14, row: 5 });
+  // 離れ小島（拡大）：外周ループ＋中央横断（株なし）。エリア11/12の2区画。
+  // cols 11-16 / rows 2-8
+  const isleWarp = N('warp', { label: '本島ワープ', col: 11, row: 5 });
+  const i11a = N('shop', { label: 'がけ茶屋', area: 11, basePrice: 260, col: 11, row: 3 });
+  const i11b = N('shop', { label: '滝つぼ', area: 11, basePrice: 300, col: 12, row: 2 });
+  const i11c = N('shop', { label: '苔岩屋', area: 11, basePrice: 180, col: 14, row: 2 });
+  const i11d = N('shop', { label: '吊り橋宿', area: 11, basePrice: 380, col: 16, row: 3 });
+  const i12a = N('shop', { label: 'かもめ屋', area: 12, basePrice: 220, col: 16, row: 7 });
+  const i12b = N('shop', { label: '潮風食堂', area: 12, basePrice: 240, col: 14, row: 8 });
+  const i12c = N('shop', { label: '浜小屋', area: 12, basePrice: 160, col: 12, row: 8 });
+  const i12d = N('shop', { label: '岩場みやげ', area: 12, basePrice: 200, col: 11, row: 8 });
+  const isleN = N('event', { label: '島イベント', col: 13, row: 2 });
+  const isleS = N('chance', { label: 'チャンス', col: 13, row: 8 });
+  const isleE = N('lucky', { label: '★', col: 16, row: 5 });
+  const isleNE = N('rollon', { label: 'もう一回', col: 16, row: 2 });
+  const isleSE = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 16, row: 8 });
+  const isleNW = N('scratch', { label: 'スクラッチ', col: 11, row: 2 });
+  const isleW6 = N('lucky', { label: '★', col: 11, row: 6 });
+  const isleW7 = N('rollon', { label: 'もう一回', col: 11, row: 7 });
+  const midW = N('shop', { label: '洞くつ店', area: 11, basePrice: 280, col: 12, row: 5 });
+  const midC = N('event', { label: '潮騒', col: 13, row: 5 });
+  const midE = N('shop', { label: '灯台みやげ', area: 12, basePrice: 320, col: 14, row: 5 });
+  const midEE = N('chance', { label: 'チャンス', col: 15, row: 5 });
 
-  mainWarp.warpTo = isleGate.id;
+  mainWarp.warpTo = isleWarp.id;
   isleWarp.warpTo = mainWarp.id;
 
-  // 島の外周四角＋中央十字（証券・ワープ）
+  // 外周（時計回り・直交のみ）
   link(
-    [isle1, isleN], [isleN, isle2], [isle2, isleE], [isleE, isle3],
-    [isle3, isleS], [isleS, isle4], [isle4, isle1],
+    [isleNW, i11b], [i11b, isleN], [isleN, i11c], [i11c, isleNE], [isleNE, i11d],
+    [i11d, isleE], [isleE, i12a], [i12a, isleSE], [isleSE, i12b], [i12b, isleS],
+    [isleS, i12c], [i12c, i12d], [i12d, isleW7], [isleW7, isleW6], [isleW6, isleWarp],
+    [isleWarp, i11a], [i11a, isleNW],
   );
-  link([isleWarp, isleGate], [isleGate, isleN], [isleGate, isleS], [isleGate, isleE], [isleWarp, isle1], [isleWarp, isle4]);
+  // 中央横断（株マスなし・ワープと東辺を結ぶ）
+  link(
+    [isleWarp, midW], [midW, midC], [midC, midE], [midE, midEE], [midEE, isleE],
+  );
 
-  return packBoard(nodes, bank, 15, 11, {
+  return packBoard(nodes, bank, 17, 11, {
     mapId: 'cliff_isle',
     mapName: 'がけした島',
     goal: 14000,
@@ -461,6 +480,7 @@ export function buildCliffIsle() {
       5: { name: '川辺' },
       6: { name: '展望通り' },
       11: { name: 'がけしたどおり' },
+      12: { name: '潮風どおり' },
     },
   });
 }
@@ -478,7 +498,7 @@ export const MAP_CATALOG = [
   {
     id: 'shell_harbor',
     name: '貝がら港',
-    blurb: '環状の港町。スイッチで縦／横ルートと動くマスが切り替わる',
+    blurb: '海岸と埠頭の並列ルート。スイッチで航路も切り替わる',
     defaultGoal: 12000,
     defaultCash: 1800,
     build: buildShellHarbor,
@@ -486,7 +506,7 @@ export const MAP_CATALOG = [
   {
     id: 'cliff_isle',
     name: 'がけした島',
-    blurb: '離れ小島あり。本島とはワープマスでのみ行き来できる',
+    blurb: '大きな離れ小島（2エリア）。本島とはワープのみで行き来',
     defaultGoal: 14000,
     defaultCash: 1600,
     build: buildCliffIsle,

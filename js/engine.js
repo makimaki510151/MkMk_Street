@@ -883,7 +883,7 @@ function setForkPending(g, p, options) {
       else side = dr > 0 ? 'down' : 'up';
       return {
         id,
-        label: dirLabel(from, to),
+        label: to?.forkAs || dirLabel(from, to),
         dest: to?.label || `#${id}`,
         side,
       };
