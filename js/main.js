@@ -2447,6 +2447,9 @@ function refreshGameUI() {
     const persona = p.isCPU ? getCpuPersonality(p) : null;
     const status = [
       p.offline ? '<span class="pc-flag offline">切断</span>' : '',
+      p.lucky ? '<span class="pc-flag lucky" title="他者の買い物料の20%を銀行から受取（次の自分の番まで）">★ラッキー</span>' : '',
+      p.flags?.fiveBuyCoupon ? '<span class="pc-flag coupon" title="次の店奪取が3倍買いになる">3倍クーポン</span>' : '',
+      p.flags?.tollShield ? '<span class="pc-flag" title="次の買い物料を無効化">通行守り</span>' : '',
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
       persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
@@ -2720,8 +2723,10 @@ function bannerFromLog(g, l) {
       detail = (l.text.match(/（(.+)）/) || [])[1] || l.text;
     } else if (/ラッキー/.test(l.text)) {
       kicker = mine ? 'ラッキー！' : `${player?.name || ''} がラッキー`;
-      title = 'ラッキーステータス';
-      detail = l.text;
+      title = /切れた/.test(l.text) ? 'ラッキー終了' : 'ラッキーステータス';
+      detail = /受取|銀行から|20%/.test(l.text)
+        ? l.text
+        : '他者の買い物料の20%を銀行から受取（次の自分の番まで）';
     } else {
       kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
       title = 'イベント';
@@ -3625,18 +3630,20 @@ function showChoiceModal(g) {
     const sq = getNode(g, pend.shopId);
     const owner = g.players[sq.owner];
     const p = g.players[pend.playerId];
+    const multi = pend.multi || 5;
     const short = (p?.cash || 0) < pend.price;
     const canRaise = getLiquidatableValue(g, p) >= pend.price;
-    title.textContent = '5倍買い？';
+    const coupon = multi < 5;
+    title.textContent = coupon ? `${multi}倍買い？（クーポン）` : '5倍買い？';
     const paidToll = Number(pend.toll || 0);
     body.innerHTML = `
       <p class="modal-lead"><strong>${escapeHtml(sq.label)}</strong>（${escapeHtml(owner?.name || '')}の店）</p>
       ${paidToll > 0 ? `<p class="inspect-toll enemy" style="margin:0.35rem 0"><span class="it-label">たった今の買い物料</span><span class="it-amount">−${paidToll.toLocaleString()}G</span></p>` : ''}
-      <p>5倍買い価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
+      <p>${multi}倍買い価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×${multi}${coupon ? '・クーポン適用' : ''}）</p>
       <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G${short ? ' — 不足分は株や物件を売って調達できます' : ''}</p>
       <div class="modal-actions">
         <button class="btn danger" id="m-five" ${!canRaise ? 'disabled' : ''}>
-          ${short ? '資金を調達して5倍買い' : '5倍買いする'}
+          ${short ? `資金を調達して${multi}倍買い` : `${multi}倍買いする`}
         </button>
       </div>`;
     $('#m-five').onclick = () => {

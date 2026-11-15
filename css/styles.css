@@ -509,6 +509,8 @@ button:disabled { opacity: .42; cursor: default; }
   color: var(--muted);
 }
 .pc-flag.closed { color: var(--warn); }
+.pc-flag.lucky { color: #e8b84a; }
+.pc-flag.coupon { color: #7ec8ff; }
 .pc-flag.offline {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);
@@ -1559,6 +1561,8 @@ button:disabled { opacity: .42; cursor: default; }
   opacity: 0.95;
 }
 .pc-flag.closed { color: #ffb087; }
+.pc-flag.lucky { color: #e8b84a; }
+.pc-flag.coupon { color: #7ec8ff; }
 .scratch-grid {
   --n: 10;
   display: grid;
