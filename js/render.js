@@ -8,22 +8,22 @@ const TYPE_ICON = {
   shop: '',
   mark: '',
   rest: '休',
-  holiday: '店休',
+  holiday: '休',
   minigame: '遊',
-  event: 'EV',
+  event: '！',
   scratch: '削',
   chance: '？',
   stockbroker: '株',
   lucky: '★',
   rollon: '再',
-  junction: '分岐',
+  junction: '岐',
 };
 
 const MINIGAME_ICON = {
   guess_dice: '賽',
-  high_low: 'HL',
+  high_low: '高',
   coin: '貨',
-  slot: 'スロ',
+  slot: 'ス',
 };
 
 export function createRenderer(canvas) {
