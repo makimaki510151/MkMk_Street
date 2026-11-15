@@ -289,7 +289,7 @@ export function createRenderer(canvas) {
       let stroke = 'rgba(255,255,255,0.15)';
       const owner = n.type === 'shop' && n.owner >= 0 ? g.players[n.owner] : null;
       if (n.type === 'shop') {
-        fill = AREA_META[n.area]?.color || '#51607a';
+        fill = g.areas[n.area]?.color || AREA_META[n.area]?.color || '#51607a';
         if (owner) stroke = owner.color || '#fff';
       } else if (n.type === 'bank') fill = '#d4a017';
       else if (n.type === 'mark') fill = '#3a2f55';
@@ -318,7 +318,7 @@ export function createRenderer(canvas) {
       ctx.fill();
 
       if (n.type === 'shop') {
-        const meta = AREA_META[n.area];
+        const meta = g.areas[n.area] || AREA_META[n.area];
         fillShopPattern(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r, meta);
       }
 
@@ -339,13 +339,14 @@ export function createRenderer(canvas) {
           ? 0.4 + Math.sin(anim.pulse) * 0.25
           : 0.22 + Math.sin(anim.pulse) * 0.08;
         ctx.globalAlpha = glow;
-        ctx.strokeStyle = AREA_META[n.area]?.patternInk || AREA_META[n.area]?.color || '#ffe08a';
+        const areaMeta = g.areas[n.area] || AREA_META[n.area];
+        ctx.strokeStyle = areaMeta?.patternInk || areaMeta?.color || '#ffe08a';
         ctx.lineWidth = selected ? 4.5 : 2.5;
         roundRect(ctx, x + pad - 1, y + pad - 1, size - pad * 2 + 2, size - pad * 2 + 2, r + 1);
         ctx.stroke();
         if (selected) {
           ctx.globalAlpha = 0.24 + Math.sin(anim.pulse) * 0.12;
-          ctx.fillStyle = AREA_META[n.area]?.color || '#ffe08a';
+          ctx.fillStyle = areaMeta?.color || '#ffe08a';
           roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
           ctx.fill();
         }
@@ -664,7 +665,7 @@ export function shopTooltip(g, sq) {
   const toll = calcToll(g, sq);
   const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中（買い物料0）' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
-  const areaName = AREA_META[sq.area]?.name || '';
+  const areaName = g.areas[sq.area]?.name || AREA_META[sq.area]?.name || '';
   let mono = '';
   if (sq.owner >= 0) {
     const areaSize = getAreaShops(g, sq.area).length;

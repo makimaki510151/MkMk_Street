@@ -44,7 +44,7 @@ import {
   PLAYER_COLORS,
   getLevelBonus,
 } from '../js/engine.js';
-import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
+import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
 import {
   unscratchedIds,
   EVENT_CATALOG,
@@ -85,6 +85,46 @@ describe('MkMk Street engine', () => {
       // 基本は4件
       assert.equal(count, AREA_SHOP_BASE, `area ${area} should be base ${AREA_SHOP_BASE}, got ${count}`);
     }
+  });
+
+  it('offers multiple maps including a detached island board', () => {
+    assert.ok(MAP_CATALOG.length >= 3);
+    const ids = new Set(MAP_CATALOG.map((m) => m.id));
+    assert.ok(ids.has('central_cross'));
+    assert.ok(ids.has('shell_harbor'));
+    assert.ok(ids.has('cliff_isle'));
+
+    for (const def of MAP_CATALOG) {
+      const board = buildBoard(def.id);
+      assert.equal(board.mapId, def.id);
+      assert.ok(board.nodes.length > 10);
+      assert.ok(board.cols >= 9 && board.rows >= 8);
+      for (const n of board.nodes) {
+        for (const nid of n.nexts) {
+          const other = board.nodes.find((x) => x.id === nid);
+          assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+        }
+      }
+      const counts = {};
+      for (const s of board.nodes.filter((x) => x.type === 'shop')) {
+        counts[s.area] = (counts[s.area] || 0) + 1;
+      }
+      for (const [area, count] of Object.entries(counts)) {
+        assert.ok(count <= AREA_SHOP_MAX, `${def.id} area ${area}: ${count}`);
+        assert.ok(count >= 3, `${def.id} area ${area}: too few (${count})`);
+      }
+    }
+
+    const isle = buildBoard('cliff_isle');
+    assert.ok(isle.areas[11], 'cliff isle should have detached area 11');
+    assert.equal(isle.areas[11].name, 'がけしたどおり');
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 2,
+      mapId: 'cliff_isle',
+    });
+    assert.equal(g.mapId, 'cliff_isle');
+    assert.ok(g.cols >= 14);
   });
 
   it('creates a board with shops and areas', () => {

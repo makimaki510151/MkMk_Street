@@ -1,6 +1,14 @@
 /** MkMk Street — ゲームエンジン（純ロジック / ホスト権威） */
 
-import { buildBoard, SUIT_LABELS, DEFAULT_GOAL, DEFAULT_CASH, dirLabel } from './board.js';
+import {
+  buildBoard,
+  SUIT_LABELS,
+  DEFAULT_GOAL,
+  DEFAULT_CASH,
+  DEFAULT_MAP_ID,
+  dirLabel,
+  getMapDef,
+} from './board.js';
 import { createEventTable, scratchCell, unscratchedIds, applyAllCash, recordWarp, takeWarpFx } from './eventTable.js';
 import {
   monopolyRate as monopolyRateOf,
@@ -296,9 +304,16 @@ function mulberry32(seed) {
   };
 }
 
-export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), cash } = {}) {
-  const board = buildBoard();
+export function createGame({
+  players,
+  goal,
+  seed = Date.now(),
+  cash,
+  mapId = DEFAULT_MAP_ID,
+} = {}) {
+  const board = buildBoard(mapId);
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
+  const resolvedGoal = goal ?? board.goal ?? DEFAULT_GOAL;
   const rng = mulberry32(seed);
 
   let cpuOrd = 0;
@@ -335,12 +350,14 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
   return {
     map: board.nodes,
     areas: board.areas,
+    mapId: board.mapId || getMapDef(mapId).id,
+    mapName: board.mapName || getMapDef(mapId).name,
     /** 全員共通のイベント表（1マスずつ誰かがめくる） */
     sharedEventTable: createEventTable((seed >>> 0) + 7771),
     cols: board.cols,
     rows: board.rows,
     startId: board.startId,
-    goal,
+    goal: resolvedGoal,
     players: plist,
     currentPlayerIdx: 0,
     phase: 'await_roll', // await_roll | await_fork | await_choice | gameover
@@ -772,6 +789,8 @@ export function serializeState(g) {
   return JSON.parse(JSON.stringify({
     map: g.map,
     areas: g.areas,
+    mapId: g.mapId || DEFAULT_MAP_ID,
+    mapName: g.mapName || '',
     cols: g.cols,
     rows: g.rows,
     startId: g.startId,

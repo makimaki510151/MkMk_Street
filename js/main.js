@@ -35,7 +35,7 @@ import {
   kickDisconnectedPlayer,
   getGoalPressurePlayers,
 } from './engine.js';
-import { AREA_META, SUIT_LABELS } from './board.js';
+import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID } from './board.js';
 import {
   GROUP_COLORS,
   TABLE_SIZE,
@@ -339,10 +339,45 @@ function bindTitle() {
   $('#btn-howto-back').onclick = () => showScreen('screen-title');
 }
 
+function selectedMapId(rootSel) {
+  const checked = document.querySelector(`${rootSel} input[name="map-id"]:checked`);
+  return checked?.value || DEFAULT_MAP_ID;
+}
+
+function getMapDefName(mapId) {
+  return MAP_CATALOG.find((m) => m.id === mapId)?.name || '中央クロス';
+}
+
+function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  const current = preferredId || DEFAULT_MAP_ID;
+  box.innerHTML = MAP_CATALOG.map((m) => `
+    <label class="map-option">
+      <input type="radio" name="map-id" value="${escapeHtml(m.id)}" ${m.id === current ? 'checked' : ''} />
+      <span class="map-option-body">
+        <strong>${escapeHtml(m.name)}</strong>
+        <small>${escapeHtml(m.blurb)}</small>
+      </span>
+    </label>
+  `).join('');
+  const syncGoal = () => {
+    if (!goalInputId) return;
+    const input = document.getElementById(goalInputId);
+    const def = MAP_CATALOG.find((m) => m.id === selectedMapId(`#${containerId}`));
+    if (input && def?.defaultGoal) input.value = String(def.defaultGoal);
+  };
+  box.querySelectorAll('input[name="map-id"]').forEach((el) => {
+    el.addEventListener('change', syncGoal);
+  });
+  syncGoal();
+}
+
 function openSetupLocal() {
   showScreen('screen-setup');
   $('#setup-online-only').hidden = true;
   $('#setup-title').textContent = 'ローカル対戦';
+  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal');
   renderSeatEditors(2);
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
@@ -393,6 +428,7 @@ async function openLobby(role, prefill = {}) {
   $('#btn-add-cpu').hidden = role !== 'host';
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
+  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal');
   if (prefill.name) $('#lobby-name').value = prefill.name;
   if (prefill.room && role === 'guest') {
     const roomInput = $('#lobby-room');
@@ -448,13 +484,14 @@ async function openLobby(role, prefill = {}) {
     if (app.mode !== 'host') return;
     if (app.lobbyPlayers.length < 2) return toast('あと1人以上待ってください（またはCPUを追加）');
     const goal = Number($('#lobby-goal').value) || 10000;
+    const mapId = selectedMapId('#lobby-map-options');
     const players = app.lobbyPlayers.map((p, i) => ({
       peerId: p.peerId,
       name: p.name,
       color: PLAYER_COLORS[i % PLAYER_COLORS.length],
       isCPU: !!p.isCPU,
     }));
-    app.game = createGame({ players, goal });
+    app.game = createGame({ players, goal, mapId });
     app.localSeat = 0;
     app.net.broadcast({ type: 'game_start', state: serializeState(app.game), seatMap: players.map((p) => p.peerId) });
     enterGame();
@@ -777,8 +814,18 @@ function syncGoalPressureBgm(g) {
 }
 
 function startLocal(seats) {
-  const goal = Number($('#setup-goal').value) || 10000;
-  app.game = createGame({ players: seats, goal });
+  const params = new URLSearchParams(location.search);
+  const demo = params.get('demo');
+  const mapFromDemo = demo === 'map-cliff' ? 'cliff_isle'
+    : demo === 'map-shell' ? 'shell_harbor'
+      : params.get('map');
+  const mapId = mapFromDemo || selectedMapId('#setup-map-options');
+  const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
+  const goalFromUi = Number($('#setup-goal')?.value);
+  const goal = mapFromDemo
+    ? (mapDef?.defaultGoal)
+    : (goalFromUi || mapDef?.defaultGoal || 10000);
+  app.game = createGame({ players: seats, goal, mapId });
   app.localSeat = seats.findIndex((s) => !s.isCPU);
   if (app.localSeat < 0) app.localSeat = 0;
   enterGame();
@@ -790,6 +837,27 @@ function maybeDemoLanding() {
   if (!demo || !app.game) return;
   const p = currentPlayer(app.game);
   if (!p) return;
+  if (demo === 'invest-half') {
+    p.flags.investCoupon = true;
+    const shop = app.game.map.find((n) => n.type === 'shop');
+    if (shop) {
+      shop.owner = p.id;
+      shop.extraInvest = 0;
+      shop.price = shop.basePrice;
+    }
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'invest',
+      playerId: p.id,
+      shopId: shop?.id,
+      landedShopId: shop?.id,
+      shopIds: shop ? [shop.id] : [],
+      remaining: 200,
+      toll: 0,
+    };
+    refreshGameUI();
+    return;
+  }
   if (demo === 'scratch' || demo === 'scratch-match') {
     const mark = app.game.map.find((n) => n.type === 'mark');
     if (!mark) return;
@@ -2503,6 +2571,7 @@ function refreshGameUI() {
       p.offline ? '<span class="pc-flag offline">切断</span>' : '',
       atGoal ? '<span class="pc-flag goal" title="総資産が目標以上 — 銀行停止／通過で勝利">目標到達</span>' : '',
       p.lucky ? '<span class="pc-flag lucky" title="他者の買い物料の20%を銀行から受取（次の自分の番まで）">★ラッキー</span>' : '',
+      p.flags?.investCoupon ? '<span class="pc-flag invest-half" title="次の自分店への増資が半額">増資半額</span>' : '',
       p.flags?.fiveBuyCoupon ? '<span class="pc-flag coupon" title="次の店奪取が3倍買いになる">3倍クーポン</span>' : '',
       p.flags?.tollShield ? '<span class="pc-flag" title="次の買い物料を無効化">通行守り</span>' : '',
       p.resting ? '<span class="pc-flag">休み</span>' : '',
@@ -2536,6 +2605,8 @@ function refreshGameUI() {
   flushPendingMoneyFx();
 
   const pressure = getGoalPressurePlayers(g);
+  const mapChip = $('#map-chip');
+  if (mapChip) mapChip.textContent = g.mapName || getMapDefName(g.mapId);
   $('#goal-chip').textContent = pressure.length
     ? `目標 ${g.goal.toLocaleString()}G ⚠到達${pressure.length}人`
     : `目標 ${g.goal.toLocaleString()}G`;
@@ -2545,6 +2616,14 @@ function refreshGameUI() {
   $('#phase-chip').textContent = phaseLabel(g);
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
+  const me = localHumanSeat(g) != null ? g.players[localHumanSeat(g)] : null;
+  const buff = $('#buff-chip');
+  if (buff) {
+    const half = !!me?.flags?.investCoupon;
+    buff.hidden = !half;
+    buff.textContent = half ? '増資半額' : '';
+    buff.classList.toggle('on', half);
+  }
   syncGoalPressureBgm(g);
 
   // 上→下（古い→新しい）。内部配列は newest-first のため表示時に反転
@@ -3581,6 +3660,7 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'invest') {
+    const investor = g.players[pend.playerId];
     const landedId = pend.landedShopId ?? pend.shopId;
     const landed = getNode(g, landedId);
     const ids = pend.shopIds?.length
@@ -3599,11 +3679,12 @@ function showChoiceModal(g) {
       const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
       const multi = investMultiByMonopolyRate(rate);
       const pct = Math.round(rate * 100);
-      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      const area = AREA_META[sq.area]?.name || g.areas[sq.area]?.name || `A${sq.area}`;
       return { sq, rem, maxInv, owned, total, multi, pct, area };
     };
 
     title.textContent = '好きな店へ増資';
+    const hasHalf = !!investor?.flags?.investCoupon;
     const rows = ids.map((id) => {
       const m = shopMeta(id);
       if (!m) return '';
@@ -3620,14 +3701,25 @@ function showChoiceModal(g) {
       const rem = m?.rem || 0;
       const panel = $('#invest-amount-panel');
       if (!panel || !m) return;
+      const preview = Math.min(rem, 100);
+      const payPreview = hasHalf ? Math.ceil(preview / 2) : preview;
       panel.innerHTML = `
         <p class="modal-lead">選択中: <strong>${escapeHtml(m.sq.label)}</strong></p>
         <p>買い物料 ${calcToll(g, m.sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
         <p class="hint">独占率 ${m.owned}/${m.total}（${m.pct}%）→ 上限倍率×${m.multi}（上限 ${m.maxInv.toLocaleString()}G）</p>
-        <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${Math.min(rem, 100)}" ${rem <= 0 ? 'disabled' : ''} /></label>
+        <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${preview}" ${rem <= 0 ? 'disabled' : ''} /></label>
+        ${hasHalf ? `<p class="invest-half-pay">支払い <strong id="m-pay">${payPreview.toLocaleString()}G</strong>（半額クーポン）</p>` : ''}
         <div class="modal-actions">
           <button class="btn primary" id="m-inv" ${rem <= 0 ? 'disabled' : ''}>${rem <= 0 ? '増資上限です' : '増資する'}</button>
         </div>`;
+      const amtInput = $('#m-amt');
+      const syncPay = () => {
+        const payEl = $('#m-pay');
+        if (!payEl || !hasHalf) return;
+        const amount = Number(amtInput?.value) || 0;
+        payEl.textContent = `${Math.ceil(amount / 2).toLocaleString()}G`;
+      };
+      amtInput?.addEventListener('input', syncPay);
       $('#m-inv').onclick = () => {
         const amount = Number($('#m-amt').value) || 0;
         hideModal();
@@ -3636,6 +3728,7 @@ function showChoiceModal(g) {
     };
 
     body.innerHTML = `
+      ${hasHalf ? '<div class="invest-half-banner" role="status">増資半額クーポン適用中 — 今回の増資支払いが半分</div>' : ''}
       <p class="hint">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}好きな自分の店へ増資できます</p>
       <div class="pick-invest-list invest-pick-list">${rows || '<p class="hint">所持店がありません</p>'}</div>
       <div id="invest-amount-panel"></div>`;
