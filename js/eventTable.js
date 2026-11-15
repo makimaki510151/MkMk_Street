@@ -35,22 +35,32 @@ function buildCatalog() {
     list.push({ id: list.length + 1, kind, label, ...data });
   };
 
-  // ── 小〜中の金運（控えめ）────────────────────────────────
+  // ── 小〜中の金運（一部はレベル連動）────────────────────────
   [
-    ['treasure_map', '宝の地図', 80], ['street_fair', '縁日の儲け', 100],
-    ['lost_wallet', '落とし物発見', 120], ['tip_jar', 'チップ箱', 70],
-    ['night_market', '夜店ボーナス', 90], ['busking', '路上ライブ', 85],
-    ['lottery_petal', '花びらくじ', 110], ['friend_treat', '差し入れ', 60],
-    ['parade_tip', 'パレード祝儀', 95], ['secret_stash', '隠し金庫', 130],
-  ].forEach(([k, l, cash]) => push(k, l, { cash, effect: 'cash' }));
+    ['treasure_map', '宝の地図', 50, 30], ['street_fair', '縁日の儲け', 60, 25],
+    ['lost_wallet', '落とし物発見', 70, 35], ['tip_jar', 'チップ箱', 40, 20],
+    ['night_market', '夜店ボーナス', 55, 28], ['busking', '路上ライブ', 45, 22],
+    ['lottery_petal', '花びらくじ', 65, 30], ['friend_treat', '差し入れ', 35, 18],
+    ['parade_tip', 'パレード祝儀', 50, 25], ['secret_stash', '隠し金庫', 80, 40],
+  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
 
-  // ── 小〜中の出費 ────────────────────────────────────────
+  // ── レベル基準の特別金運 ─────────────────────────────────
   [
-    ['flat_tire', 'パンク修理', -70], ['parking_fee', '駐車料金', -55],
-    ['phone_bill', '通信費', -65], ['laundry', 'クリーニング', -45],
-    ['broken_sign', '看板修繕', -90], ['overdue_book', '延滞料', -40],
-    ['coffee_spill', '弁償コーヒー', -50], ['umbrella_buy', '急ぎの傘', -35],
-  ].forEach(([k, l, cash]) => push(k, l, { cash, effect: 'cash' }));
+    ['rank_allowance', '階級手当', 100, 60],
+    ['title_bonus', '肩書きボーナス', 80, 50],
+    ['seniority_pay', '年功加算', 60, 70],
+    ['badge_stipend', 'バッジ支給', 90, 45],
+    ['promotion_prep', '昇進準備金', 70, 55],
+  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
+
+  // ── 小〜中の出費（一部レベル連動）──────────────────────────
+  [
+    ['flat_tire', 'パンク修理', -40, -20], ['parking_fee', '駐車料金', -30, -15],
+    ['phone_bill', '通信費', -35, -18], ['laundry', 'クリーニング', -25, -12],
+    ['broken_sign', '看板修繕', -50, -25], ['overdue_book', '延滞料', -20, -10],
+    ['coffee_spill', '弁償コーヒー', -30, -12], ['umbrella_buy', '急ぎの傘', -20, -8],
+    ['rank_dues', '階級維持費', -40, -30], ['title_tax', '肩書き税', -35, -28],
+  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
 
   // ── 株 ─────────────────────────────────────────────────
   [
@@ -69,15 +79,16 @@ function buildCatalog() {
     ['area_banner', 'エリア横断幕', 35], ['staff_cheer', '店員の応援', 40],
   ].forEach(([k, l, shopBoost]) => push(k, l, { shopBoost, effect: 'shop_boost' }));
 
-  // ── 好きな自分の店へ無料増資（選択）────────────────────────
+  // ── 好きな自分の店へ無料増資（選択・レベル連動あり）────────
   [
-    ['free_remodel', '好きなお店を改装', 80],
-    ['owner_choice_boost', '店主の采配', 70],
-    ['pick_renovation', '改装オーダー', 90],
-    ['my_shop_glowup', '推し店を磨こう', 60],
-    ['selective_invest', '一点集中投資', 100],
-    ['spotlight_shop', 'スポットライト改装', 75],
-  ].forEach(([k, l, amount]) => push(k, l, { effect: 'pick_invest', amount }));
+    ['free_remodel', '好きなお店を改装', 50, 20],
+    ['owner_choice_boost', '店主の采配', 40, 18],
+    ['pick_renovation', '改装オーダー', 55, 22],
+    ['my_shop_glowup', '推し店を磨こう', 35, 15],
+    ['selective_invest', '一点集中投資', 60, 25],
+    ['spotlight_shop', 'スポットライト改装', 45, 18],
+    ['rank_remodel', '階級改装権', 40, 30],
+  ].forEach(([k, l, amount, levelScale]) => push(k, l, { effect: 'pick_invest', amount, levelScale }));
 
   // ── サイコロ・移動 ───────────────────────────────────────
   [
@@ -143,15 +154,16 @@ function buildCatalog() {
     ['park_bench', '公園のベンチ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'rest' }));
 
-  // ── 全員の持ち金アップ（原作の景気・給料系）────────────────
+  // ── 全員の持ち金アップ（発動者レベルで厚みが変わる）────────
   [
-    ['payday_all', '給料日', 100], ['bonus_wave', 'ボーナス支給', 120],
-    ['town_stimulus', '景気刺激策', 80], ['festival_boom', 'お祭り景気', 90],
-    ['tourist_rush', '観光客ラッシュ', 70], ['year_end_refund', '年末還付', 110],
-    ['new_year_gift', 'お年玉タイム', 95], ['summer_bonus', '夏のボーナス', 130],
-    ['street_dividend', '通りの配当', 75], ['mayor_gift', '市長からの贈り物', 85],
-    ['prosperity_bell', '繁栄の鐘', 105], ['market_cheer', '市場の万歳', 65],
-  ].forEach(([k, l, cash]) => push(k, l, { cash, effect: 'all_cash' }));
+    ['payday_all', '給料日', 70, 20], ['bonus_wave', 'ボーナス支給', 80, 25],
+    ['town_stimulus', '景気刺激策', 55, 15], ['festival_boom', 'お祭り景気', 60, 18],
+    ['tourist_rush', '観光客ラッシュ', 50, 12], ['year_end_refund', '年末還付', 75, 22],
+    ['new_year_gift', 'お年玉タイム', 65, 20], ['summer_bonus', '夏のボーナス', 85, 28],
+    ['street_dividend', '通りの配当', 50, 15], ['mayor_gift', '市長からの贈り物', 55, 18],
+    ['prosperity_bell', '繁栄の鐘', 70, 22], ['market_cheer', '市場の万歳', 45, 12],
+    ['rank_celebration', '階級のお祝い', 60, 30],
+  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'all_cash' }));
 
   // ── ミニゲーム（勝利者＋全員に参加賞）────────────────────
   [
@@ -206,20 +218,22 @@ function buildCatalog() {
     ['all_shop_polish', '全店みがき'], ['chain_care', 'チェーン整備'],
   ].forEach(([k, l]) => push(k, l, { effect: 'boost_all_shops', amount: 20 }));
 
-  // ── 複合・ユニーク ───────────────────────────────────────
+  // ── 複合・ユニーク（レベル連動を混ぜる）────────────────────
   [
     ['level_toast', '昇進の予祝', { effect: 'grant_mark', grantMark: true }],
-    ['dice_and_coin', '賽と硬貨', { effect: 'extra_roll', extraRoll: true, cash: 40 }],
-    ['shop_and_share', '店と株セット', { effect: 'shop_and_stock', shopBoost: 30, stocks: 5 }],
+    ['dice_and_coin', '賽と硬貨', { effect: 'extra_roll', extraRoll: true, cash: 25, levelScale: 15 }],
+    ['shop_and_share', '店と株セット', { effect: 'shop_and_stock', shopBoost: 20, levelScale: 10, stocks: 5 }],
     ['lucky_invest', '強運の増資', { effect: 'lucky_invest', lucky: true }],
-    ['bank_bonus_trip', '銀行寄り道', { effect: 'warp_bank', cash: 50 }],
+    ['bank_bonus_trip', '銀行寄り道', { effect: 'warp_bank', cash: 30, levelScale: 20 }],
     ['mark_festival', 'マーク祭', { effect: 'grant_two_marks' }],
     ['stock_shower', '株のシャワー', { effect: 'multi_stocks', amount: 4 }],
     ['street_cleanup', '街の清掃', { effect: 'boost_all_shops', amount: 15 }],
     ['mystery_box', 'ミステリー箱', { effect: 'mystery' }],
     ['fortune_wheel', '運命の輪', { effect: 'mystery' }],
-    ['all_hands_raise', 'みんなで乾杯', { effect: 'all_cash', cash: 140 }],
-    ['city_wide_sale', '全市セール還元', { effect: 'all_cash', cash: 60 }],
+    ['all_hands_raise', 'みんなで乾杯', { effect: 'all_cash', cash: 90, levelScale: 25 }],
+    ['city_wide_sale', '全市セール還元', { effect: 'all_cash', cash: 40, levelScale: 12 }],
+    ['level_salary_day', '階級給料日', { effect: 'cash', cash: 80, levelScale: 70 }],
+    ['rank_shop_polish', '階級店みがき', { effect: 'shop_boost', shopBoost: 25, levelScale: 20 }],
   ].forEach(([k, l, data]) => push(k, l, data));
 
   // ── 残りを多彩フレーバーで埋める（G偏重を避けるローテーション）──
@@ -256,15 +270,15 @@ function buildCatalog() {
     { effect: 'lucky', lucky: true },
     { effect: 'grant_mark', grantMark: true },
     { effect: 'stocks', stocks: 5 },
-    { effect: 'shop_boost', shopBoost: 30 },
-    { effect: 'pick_invest', amount: 55 },
+    { effect: 'shop_boost', shopBoost: 20, levelScale: 8 },
+    { effect: 'pick_invest', amount: 40, levelScale: 12 },
     { effect: 'invest_coupon' },
     { effect: 'toll_shield' },
     { effect: 'bump_area_stock', amount: 1.08 },
     { effect: 'warp_random' },
     { effect: 'mystery' },
-    { effect: 'cash', cash: 55 }, // 稀に小額
-    { effect: 'all_cash', cash: 45 },
+    { effect: 'cash', cash: 30, levelScale: 18 },
+    { effect: 'all_cash', cash: 30, levelScale: 10 },
     { effect: 'minigame', game: 'coin' },
     { effect: 'minigame', game: 'high_low' },
     { effect: 'trim_stocks', amount: 3 },
@@ -371,6 +385,15 @@ export function scratchCell(g, player, cellId) {
   };
 }
 
+/** 基本額 + レベル×levelScale（スクラッチのレベル基準イベント用） */
+function scaledAmount(def, player, field = 'cash') {
+  const base = Number(def?.[field] ?? def?.amount ?? 0);
+  const scale = Number(def?.levelScale || 0);
+  if (!scale) return Math.floor(base);
+  const lv = Math.max(1, Number(player?.level) || 1);
+  return Math.floor(base + lv * scale);
+}
+
 function applyCash(player, amount, messages) {
   if (!amount) return;
   if (amount > 0) {
@@ -442,17 +465,17 @@ function applyEventDef(g, player, def, messages) {
 
   const effect = def.effect || def.kind;
 
-  // 明示フィールドも併用
+  // 明示フィールドも併用（レベル連動対応）
   if (def.cash && effect !== 'cash' && effect !== 'dice_and_coin' && effect !== 'bank_bonus_trip' && effect !== 'warp_bank') {
-    applyCash(player, def.cash, messages);
+    applyCash(player, scaledAmount(def, player, 'cash'), messages);
   }
 
   switch (effect) {
     case 'cash':
-      applyCash(player, def.cash || 50, messages);
+      applyCash(player, scaledAmount(def, player, 'cash') || 50, messages);
       break;
     case 'all_cash':
-      applyAllCash(g, def.cash || 80, messages);
+      applyAllCash(g, scaledAmount(def, player, 'cash') || 80, messages);
       break;
     case 'minigame': {
       const game = def.game || 'guess_dice';
@@ -467,11 +490,13 @@ function applyEventDef(g, player, def, messages) {
       applyStocks(g, player, def.stocks || 5, messages);
       break;
     case 'shop_boost':
-      applyShopBoost(g, player, def.shopBoost || 30, messages);
+      applyShopBoost(g, player, scaledAmount(def, player, 'shopBoost') || 30, messages);
       break;
     case 'pick_invest': {
       const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
-      const amount = Math.max(20, Math.floor(def.amount || def.shopBoost || 80));
+      const amount = Math.max(20, Math.floor(
+        scaledAmount({ ...def, cash: def.amount || def.shopBoost || 80 }, player, 'cash'),
+      ));
       if (!shops.length) {
         player.flags.investCoupon = true;
         messages.push('所持店なし → 増資半額券');
@@ -482,7 +507,7 @@ function applyEventDef(g, player, def, messages) {
       break;
     }
     case 'shop_and_stock':
-      applyShopBoost(g, player, def.shopBoost || 30, messages);
+      applyShopBoost(g, player, scaledAmount(def, player, 'shopBoost') || 30, messages);
       applyStocks(g, player, def.stocks || 5, messages);
       break;
     case 'extra_roll':
@@ -491,7 +516,7 @@ function applyEventDef(g, player, def, messages) {
     case 'double_step':
       player.flags.extraRoll = true;
       messages.push('もう一度サイコロ！');
-      if (def.cash) applyCash(player, def.cash, messages);
+      if (def.cash) applyCash(player, scaledAmount(def, player, 'cash'), messages);
       break;
     case 'warp_bank':
     case 'bank_warp':
@@ -501,7 +526,7 @@ function applyEventDef(g, player, def, messages) {
       player.pos = g.startId;
       player.prevPos = null;
       messages.push('銀行へ移動');
-      if (def.cash) applyCash(player, def.cash, messages);
+      if (def.cash) applyCash(player, scaledAmount(def, player, 'cash'), messages);
       break;
     case 'warp_mark': {
       const mark = pickRandom(g.map.filter((n) => n.type === 'mark'));

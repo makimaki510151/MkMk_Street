@@ -37,6 +37,7 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
+  getLevelBonus,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
 import {
@@ -448,7 +449,9 @@ describe('MkMk Street engine', () => {
   it('keeps scratch event catalog diverse (not mostly cash)', () => {
     assert.equal(EVENT_CATALOG.length, EVENT_COUNT);
     const cashOnly = EVENT_CATALOG.filter((e) => e.effect === 'cash').length;
-    assert.ok(cashOnly <= 40, `too many cash-only events: ${cashOnly}`);
+    assert.ok(cashOnly <= 45, `too many cash-only events: ${cashOnly}`);
+    const levelScaled = EVENT_CATALOG.filter((e) => e.levelScale).length;
+    assert.ok(levelScaled >= 20, `expected level-scaled scratch events, got ${levelScaled}`);
     const kinds = new Set(EVENT_CATALOG.map((e) => e.effect || e.kind));
     assert.ok(kinds.size >= 15, `expected many effect kinds, got ${kinds.size}`);
     assert.ok(kinds.has('extra_roll') || kinds.has('grant_mark'));
@@ -460,6 +463,56 @@ describe('MkMk Street engine', () => {
     const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
     assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
     assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
+  });
+
+  it('scales level-up bonus by promotion target level', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+      cash: 1000,
+    });
+    g.players[0].level = 1;
+    const b2 = getLevelBonus(g, g.players[0], 2);
+    g.players[0].level = 3;
+    const b4 = getLevelBonus(g, g.players[0], 4);
+    assert.ok(b2 >= 700, `Lv2 bonus too low: ${b2}`);
+    assert.ok(b4 > b2, `higher level should pay more: ${b4} <= ${b2}`);
+    assert.equal(b4 - b2, 500, 'each +2 levels adds 500G base');
+  });
+
+  it('scales scratch cash by player level when levelScale is set', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'cash' && e.levelScale);
+    assert.ok(idx >= 0);
+    const def = EVENT_CATALOG[idx];
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 9,
+      cash: 500,
+    });
+    g.players[0].level = 1;
+    const cell = g.sharedEventTable.cells[2];
+    cell.eventId = idx + 1;
+    cell.label = def.label;
+    cell.scratched = false;
+    const before = g.players[0].cash;
+    const r1 = scratchCell(g, g.players[0], 2);
+    assert.equal(r1.ok, true);
+    const gain1 = g.players[0].cash - before;
+    const expected1 = Math.floor((def.cash || 0) + 1 * def.levelScale);
+    assert.equal(gain1, expected1);
+
+    g.players[0].level = 4;
+    g.players[0].cash = before;
+    const cell2 = g.sharedEventTable.cells[3];
+    cell2.eventId = idx + 1;
+    cell2.label = def.label;
+    cell2.scratched = false;
+    const r2 = scratchCell(g, g.players[0], 3);
+    assert.equal(r2.ok, true);
+    const gain2 = g.players[0].cash - before;
+    const expected2 = Math.floor((def.cash || 0) + 4 * def.levelScale);
+    assert.equal(gain2, expected2);
+    assert.ok(gain2 > gain1);
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {
@@ -813,12 +866,14 @@ describe('MkMk Street engine', () => {
   it('pick_invest event lets player choose a shop to boost', () => {
     const pickId = EVENT_CATALOG.findIndex((e) => e.effect === 'pick_invest');
     assert.ok(pickId >= 0, 'catalog has pick_invest');
-    const amount = EVENT_CATALOG[pickId].amount || 80;
+    const def = EVENT_CATALOG[pickId];
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 21,
       cash: 3000,
     });
+    const lv = g.players[0].level || 1;
+    const amount = Math.floor((def.amount || 80) + lv * (def.levelScale || 0));
     const shops = g.map.filter((n) => n.type === 'shop');
     const a = shops[0];
     const b = shops[1];
@@ -826,7 +881,7 @@ describe('MkMk Street engine', () => {
     b.owner = 0;
     const cell = g.sharedEventTable.cells[0];
     cell.eventId = pickId + 1;
-    cell.label = EVENT_CATALOG[pickId].label;
+    cell.label = def.label;
     cell.scratched = false;
     g.phase = 'await_choice';
     g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
