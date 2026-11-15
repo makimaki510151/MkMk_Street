@@ -197,7 +197,7 @@ function buildCatalog() {
     ['mini_dice', 'サイコロ当て', 'guess_dice'],
     ['mini_highlow', 'ハイ＆ロー', 'high_low'],
     ['mini_coin', 'コイントス', 'coin'],
-    ['mini_slot', 'スリースロット', 'slot'],
+    ['mini_slot', 'ファイブスロット', 'slot'],
     ['dice_carnival', '賽のカーニバル', 'guess_dice'],
     ['lucky_flip', 'ラッキーフリップ', 'coin'],
     ['card_highlow', 'カードハイロー', 'high_low'],

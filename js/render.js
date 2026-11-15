@@ -700,7 +700,7 @@ export function shopTooltip(g, sq) {
       guess_dice: 'サイコロ当て',
       high_low: 'ハイ＆ロー',
       coin: 'コイントス',
-      slot: 'スリースロット',
+      slot: 'ファイブスロット',
     };
     return `${sq.label} — 止まるとミニゲーム「${names[sq.game] || sq.game}」（外れても全員に参加賞）`;
   }

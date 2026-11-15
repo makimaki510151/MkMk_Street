@@ -342,8 +342,8 @@ const BOARD_EVENTS = [
     p.flags.pendingMinigame = { game: 'high_low', label: 'ハイ＆ロー' };
     return 'ミニゲーム！';
   }},
-  { id: 'mini_slot', label: 'スリースロット', apply: (g, p) => {
-    p.flags.pendingMinigame = { game: 'slot', label: 'スリースロット' };
+  { id: 'mini_slot', label: 'ファイブスロット', apply: (g, p) => {
+    p.flags.pendingMinigame = { game: 'slot', label: 'ファイブスロット' };
     return 'ミニゲーム！';
   }},
 ];
@@ -2299,34 +2299,83 @@ function resolveMinigame(g, p, pending, choice) {
     detail = `予想 ${pickLabel} → ${faceLabel}`;
   } else if (game === 'slot') {
     const syms = ['★', '♪', 'G', '♦', '♣'];
-    const a = syms[Math.floor(rngNext(g) * syms.length)];
-    const b = syms[Math.floor(rngNext(g) * syms.length)];
-    const c = syms[Math.floor(rngNext(g) * syms.length)];
-    const line = `${a}${b}${c}`;
-    outcome.symbols = [a, b, c];
-    if (a === b && b === c) {
+    const reels = [];
+    for (let i = 0; i < 5; i++) {
+      reels.push(syms[Math.floor(rngNext(g) * syms.length)]);
+    }
+    const line = reels.join('');
+    const counts = new Map();
+    for (const s of reels) counts.set(s, (counts.get(s) || 0) + 1);
+    const freq = [...counts.values()].sort((a, b) => b - a);
+    const top = freq[0] || 0;
+    const second = freq[1] || 0;
+    const hitIndices = reels
+      .map((s, i) => ((counts.get(s) || 0) >= 2 ? i : -1))
+      .filter((i) => i >= 0);
+    outcome.symbols = reels;
+    outcome.hitIndices = hitIndices;
+
+    // 5リール役：5揃い > 4揃い > フルハウス > 3揃い > ツーペア > ワンペア > ハズレ
+    // 揃いが難しくなった分、上位役の報酬を厚く／下位は控えめに調整
+    if (top === 5) {
       win = true;
       tier = 'jackpot';
       title = 'ジャックポット！';
-      const prize = 320 + p.level * 50;
+      const prize = 900 + p.level * 120;
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ジャックポット ${line}！ → +${prize}G`);
+      messages.push(`5揃い ${line}！ → +${prize}G`);
+      payoutAll(g, 180, messages);
+    } else if (top === 4) {
+      win = true;
+      tier = 'quad';
+      title = 'フォーカード！';
+      const prize = 420 + p.level * 60;
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`4揃い ${line} → +${prize}G`);
       payoutAll(g, 100, messages);
-    } else if (a === b || b === c || a === c) {
+    } else if (top === 3 && second === 2) {
+      win = true;
+      tier = 'fullhouse';
+      title = 'フルハウス！';
+      const prize = 280 + p.level * 42;
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`フルハウス ${line} → +${prize}G`);
+      payoutAll(g, 75, messages);
+    } else if (top === 3) {
+      win = true;
+      tier = 'triple';
+      title = 'スリーカード！';
+      const prize = 150 + p.level * 28;
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`3揃い ${line} → +${prize}G`);
+      payoutAll(g, 55, messages);
+    } else if (top === 2 && second === 2) {
+      win = true;
+      tier = 'two_pair';
+      title = 'ツーペア！';
+      const prize = 90 + p.level * 16;
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`ツーペア ${line} → +${prize}G`);
+      payoutAll(g, 40, messages);
+    } else if (top === 2) {
       win = true;
       tier = 'pair';
-      title = '二つ揃い！';
-      const prize = 120 + p.level * 20;
+      title = 'ワンペア！';
+      const prize = 45 + p.level * 8;
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`二つ揃い ${line} → +${prize}G`);
-      payoutAll(g, 50, messages);
+      messages.push(`ワンペア ${line} → +${prize}G`);
+      payoutAll(g, 28, messages);
     } else {
       tier = 'miss';
-      title = 'バラバラ…';
-      messages.push(`バラバラ ${line}`);
-      payoutAll(g, 30, messages);
+      title = 'バラケ目…';
+      messages.push(`バラケ目 ${line}`);
+      payoutAll(g, 22, messages);
     }
     detail = line;
   } else {
