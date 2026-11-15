@@ -303,7 +303,52 @@ body.goal-pressure .board-wrap {
     linear-gradient(180deg, rgba(232,228,220,0.03), transparent 40%),
     var(--bg1);
 }
-#board { width: 100%; height: 100%; display: block; }
+#board {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+#board.is-panning { cursor: grabbing; }
+.board-zoom {
+  position: absolute;
+  right: 0.65rem;
+  bottom: 0.65rem;
+  z-index: 8;
+  display: flex;
+  gap: 0.28rem;
+  padding: 0.28rem;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+.board-zoom button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg0) 70%, transparent);
+  color: var(--ink);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.92rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.board-zoom button:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  color: var(--accent-strong);
+}
+.board-zoom #btn-zoom-fit {
+  min-width: 2.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
 #inspect {
   position: absolute;
   right: 0.65rem;

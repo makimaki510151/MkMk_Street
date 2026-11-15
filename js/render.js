@@ -28,6 +28,12 @@ const MINIGAME_ICON = {
   slot: 'ス',
 };
 
+/** 盤面まわりのUI（検査パネル・分岐レール・フィード等）を避ける余白 */
+const UI_INSETS = { top: 56, right: 88, bottom: 64, left: 88 };
+const ZOOM_MIN = 0.65;
+const ZOOM_MAX = 2.5;
+const ZOOM_STEP = 0.15;
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let anim = {
@@ -39,10 +45,14 @@ export function createRenderer(canvas) {
     diceSpin: 0,
   };
   let raf = 0;
-  let layout = { size: 40, ox: 0, oy: 0 };
+  let layout = { size: 40, ox: 0, oy: 0, fit: 40, zoom: 1 };
   /** 株購入中に盤面で強調するエリア番号（null=強調なし / 'all'=全店にA番号） */
   let stockHighlightArea = null;
   let stockHighlightMode = false;
+  /** 1 = 全体フィット。拡大時は pan で移動 */
+  let userZoom = 1;
+  let panX = 0;
+  let panY = 0;
 
   function resize() {
     const parent = canvas.parentElement;
@@ -54,22 +64,140 @@ export function createRenderer(canvas) {
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (userZoom <= 1.001) {
+      panX = 0;
+      panY = 0;
+    }
   }
 
-  function cellSize(g, viewW, viewH) {
-    const pad = 16;
-    const cw = (viewW - pad * 2) / g.cols;
-    const ch = (viewH - pad * 2) / g.rows;
-    return Math.min(cw, ch);
+  function clampZoom(z) {
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   }
 
-  function cellOrigin(g, viewW, viewH, size) {
+  /** UI余白を除いた領域に全体が収まるセルサイズ */
+  function fitCellSize(g, viewW, viewH) {
+    const availW = Math.max(80, viewW - UI_INSETS.left - UI_INSETS.right);
+    const availH = Math.max(80, viewH - UI_INSETS.top - UI_INSETS.bottom);
+    return Math.min(availW / g.cols, availH / g.rows);
+  }
+
+  function clampPan(g, viewW, viewH, size, ox, oy) {
     const boardW = size * g.cols;
     const boardH = size * g.rows;
+    const minOx = Math.min(UI_INSETS.left, viewW - UI_INSETS.right - boardW);
+    const maxOx = Math.max(UI_INSETS.left, viewW - UI_INSETS.right - boardW);
+    const minOy = Math.min(UI_INSETS.top, viewH - UI_INSETS.bottom - boardH);
+    const maxOy = Math.max(UI_INSETS.top, viewH - UI_INSETS.bottom - boardH);
+    // 盤が余白内より小さいときは中央付近に留める／大きいときは端が見切れすぎないよう制限
+    const loX = Math.min(minOx, maxOx);
+    const hiX = Math.max(minOx, maxOx);
+    const loY = Math.min(minOy, maxOy);
+    const hiY = Math.max(minOy, maxOy);
     return {
-      ox: (viewW - boardW) / 2,
-      oy: (viewH - boardH) / 2,
+      ox: Math.min(hiX, Math.max(loX, ox)),
+      oy: Math.min(hiY, Math.max(loY, oy)),
     };
+  }
+
+  function computeLayout(g, viewW, viewH) {
+    if (!g) return { size: 40, ox: 0, oy: 0, fit: 40, zoom: userZoom };
+    const fit = fitCellSize(g, viewW, viewH);
+    const size = fit * userZoom;
+    const boardW = size * g.cols;
+    const boardH = size * g.rows;
+    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
+    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
+    const ox0 = UI_INSETS.left + (contentW - boardW) / 2 + panX;
+    const oy0 = UI_INSETS.top + (contentH - boardH) / 2 + panY;
+    const clamped = clampPan(g, viewW, viewH, size, ox0, oy0);
+    return { size, ox: clamped.ox, oy: clamped.oy, fit, zoom: userZoom };
+  }
+
+  /** draw で更新。ズーム操作のアンカー計算に使う */
+  let lastGame = null;
+
+  function getZoom() {
+    return userZoom;
+  }
+
+  function setZoom(z, anchorX, anchorY) {
+    const viewW = canvas.clientWidth;
+    const viewH = canvas.clientHeight;
+    const next = clampZoom(Number(z) || 1);
+    const g = lastGame;
+    const ax = anchorX == null ? viewW / 2 : anchorX;
+    const ay = anchorY == null ? viewH / 2 : anchorY;
+
+    if (!g) {
+      userZoom = next <= 1.001 ? 1 : next;
+      if (userZoom === 1) {
+        panX = 0;
+        panY = 0;
+      }
+      return userZoom;
+    }
+
+    const before = computeLayout(g, viewW, viewH);
+    const wx = before.size > 0 ? (ax - before.ox) / before.size : 0;
+    const wy = before.size > 0 ? (ay - before.oy) / before.size : 0;
+
+    userZoom = next <= 1.001 ? 1 : next;
+    if (userZoom === 1) {
+      panX = 0;
+      panY = 0;
+      return userZoom;
+    }
+
+    const fit = fitCellSize(g, viewW, viewH);
+    const size = fit * userZoom;
+    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
+    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
+    const boardW = size * g.cols;
+    const boardH = size * g.rows;
+    const desiredOx = ax - wx * size;
+    const desiredOy = ay - wy * size;
+    panX = desiredOx - (UI_INSETS.left + (contentW - boardW) / 2);
+    panY = desiredOy - (UI_INSETS.top + (contentH - boardH) / 2);
+    return userZoom;
+  }
+
+  function zoomBy(delta, anchorX, anchorY) {
+    return setZoom(userZoom + delta, anchorX, anchorY);
+  }
+
+  function zoomIn(anchorX, anchorY) {
+    return zoomBy(ZOOM_STEP, anchorX, anchorY);
+  }
+
+  function zoomOut(anchorX, anchorY) {
+    return zoomBy(-ZOOM_STEP, anchorX, anchorY);
+  }
+
+  function zoomFit() {
+    userZoom = 1;
+    panX = 0;
+    panY = 0;
+    return userZoom;
+  }
+
+  function panBy(dx, dy) {
+    if (userZoom <= 1.001) return;
+    panX += dx;
+    panY += dy;
+    if (!lastGame) return;
+    const viewW = canvas.clientWidth;
+    const viewH = canvas.clientHeight;
+    const lay = computeLayout(lastGame, viewW, viewH);
+    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
+    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
+    const boardW = lay.size * lastGame.cols;
+    const boardH = lay.size * lastGame.rows;
+    panX = lay.ox - (UI_INSETS.left + (contentW - boardW) / 2);
+    panY = lay.oy - (UI_INSETS.top + (contentH - boardH) / 2);
+  }
+
+  function getLayout() {
+    return { ...layout, insets: { ...UI_INSETS } };
   }
 
   function nodeCenter(g, nodeId) {
@@ -256,10 +384,10 @@ export function createRenderer(canvas) {
     }
 
     if (!g) return;
+    lastGame = g;
 
-    const size = cellSize(g, viewW, viewH);
-    const { ox, oy } = cellOrigin(g, viewW, viewH, size);
-    layout = { size, ox, oy };
+    layout = computeLayout(g, viewW, viewH);
+    const { size, ox, oy } = layout;
     anim.pulse = (anim.pulse + 0.04) % (Math.PI * 2);
 
     // パス（有効）
@@ -532,26 +660,7 @@ export function createRenderer(canvas) {
       }
     }
 
-    // ブランド（空き象限）
-    const brandX = ox + size * 2.5;
-    const brandY = oy + size * 2.5;
-    ctx.save();
-    ctx.fillStyle = 'rgba(20, 24, 28, 0.55)';
-    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(232, 228, 220, 0.14)';
-    ctx.lineWidth = 1;
-    roundRect(ctx, brandX - size * 1.35, brandY - size * 0.7, size * 2.7, size * 1.4, 2);
-    ctx.stroke();
-    ctx.fillStyle = '#c4a574';
-    ctx.font = `700 ${Math.max(14, size * 0.3)}px "Syne", "Zen Kaku Gothic New", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('MkMk Street', brandX, brandY - size * 0.18);
-    ctx.fillStyle = 'rgba(232, 228, 220, 0.72)';
-    ctx.font = `500 ${Math.max(10, size * 0.17)}px "Zen Kaku Gothic New", sans-serif`;
-    ctx.fillText(`目標 ${g.goal.toLocaleString()}G`, brandX, brandY + size * 0.28);
-    ctx.restore();
+    // ブランド表記はトップバーに集約（盤面マスと被らない）
   }
 
   function startLoop(getState) {
@@ -573,8 +682,8 @@ export function createRenderer(canvas) {
     const y = clientY - rect.top;
     const viewW = canvas.clientWidth;
     const viewH = canvas.clientHeight;
-    const size = cellSize(g, viewW, viewH);
-    const { ox, oy } = cellOrigin(g, viewW, viewH, size);
+    const lay = computeLayout(g, viewW, viewH);
+    const { size, ox, oy } = lay;
     for (const n of g.map) {
       const cx = ox + n.col * size;
       const cy = oy + n.row * size;
@@ -604,6 +713,16 @@ export function createRenderer(canvas) {
     animateWarp,
     setStockHighlight,
     clearStockHighlight,
+    getZoom,
+    setZoom,
+    zoomIn,
+    zoomOut,
+    zoomFit,
+    zoomBy,
+    panBy,
+    getLayout,
+    ZOOM_MIN,
+    ZOOM_MAX,
   };
 }
 
