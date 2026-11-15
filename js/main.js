@@ -707,7 +707,7 @@ function maybeDemoLanding() {
     const p1 = app.game.players[1];
     app.prevCash = Object.fromEntries(app.game.players.map((p) => [p.id, p.cash]));
     if (demo === 'money-loss') {
-      // 買い物料＝ショック
+      // 買い物料の支払い表示確認
       app.game.logs.unshift({
         text: `${p0.name} → ${p1?.name || 'あお'}「さくら茶屋」買い物料 420G`,
         kind: 'toll',
@@ -719,7 +719,7 @@ function maybeDemoLanding() {
       return;
     }
     if (demo === 'money-invest') {
-      // 通常購入＝投資（ショックにしない）
+      // 通常購入＝投資扱いの表示確認
       const price = 290;
       app.game.logs.unshift({
         text: `${p0.name} が「青空マーケット」を購入（${price}G）`,
@@ -730,7 +730,7 @@ function maybeDemoLanding() {
       refreshGameUI();
       return;
     }
-    // 収入 → 買い物料ショック → 大きなゲット
+    // 収入 → 買い物料 → 臨時収入（本番と同じ現金表示経路）
     app.game.logs.unshift({ text: `${p0.name} 昇進！ 賞金 +850G`, kind: 'level', t: Date.now() });
     p0.cash += 850;
     refreshGameUI();
@@ -1161,9 +1161,9 @@ async function applyLocalAction(action) {
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
       const fivePayload = {
-        kicker: '衝撃！',
-        title: '5倍買い！',
-        detail: 'お店を奪取した！',
+        kicker: '5倍買い',
+        title: 'お店を奪取',
+        detail: '店価×5でお店を買収した',
         kind: 'shop',
         color: currentPlayer(app.game)?.color || '#ffe08a',
         mine: true,
@@ -2270,9 +2270,10 @@ function resolveEventVisual(payload) {
 
 /**
  * 直近ログから現金変化の意味を判定。
- * - toll_loss: 他人の店での買い物料（ショック）
- * - invest: 通常の店購入・増資・株購入（投資・ショックにしない）
- * - five_buy: 5倍買い（衝撃）
+ * - toll_loss: 他人の店での買い物料
+ * - invest: 通常の店購入・増資・株購入
+ * - five_buy: 5倍買い
+ * - dividend: エリア収益の株わけ前
  * - gain / toll_gain: 収入
  * - loss: その他の強制出費
  */

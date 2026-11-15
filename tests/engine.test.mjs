@@ -197,6 +197,42 @@ describe('MkMk Street engine', () => {
     assert.equal(payAreaStockDividend(g, area, 0).pool, 0);
   });
 
+  it('pays stock cut automatically when landing on an opponent shop (production path)', () => {
+    const g = createGame({
+      players: [{ name: 'Payer' }, { name: 'Owner' }, { name: 'Holder' }],
+      seed: 17,
+      cash: 5000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shop = g.map.find((n) => n.type === 'shop' && n.area === area);
+    shop.owner = 1;
+    shop.price = 400;
+    shop.basePrice = 400;
+    shop.baseToll = 200;
+    shop.extraInvest = 0;
+    g.players[2].stocks[area] = 3;
+    g.players[2].cash = 1000;
+    const holderBefore = g.players[2].cash;
+    const ownerBefore = g.players[1].cash;
+    const toll = calcToll(g, shop);
+    assert.ok(toll > 0);
+
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+
+    const expectedPool = Math.floor(
+      toll * Math.min(STOCK_DIVIDEND_MAX_RATE, STOCK_DIVIDEND_PER_SHARE * 3),
+    );
+    assert.ok(expectedPool > 0);
+    assert.equal(g.players[1].cash - ownerBefore, toll);
+    assert.equal(g.players[2].cash - holderBefore, expectedPool);
+    assert.equal(g.players[2].stats.dividendEarned, expectedPool);
+    assert.ok(g.logs.some((l) => l.kind === 'toll' && /買い物料/.test(l.text)));
+    assert.ok(g.logs.some((l) => l.kind === 'stock' && /株わけ前/.test(l.text)));
+  });
+
   it('grants monopoly cash bonus when completing an area', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
