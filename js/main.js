@@ -2276,7 +2276,7 @@ function classifyMoneyMood(g, p, amount) {
   return amount > 0 ? 'gain' : 'loss';
 }
 
-/** 現金増減を検知して喜び／悲しみ／投資の演出を出す */
+/** 現金増減を検知して内容が分かる演出を出す */
 function maybePresentMoneyFx(g) {
   if (!g?.players) return;
   const next = {};
@@ -2319,7 +2319,7 @@ function moneyFxBlocked() {
     || !$('#minigame-overlay')?.hidden;
 }
 
-/** 本番: 所持金デルタから感情演出。競合中はキューして後で再生 */
+/** 本番: 所持金デルタから内容表示。競合中はキューして後で再生 */
 function presentMoneyFx(deltas, { remote = false } = {}) {
   if (!deltas?.length) return;
   for (const d of deltas) spawnPlayerCashFloat(d);
@@ -2356,19 +2356,21 @@ function flushPendingMoneyFx() {
   showMoneyFxOverlay(queued);
 }
 
+/** 文言は事実のみ（感情表現は入れない） */
 function resolveMoneyFxCopy(focus) {
   const mood = focus.mood || (focus.amount > 0 ? 'gain' : 'loss');
   const abs = Math.abs(focus.amount);
   const signed = `${focus.amount > 0 ? '+' : '−'}${abs.toLocaleString()}G`;
+  const who = focus.mine ? '' : focus.name;
 
   if (mood === 'invest') {
     return {
       mood: 'invest',
       color: '#c4a574',
       face: '店',
-      title: focus.mine ? '投資！' : '投資',
+      title: 'お店・株の購入',
       amount: signed,
-      who: focus.mine ? '資産を増やすための出費' : `${focus.name} がお店／株に投資`,
+      who: who ? `${who} のお店／株への出費` : 'お店／株への出費',
       coinMode: 'invest',
       se: 'invest',
       floatClass: 'invest',
@@ -2379,40 +2381,60 @@ function resolveMoneyFxCopy(focus) {
       mood: 'five_buy',
       color: '#e09a6a',
       face: '×5',
-      title: focus.mine ? '衝撃！' : '5倍買い',
+      title: '5倍買い',
       amount: signed,
-      who: focus.mine ? '5倍買いでお店を奪取！' : `${focus.name} が5倍買い`,
+      who: who ? `${who} がお店を5倍買い` : 'お店を5倍買い',
       coinMode: 'impact',
       se: 'impact',
       floatClass: 'impact',
     };
   }
-  if (mood === 'toll_loss' || (mood === 'loss' && focus.amount < 0)) {
-    const toll = mood === 'toll_loss';
+  if (mood === 'toll_loss') {
     return {
       mood: 'loss',
       color: '#ff8a80',
-      face: '…',
-      title: focus.mine ? 'ショック…' : '支出',
+      face: 'G',
+      title: '買い物料',
       amount: signed,
-      who: focus.mine
-        ? (toll ? '買い物料を取られた…' : 'お金が減った…')
-        : `${focus.name} の現金が減った`,
+      who: who ? `${who} が買い物料を支払い` : '買い物料の支払い',
       coinMode: 'loss',
       se: 'loss',
       floatClass: 'loss',
     };
   }
-  // gain / toll_gain
+  if (mood === 'loss' && focus.amount < 0) {
+    return {
+      mood: 'loss',
+      color: '#ff8a80',
+      face: 'G',
+      title: '現金の減少',
+      amount: signed,
+      who: who ? `${who} の現金が減少` : '現金が減少',
+      coinMode: 'loss',
+      se: 'loss',
+      floatClass: 'loss',
+    };
+  }
+  if (mood === 'toll_gain') {
+    return {
+      mood: 'gain',
+      color: '#8fd4a8',
+      face: 'G',
+      title: '買い物料の収入',
+      amount: signed,
+      who: who ? `${who} が買い物料を受け取り` : '買い物料の受け取り',
+      coinMode: 'gain',
+      se: 'gain',
+      floatClass: 'gain',
+    };
+  }
   return {
     mood: 'gain',
     color: '#8fd4a8',
-    face: '♪',
-    title: focus.mine ? 'ゲット！' : '収入',
+    face: 'G',
+    title: '現金の増加',
     amount: signed,
-    who: focus.mine
-      ? (mood === 'toll_gain' ? '買い物料が入った！' : 'お金が増えた！')
-      : `${focus.name} の現金が増えた`,
+    who: who ? `${who} の現金が増加` : '現金が増加',
     coinMode: 'gain',
     se: 'gain',
     floatClass: 'gain',
