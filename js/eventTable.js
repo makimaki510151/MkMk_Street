@@ -114,6 +114,7 @@ function buildCatalog() {
   [
     ['lucky_charm', '幸運のお守り'], ['rabbit_foot', 'うさぎの足'],
     ['four_leaf', '四つ葉'], ['sparkle_dust', 'きらめきの粉'],
+    ['lucky_aura', '強運のオーラ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'lucky', lucky: true }));
 
   [
@@ -142,6 +143,32 @@ function buildCatalog() {
   [
     ['park_bench', '公園のベンチ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'rest' }));
+
+  // ── 独占打開（ライバル独占エリアへのカウンター）──────────
+  [
+    ['antitrust_raid', '独占摘発'], ['break_chain', 'チェーン崩し'],
+    ['hostile_takeover', '敵対的買収くじ'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'seize_mono_shop' }));
+
+  [
+    ['mono_nap', '独占店の昼寝'], ['regulator_holiday', '規制当局の休業令'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'mono_area_holiday' }));
+
+  [
+    ['mono_tax', '独占税'], ['fair_trade_fine', '独禁法の罰金'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'mono_tax', amount: 180 }));
+
+  [
+    ['value_slash', '独占店の値崩れ'], ['price_cut_wave', '価格破壊の波'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'slash_mono_value', amount: 50 }));
+
+  [
+    ['cheap_takeover', 'お買い得買収券'], ['three_times_pass', '3倍買いクーポン'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'five_buy_coupon' }));
+
+  [
+    ['mono_stock_siphon', '独占エリア株の横取り'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'steal_mono_stock', amount: 8 }));
 
   // ── 全員の持ち金アップ（原作の景気・給料系）────────────────
   [
@@ -212,6 +239,7 @@ function buildCatalog() {
     ['dice_and_coin', '賽と硬貨', { effect: 'extra_roll', extraRoll: true, cash: 40 }],
     ['shop_and_share', '店と株セット', { effect: 'shop_and_stock', shopBoost: 30, stocks: 5 }],
     ['lucky_invest', '強運の増資', { effect: 'lucky_invest', lucky: true }],
+    ['mono_break_kit', '打開キット', { effect: 'five_buy_coupon', cash: 40 }],
     ['bank_bonus_trip', '銀行寄り道', { effect: 'warp_bank', cash: 50 }],
     ['mark_festival', 'マーク祭', { effect: 'grant_two_marks' }],
     ['stock_shower', '株のシャワー', { effect: 'multi_stocks', amount: 4 }],
@@ -369,6 +397,47 @@ export function scratchCell(g, player, cellId) {
     messages,
     warps,
   };
+}
+
+/** 自分以外が独占しているエリア一覧 */
+function findRivalMonopolies(g, playerId) {
+  /** @type {{ area: number, ownerId: number, shops: object[], name: string }[]} */
+  const out = [];
+  for (const a of Object.keys(g.areas || {}).map(Number)) {
+    const shops = g.map.filter((s) => s.type === 'shop' && s.area === a);
+    if (!shops.length) continue;
+    const owners = [...new Set(shops.map((s) => s.owner))];
+    if (owners.length !== 1) continue;
+    const oid = owners[0];
+    if (oid < 0 || oid === playerId) continue;
+    out.push({
+      area: a,
+      ownerId: oid,
+      shops,
+      name: g.areas[a]?.name || `A${a}`,
+    });
+  }
+  return out;
+}
+
+function clearMonoFlag(g, pid, area) {
+  const p = g.players[pid];
+  if (p?.flags?.monopolyBonusClaimed) delete p.flags.monopolyBonusClaimed[area];
+}
+
+function refreshAreaStockPrice(g, area) {
+  const meta = g.areas[area];
+  if (!meta) return;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+  if (!shops.length) return;
+  const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
+  meta.stockPrice = Math.max(1, Math.floor((avg / 65536) * (meta.B || 100)));
+}
+
+function grantLuckyStatus(player, messages) {
+  player.lucky = true;
+  if (player.flags) player.flags.luckyExpireOnTurn = false;
+  messages.push('ラッキー：他者の買い物料の20%を銀行から受取（次の自分の番まで）');
 }
 
 function applyCash(player, amount, messages) {
@@ -546,9 +615,8 @@ function applyEventDef(g, player, def, messages) {
         player.marks[missing] = true;
         messages.push('不足マーク入手');
       } else {
-        player.flags.lucky = true;
-        player.lucky = true;
-        messages.push('マーク揃済 → ラッキー');
+        grantLuckyStatus(player, messages);
+        messages[messages.length - 1] = `マーク揃済 → ${messages[messages.length - 1]}`;
       }
       break;
     }
@@ -566,14 +634,123 @@ function applyEventDef(g, player, def, messages) {
     }
     case 'lucky':
     case 'lucky_charm':
-      player.lucky = true;
-      messages.push('ラッキーステータス');
+      grantLuckyStatus(player, messages);
       break;
     case 'lucky_invest':
-      player.lucky = true;
+      grantLuckyStatus(player, messages);
       player.flags.investCoupon = true;
-      messages.push('ラッキー＆増資半額');
+      messages.push('次の増資が半額');
       break;
+    case 'seize_mono_shop': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        applyCash(player, 100, messages);
+        messages.push('独占エリアなし → 打開手当');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const sq = pickRandom(mono.shops);
+      const prevId = sq.owner;
+      const prev = g.players[prevId];
+      sq.owner = player.id;
+      sq.extraInvest = 0;
+      sq.price = sq.basePrice;
+      clearMonoFlag(g, prevId, mono.area);
+      refreshAreaStockPrice(g, mono.area);
+      messages.push(`${prev?.name || '相手'}の独占「${mono.name}」から「${sq.label}」を奪取！`);
+      break;
+    }
+    case 'mono_area_holiday': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        player.flags.tollShield = true;
+        messages.push('独占なし → 通行守りを入手');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const owner = g.players[mono.ownerId];
+      if (owner) {
+        owner.shopsClosed = true;
+        messages.push(`${owner.name} の独占店（${mono.name}）が1ターン休み／買い物料0`);
+      }
+      break;
+    }
+    case 'mono_tax': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        applyCash(player, 80, messages);
+        messages.push('独占エリアなし → 小ボーナス');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const owner = g.players[mono.ownerId];
+      const value = mono.shops.reduce((s, sq) => s + sq.price, 0);
+      const want = Math.max(def.amount || 150, Math.floor(value * 0.08));
+      const amt = Math.min(owner?.cash || 0, want);
+      if (owner && amt > 0) {
+        owner.cash -= amt;
+        player.cash += amt;
+        messages.push(`${owner.name} の独占税として ${amt}G（${mono.name}）`);
+      } else {
+        applyCash(player, 60, messages);
+        messages.push('独占主の現金不足 → 銀行から補償');
+      }
+      break;
+    }
+    case 'slash_mono_value': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        applyCash(player, 70, messages);
+        messages.push('独占エリアなし → 小ボーナス');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const cutEach = Math.max(20, def.amount || 40);
+      let cut = 0;
+      for (const sq of mono.shops) {
+        const n = Math.min(sq.extraInvest || 0, cutEach);
+        if (n <= 0) continue;
+        sq.extraInvest -= n;
+        sq.price -= n;
+        cut += n;
+      }
+      refreshAreaStockPrice(g, mono.area);
+      messages.push(
+        cut > 0
+          ? `${mono.name} の独占店価値 −${cut}G（増資分を削る）`
+          : `${mono.name} は増資が少なく削れず → 店休付与`,
+      );
+      if (!cut) {
+        const owner = g.players[mono.ownerId];
+        if (owner) owner.shopsClosed = true;
+      }
+      break;
+    }
+    case 'five_buy_coupon':
+      player.flags.fiveBuyCoupon = true;
+      messages.push('次の店奪取が3倍買いに（通常は5倍）');
+      break;
+    case 'steal_mono_stock': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        applyStocks(g, player, 6, messages);
+        messages.push('独占なし → 株プレゼント');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const owner = g.players[mono.ownerId];
+      const held = owner?.stocks?.[mono.area] || 0;
+      const n = Math.min(def.amount || 8, held);
+      if (n > 0) {
+        owner.stocks[mono.area] -= n;
+        player.stocks[mono.area] = (player.stocks[mono.area] || 0) + n;
+        messages.push(`${owner.name} から ${mono.name}株×${n} を横取り`);
+      } else {
+        player.stocks[mono.area] = (player.stocks[mono.area] || 0) + (def.amount || 8);
+        messages.push(`${mono.name}株×${def.amount || 8} を新規入手（相手は未保有）`);
+      }
+      break;
+    }
     case 'invest_coupon':
     case 'invest_half':
     case 'vip_card':
@@ -750,8 +927,8 @@ function applyEventDef(g, player, def, messages) {
         player.flags.extraRoll = true;
         messages.push('ミステリー → もう一振り');
       } else if (roll === 1) {
-        player.lucky = true;
-        messages.push('ミステリー → ラッキー');
+        grantLuckyStatus(player, messages);
+        messages[messages.length - 1] = `ミステリー → ${messages[messages.length - 1]}`;
       } else if (roll === 2) {
         applyStocks(g, player, 8, messages);
         messages.push('ミステリー株');
@@ -787,8 +964,7 @@ function applyEventDef(g, player, def, messages) {
         }
       }
       if (def.lucky) {
-        player.lucky = true;
-        messages.push('ラッキーステータス');
+        grantLuckyStatus(player, messages);
       }
       if (def.cash) applyCash(player, def.cash, messages);
       break;

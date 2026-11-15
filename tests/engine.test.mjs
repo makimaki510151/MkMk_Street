@@ -456,10 +456,106 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('stocks') || kinds.has('shop_boost'));
     assert.ok(kinds.has('all_cash'), 'expected all-player cash events');
     assert.ok(kinds.has('minigame'), 'expected minigame events');
+    assert.ok(kinds.has('seize_mono_shop'), 'expected monopoly-break seize events');
+    assert.ok(kinds.has('five_buy_coupon'), 'expected cheap takeover coupon events');
     const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
     const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
     assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
     assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
+  });
+
+  it('keeps lucky status until the start of the next own turn', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 17,
+      cash: 2000,
+    });
+    const a = g.players[0];
+    const b = g.players[1];
+    a.lucky = true;
+    a.flags.luckyExpireOnTurn = false;
+    // Aのターン終了 → ラッキーは残る
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: g.map.find((n) => n.type === 'shop').id, price: 99999 };
+    applyChoice(g, { action: 'skip' });
+    assert.equal(a.lucky, true);
+    assert.equal(a.flags.luckyExpireOnTurn, true);
+    assert.equal(g.currentPlayerIdx, 1);
+
+    // Bが他人の店に料金を払うとAが20%受取
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const sq = shops[0];
+    sq.owner = 1;
+    // need a third owner? lucky requires lp !== payer && lp !== owner
+    // A is lucky, B pays C
+    const cShop = shops[1];
+    // Only 2 players - can't have third party tip with 2 players!
+    // With 2 players, lucky never pays tips. Still test duration.
+    assert.equal(a.lucky, true);
+
+    // B ends somehow; when A's turn starts (roll), lucky expires
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_roll';
+    const rolled = rollDice(g);
+    assert.equal(rolled.ok, true);
+    assert.equal(a.lucky, false);
+    assert.equal(a.flags.luckyExpireOnTurn, false);
+  });
+
+  it('lucky tip pays 20% from bank when a third party is lucky', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 19,
+      cash: 5000,
+    });
+    const lucky = g.players[0];
+    lucky.lucky = true;
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const sq = shops[0];
+    sq.owner = 1;
+    sq.basePrice = 1000;
+    sq.price = 1000;
+    sq.extraInvest = 0;
+    g.players[1].shopsClosed = false;
+    const toll = calcToll(g, sq);
+    assert.ok(toll > 0, 'toll should be positive');
+    g.players[2].pos = sq.id;
+    g.currentPlayerIdx = 2;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [sq.id], passedBank: false, startPos: g.startId };
+    const before = lucky.cash;
+    advanceMove(g);
+    const expectedTip = Math.floor(toll * 0.2);
+    assert.equal(lucky.cash, before + expectedTip);
+    assert.ok(g.logs.some((l) => /ラッキー/.test(l.text) && /20%/.test(l.text)));
+  });
+
+  it('seize_mono_shop breaks a rival monopoly', () => {
+    const seizeId = EVENT_CATALOG.findIndex((e) => e.effect === 'seize_mono_shop');
+    assert.ok(seizeId >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.ok(shops.length >= 2);
+    for (const sq of shops) sq.owner = 1;
+    g.players[1].flags.monopolyBonusClaimed = { [area]: true };
+    assert.equal(hasAreaMonopoly(g, 1, area), true);
+
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = seizeId + 1;
+    cell.label = EVENT_CATALOG[seizeId].label;
+    cell.scratched = false;
+    const r = scratchCell(g, g.players[0], 0);
+    assert.equal(r.ok, true);
+    assert.equal(hasAreaMonopoly(g, 1, area), false);
+    const taken = shops.filter((s) => s.owner === 0);
+    assert.equal(taken.length, 1);
+    assert.ok(r.messages.some((m) => /奪取/.test(m)));
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {

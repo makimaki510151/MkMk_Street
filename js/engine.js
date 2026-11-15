@@ -252,7 +252,10 @@ const BOARD_EVENTS = [
   }},
   { id: 'rollon', label: 'ラッキー再挑戦', apply: (g, p) => { p.flags.extraRoll = true; return 'もう一度サイコロ' } },
   { id: 'invest', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の増資が半額' } },
-  { id: 'lucky', label: '幸運のお守り', apply: (g, p) => { p.lucky = true; return 'ラッキーステータス' } },
+  { id: 'lucky', label: '幸運のお守り', apply: (g, p) => {
+    grantLucky(p);
+    return '他者の買い物料の20%を銀行から受取（次の自分の番まで）';
+  }},
   { id: 'mini_highlow', label: 'ハイ＆ロー', apply: (g, p) => {
     p.flags.pendingMinigame = { game: 'high_low', label: 'ハイ＆ロー' };
     return 'ミニゲーム！';
@@ -913,6 +916,15 @@ export function rollDice(g) {
     addLog(g, `${p.name} のお店が営業再開`, 'system');
   }
 
+  // ラッキーは「次の自分の番まで」。自分のターン開始で期限切れ
+  if (p.flags?.luckyExpireOnTurn) {
+    p.flags.luckyExpireOnTurn = false;
+    if (p.lucky) {
+      p.lucky = false;
+      addLog(g, `${p.name} のラッキーステータスが切れた`, 'system');
+    }
+  }
+
   // 銀行にいるときは出発方向を自由に選べる
   if (p.pos === g.startId) p.prevPos = null;
 
@@ -1009,8 +1021,8 @@ function resolveLanding(g, p, { passedBank }) {
   }
 
   if (sq.type === 'lucky') {
-    p.lucky = true;
-    addLog(g, `${p.name} がラッキーステータス獲得！（次ターンまで買い物料の20%を銀行から）`, 'event');
+    grantLucky(p);
+    addLog(g, `${p.name} がラッキーステータス獲得！（他者の買い物料の20%を銀行から／次の自分の番まで）`, 'event');
     finishLanding(g, p);
     return;
   }
@@ -1247,12 +1259,14 @@ function payToll(g, payer, sq) {
     addLog(g, `${owner.name} の家主印章で買い物料アップ！`, 'event');
   }
 
-  // ラッキー分け前
+  // ラッキー：支払い当事者以外が、買い物料の20%を銀行から受取
   for (const lp of g.players) {
     if (lp.lucky && lp.id !== payer.id && lp.id !== owner.id && !lp.bankrupt) {
       const tip = Math.floor(toll * 0.2);
+      if (tip <= 0) continue;
       lp.cash += tip;
       bumpStat(lp, 'luckyIncome', tip);
+      addLog(g, `${lp.name} のラッキー！ 買い物料の20% +${tip.toLocaleString()}G（銀行から）`, 'event');
     }
   }
 
@@ -1278,12 +1292,17 @@ function payToll(g, payer, sq) {
   offerFiveBuyOrEnd(g, payer, sq, toll);
 }
 
+function fiveBuyMultiplier(p) {
+  return p?.flags?.fiveBuyCoupon ? 3 : 5;
+}
+
 function offerFiveBuyOrEnd(g, payer, sq, toll) {
   if (payer.bankrupt || g.phase === 'gameover') {
     endTurn(g);
     return;
   }
-  const five = sq.price * 5;
+  const multi = fiveBuyMultiplier(payer);
+  const five = sq.price * multi;
   const liq = getLiquidatableValue(g, payer);
   if (liq >= five) {
     g.phase = 'await_choice';
@@ -1292,6 +1311,7 @@ function offerFiveBuyOrEnd(g, payer, sq, toll) {
       playerId: payer.id,
       shopId: sq.id,
       price: five,
+      multi,
       toll,
     };
     return;
@@ -1408,6 +1428,7 @@ function resumeAfterRaiseFunds(g, p, resume) {
       playerId: p.id,
       shopId: resume.shopId,
       price: resume.price,
+      multi: resume.multi || 5,
       toll: resume.toll,
     };
     return;
@@ -1529,7 +1550,8 @@ export function applyChoice(g, choice) {
   if (pending.type === 'five_buy') {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'buy') {
-      const price = sq.price * 5;
+      const multi = pending.multi || fiveBuyMultiplier(p);
+      const price = Number(pending.price) || sq.price * multi;
       if (getLiquidatableValue(g, p) < price) {
         return { ok: false, error: 'insufficient' };
       }
@@ -1541,6 +1563,7 @@ export function applyChoice(g, choice) {
             type: 'five_buy',
             shopId: sq.id,
             price,
+            multi,
             toll: pending.toll,
           },
         });
@@ -1550,6 +1573,8 @@ export function applyChoice(g, choice) {
         const owner = g.players[sq.owner];
         const prevOwnerId = sq.owner;
         const area = sq.area;
+        const usedCoupon = !!p.flags.fiveBuyCoupon && multi < 5;
+        if (usedCoupon) p.flags.fiveBuyCoupon = false;
         p.cash -= price;
         if (owner) owner.cash += Math.floor(price * 0.6);
         sq.owner = p.id;
@@ -1560,7 +1585,11 @@ export function applyChoice(g, choice) {
           clearMonopolyClaim(g, prevOwnerId, area);
         }
         updateAreaStockPrices(g);
-        addLog(g, `${p.name} が5倍買いで「${sq.label}」を奪取！`, 'shop');
+        addLog(
+          g,
+          `${p.name} が${multi}倍買いで「${sq.label}」を奪取！${usedCoupon ? '（クーポン）' : ''}`,
+          'shop',
+        );
         const mono = tryGrantMonopolyBonus(g, p, area);
         g.pending = null;
         endTurn(g);
@@ -1616,6 +1645,7 @@ export function applyChoice(g, choice) {
           playerId: p.id,
           shopId: resume.shopId,
           price: resume.price,
+          multi: resume.multi || 5,
           toll: resume.toll,
         };
         return applyChoice(g, { action: 'buy' });
@@ -2047,12 +2077,20 @@ export function preTurnSell(g, playerId, area, count) {
   return { ok: true, state: serializeState(g) };
 }
 
+/** ラッキーステータス付与（次の自分の番開始まで有効） */
+export function grantLucky(p) {
+  if (!p) return;
+  p.lucky = true;
+  p.flags.luckyExpireOnTurn = false;
+}
+
 function endTurn(g) {
   if (g.phase === 'gameover') return;
 
   const p = currentPlayer(g);
   if (p) {
-    p.lucky = false;
+    // このターン中に得たラッキーは、他プレイヤーの番を経て次の自分の番開始で切れる
+    if (p.lucky) p.flags.luckyExpireOnTurn = true;
     p.flags.bankVisitDone = false;
     p.flags.bankPassStock = false;
   }
