@@ -34,6 +34,8 @@ import {
   buildGameResults,
   createEmptyStats,
   ensureStats,
+  recordWorthSnapshot,
+  syncStockValueSnap,
   payAreaStockDividend,
   STOCK_DIVIDEND_PER_SHARE,
   STOCK_DIVIDEND_MAX_RATE,
@@ -46,6 +48,9 @@ import {
   getLevelBonus,
   toggleBoardSwitch,
   getNode,
+  cpuCashReserve,
+  cpuCanAffordSpend,
+  cpuEstimateMaxToll,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
 import {
@@ -826,19 +831,28 @@ describe('MkMk Street engine', () => {
     assert.ok(r.messages.some((m) => /奪取/.test(m)));
   });
 
-  it('scales level-up bonus by promotion target level', () => {
+  it('scales level-up bonus by promotion target level only (same for all players)', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 3,
       cash: 1000,
     });
+    // A に店を持たせても B と同額になること
+    const shops = getAreaShops(g, Number(Object.keys(g.areas)[0]));
+    for (const sq of shops) {
+      sq.owner = 0;
+      sq.price = sq.basePrice + 500;
+    }
     g.players[0].level = 1;
-    const b2 = getLevelBonus(g, g.players[0], 2);
-    g.players[0].level = 3;
+    g.players[1].level = 1;
+    const b2a = getLevelBonus(g, g.players[0], 2);
+    const b2b = getLevelBonus(g, g.players[1], 2);
+    assert.equal(b2a, 700);
+    assert.equal(b2b, 700);
+    assert.equal(b2a, b2b);
     const b4 = getLevelBonus(g, g.players[0], 4);
-    assert.ok(b2 >= 700, `Lv2 bonus too low: ${b2}`);
-    assert.ok(b4 > b2, `higher level should pay more: ${b4} <= ${b2}`);
-    assert.equal(b4 - b2, 500, 'each +2 levels adds 500G base');
+    assert.equal(b4, 1200);
+    assert.equal(b4 - b2a, 500, 'each +2 levels adds 500G');
   });
 
   it('scales scratch cash by player level when levelScale is set', () => {
@@ -1445,6 +1459,83 @@ describe('MkMk Street engine', () => {
     assert.ok(brokerSpend >= tycoonSpend, 'broker spends at least as much as tycoon on stocks');
   });
 
+  it('CPU keeps a cash reserve and will not spend below it on stocks', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 44,
+      cash: 900,
+    });
+    // 高額通行料がある盤面を想定してクッションを上げる
+    const enemyShop = g.map.find((n) => n.type === 'shop');
+    enemyShop.owner = 0;
+    enemyShop.extraInvest = enemyShop.basePrice * 3;
+    enemyShop.price = enemyShop.basePrice + enemyShop.extraInvest;
+    g.players[0].cash = 5000;
+    const reserve = cpuCashReserve(g, g.players[1]);
+    assert.ok(reserve >= 400);
+    assert.ok(cpuEstimateMaxToll(g, g.players[1]) >= calcToll(g, enemyShop));
+
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 1, bankVisit: true, maxBuys: 1 };
+    const before = g.players[1].cash;
+    cpuAct(g);
+    assert.ok(g.players[1].cash >= Math.min(before, reserve) - 1, 'cash stays near reserve');
+    assert.ok(g.players[1].cash >= reserve * 0.95 || g.players[1].cash === before);
+  });
+
+  it('CPU cancels optional raise_funds instead of going bankrupt', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 55,
+      cash: 50,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    g.currentPlayerIdx = 1;
+    g.players[1].cash = 50;
+    g.players[1].stocks = {};
+    // 店も株も無いので購入資金を作れない
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'raise_funds',
+      playerId: 1,
+      targetCash: 500,
+      reason: 'buy_shop',
+      resume: { type: 'buy_shop', shopId: shop.id, price: 500 },
+    };
+    const r = cpuAct(g);
+    assert.equal(r?.ok, true);
+    assert.equal(g.players[1].bankrupt, false, 'must not bankrupt on failed optional buy');
+    assert.equal(g.phase === 'await_choice' && g.pending?.type === 'raise_funds', false);
+  });
+
+  it('CPU invests only within cash reserve', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 66,
+      cash: 800,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    shop.extraInvest = 0;
+    shop.price = shop.basePrice;
+    g.currentPlayerIdx = 1;
+    g.players[1].cash = 800;
+    const reserve = cpuCashReserve(g, g.players[1]);
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'invest',
+      playerId: 1,
+      shopId: shop.id,
+      landedShopId: shop.id,
+      shopIds: [shop.id],
+      remaining: getRemainingInvest(g, shop),
+    };
+    cpuAct(g);
+    assert.ok(g.players[1].cash >= reserve - 1, `cash ${g.players[1].cash} reserve ${reserve}`);
+    assert.equal(cpuCanAffordSpend(g, g.players[1], 0), true);
+  });
+
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
@@ -1514,16 +1605,30 @@ describe('MkMk Street engine', () => {
 
     // 資産をばらしてアワードが付くようにする
     g.players[0].stats.tollEarned = 5000;
+    g.players[0].stats.tollSaleCount = 8;
+    g.players[0].stats.tollSaleMax = 900;
+    g.players[0].stats.tollPayCount = 2;
+    g.players[0].stats.tollPaid = 400;
+    g.players[0].stats.tollPayMax = 250;
+    g.players[0].stats.stockReturn = 300;
     g.players[1].stats.stockBought = 40;
     g.players[1].stocks[area] = 30;
+    g.players[1].stats.stockReturn = 120;
     g.players[2].stats.scratchCount = 5;
     g.players[2].stats.matchBonus = 200;
+    g.players[2].stats.tollPayCount = 10;
+    g.players[2].stats.tollPaid = 3000;
     g.players[1].cash = 800;
     g.players[2].cash = 600;
     updateAreaStockPrices(g);
     g.winnerId = 0;
     g.phase = 'gameover';
     g.turn = 12;
+    g.worthHistory = [
+      { turn: 1, values: { 0: 2000, 1: 2000, 2: 2000 } },
+      { turn: 6, values: { 0: 4500, 1: 3200, 2: 2800 } },
+      { turn: 12, values: { 0: 9000, 1: 5000, 2: 3500 } },
+    ];
 
     const results = buildGameResults(g);
     assert.equal(results.winnerId, 0);
@@ -1531,11 +1636,18 @@ describe('MkMk Street engine', () => {
     assert.equal(results.ranking[0].rank, 1);
     assert.equal(results.ranking[0].id, 0);
     assert.ok(results.ranking[0].assets.total > 0);
+    assert.equal(results.ranking[0].sales.count, 8);
+    assert.equal(results.ranking[0].sales.greatest, 900);
+    assert.equal(results.ranking[0].sales.average, Math.floor(5000 / 8));
+    assert.ok(results.ranking[0].nextSalary > 0);
+    assert.ok(results.worthHistory.length >= 1);
     assert.ok(results.awards.length >= 3);
     const titles = new Set(results.awards.map((a) => a.id));
     assert.ok(titles.has('toll_king'));
     assert.ok(titles.has('landlord') || titles.has('monopoly_king'));
     assert.ok(titles.has('scratch_king'));
+    assert.ok(titles.has('shopaholic'));
+    assert.ok(titles.has('big_sale'));
 
     // 欠けた stats でも ensure / build できる
     delete g.players[1].stats;
@@ -1543,5 +1655,31 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[1].stats.rolls, 0);
     const again = buildGameResults(g);
     assert.equal(again.ranking.length, 3);
+  });
+
+  it('tracks stock return from price changes and worth history snapshots', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 7,
+      goal: 50000,
+      cash: 3000,
+    });
+    assert.ok(Array.isArray(g.worthHistory));
+    assert.equal(g.worthHistory.length, 1);
+
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 20;
+    syncStockValueSnap(g, g.players[0]);
+    assert.equal(g.players[0].stats.stockReturn, 0);
+
+    g.areas[area].B = Math.floor(g.areas[area].B * 1.5);
+    const changes = updateAreaStockPrices(g);
+    assert.ok(changes.some((c) => c.area === area));
+    assert.ok(g.players[0].stats.stockReturn > 0);
+
+    g.turn = 2;
+    recordWorthSnapshot(g);
+    assert.ok(g.worthHistory.length >= 2);
+    assert.equal(g.worthHistory[g.worthHistory.length - 1].turn, 2);
   });
 });
