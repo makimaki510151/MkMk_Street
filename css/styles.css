@@ -680,7 +680,13 @@ button:disabled { opacity: .42; cursor: default; }
   font-weight: 800;
   color: color-mix(in srgb, var(--eb) 80%, #fff);
   line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+  padding: 0 0.05rem;
 }
+.event-stamp .eb-glyph[data-len="2"] { font-size: 0.72rem; }
+.event-stamp .eb-glyph[data-len="3"] { font-size: 0.58rem; }
 .event-stamp .eb-kicker {
   font-size: 0.66rem;
   font-weight: 700;
@@ -713,7 +719,8 @@ button:disabled { opacity: .42; cursor: default; }
   z-index: 12;
   display: grid;
   place-items: center;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   background:
     radial-gradient(ellipse at 50% 42%, color-mix(in srgb, var(--efc, var(--accent)) 22%, transparent), transparent 58%),
     rgba(12, 14, 16, 0.28);
@@ -765,6 +772,28 @@ button:disabled { opacity: .42; cursor: default; }
   background: var(--efc, var(--accent-strong));
   border: 1px solid color-mix(in srgb, var(--efc, var(--accent)) 55%, #000);
   animation: efIconPop .45s cubic-bezier(.2,.9,.2,1) both;
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+  padding: 0 0.12rem;
+}
+.ef-icon[data-len="2"] { font-size: 1.15rem; }
+.ef-icon[data-len="3"] { font-size: 0.95rem; }
+.ef-hint {
+  margin-top: 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--muted) 70%, #fff);
+}
+.ef-continue {
+  margin-top: 0.85rem;
+  min-width: 8.5rem;
+  pointer-events: auto;
+}
+#event-flash[data-spectator="1"] .ef-continue { display: none; }
+#event-flash[data-spectator="1"] .ef-hint {
+  color: color-mix(in srgb, var(--muted) 85%, #ffe08a);
 }
 .ef-kicker {
   font-size: 0.72rem;

@@ -73,6 +73,11 @@ const app = {
   restSkipTimer: null,
   eventFlashTimer: null,
   eventFlashSeq: 0,
+  /** @type {object[]} 中央イベント表示の待ち行列 */
+  eventFlashQueue: [],
+  eventFlashOpen: false,
+  /** このフラッシュ表示のために busy を立てたとき true */
+  eventFlashHoldingBusy: false,
   /** @type {Record<number, number>|null} */
   prevCash: null,
   moneyFxTimer: null,
@@ -87,7 +92,7 @@ const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', '
 const EVENT_VISUALS = {
   toll: { glyph: 'G', chips: ['買い物料'] },
   shop: { glyph: '店', chips: ['お店'] },
-  level: { glyph: 'Lv', chips: ['昇進'] },
+  level: { glyph: '昇', chips: ['昇進'] },
   mark: { glyph: '◆', chips: ['マーク'] },
   event: { glyph: '!', chips: ['イベント'] },
   stock: { glyph: '株', chips: ['株式'] },
@@ -397,6 +402,16 @@ function handleNetEvent({ from, data }) {
       app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
       return;
     }
+    if (data.type === 'event_flash_dismiss') {
+      if (!app.eventFlashOpen) return;
+      const seat = app.game?.players?.findIndex((p) => p.peerId === from);
+      const turnSeat = app.game?.currentPlayerIdx;
+      // 手番プレイヤーからの閉じ要求をホストが代行して全員へ配信
+      if (seat >= 0 && seat === turnSeat) {
+        dismissEventFlash({ force: true });
+      }
+      return;
+    }
     if (data.type === 'action') {
       handleHostAction(from, data);
       return;
@@ -506,6 +521,9 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
+  }
+  if (data.kind === 'eventFlashDismiss') {
+    dismissEventFlash({ remote: true });
   }
   if (data.kind === 'fiveBuy') {
     audio.sfx.fiveBuy();
@@ -688,17 +706,10 @@ function maybeDemoLanding() {
       { kicker: 'マーク入手！', title: '♠', detail: 'あかがマーク♠を入手', kind: 'mark', color: '#e85d75' },
       { kicker: '株式取引', title: '株を購入', detail: 'あかが A1株×10 購入', kind: 'stock', color: '#3d8bfd' },
       { kicker: '株わけ前', title: 'エリア収益の分配', detail: 'A1「さくら通り」株わけ前 あか+60G（収益 1000G の一部）', kind: 'stock', color: '#3d8bfd' },
+      { kicker: 'ミニゲーム', title: '結果発表', detail: 'あかのスロット → 当たり +200G', kind: 'event', color: '#c4a574' },
     ];
-    // 最初の1件は即時表示（スクショ確認用）。以降は順に再生
-    enqueueBanner({ ...demos[0], mine: true });
-    let i = 1;
-    const tick = () => {
-      if (i >= demos.length) return;
-      enqueueBanner({ ...demos[i], mine: true });
-      i += 1;
-      setTimeout(tick, 1400);
-    };
-    setTimeout(tick, 1400);
+    // クリックで1件ずつ確認（自動では閉じない）
+    for (const d of demos) enqueueBanner({ ...d, mine: true });
     return;
   }
   if (demo === 'money-fx' || demo === 'money-loss' || demo === 'money-invest') {
@@ -861,6 +872,15 @@ function enterGame() {
   app.lastSeenLogKey = null;
   app.prevCash = null;
   app.pendingMoneyFx = null;
+  app.eventFlashQueue = [];
+  app.eventFlashOpen = false;
+  app.eventFlashHoldingBusy = false;
+  clearTimeout(app.eventFlashTimer);
+  const flash = $('#event-flash');
+  if (flash) {
+    flash.hidden = true;
+    flash.classList.remove('show');
+  }
   app.feedPinnedBottom = true;
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
@@ -1347,6 +1367,7 @@ async function playDiceOverlay(face, remote = false) {
   if (!remote) audio.sfx.diceLand(face);
   await wait(650);
   overlay.hidden = true;
+  pumpEventFlash();
 }
 
 async function presentScratchMatches(result) {
@@ -1408,6 +1429,7 @@ async function presentWarpFx(warps, { remote = false } = {}) {
     hideWarpOverlay();
   }
   if (!wasBusy) app.busy = false;
+  pumpEventFlash();
 }
 
 function showWarpOverlay(who, fromLabel, toLabel) {
@@ -1518,6 +1540,7 @@ async function playScratchMatchReveal(matches, messages = [], { banner = true } 
   document.querySelectorAll('.match-spin').forEach((el) => el.classList.remove('match-spin'));
   resultEl?.classList.remove('match-pop');
   if (usedOverlay) hideScratchMatchOverlay();
+  pumpEventFlash();
 }
 
 const SLOT_SYMS = ['★', '♪', 'G', '♦', '♣'];
@@ -1547,7 +1570,8 @@ async function presentMinigameResult(result) {
       color,
     },
   });
-  app.busy = false;
+  // busy はイベント確認（クリック）側で解除
+  if (!app.eventFlashOpen && !app.eventFlashQueue.length) app.busy = false;
 }
 
 async function playMinigameReveal(reveal) {
@@ -1593,6 +1617,7 @@ async function playMinigameReveal(reveal) {
   overlay.hidden = true;
   overlay.classList.remove('show-result');
   body.innerHTML = '';
+  pumpEventFlash();
 }
 
 async function animateSlotReveal(body, reveal) {
@@ -2196,7 +2221,49 @@ function enqueueBanner(payload) {
   if (!payload?.title) return;
   const visual = resolveEventVisual(payload);
   pushEventStamp({ ...payload, visual });
-  presentEventFlash({ ...payload, visual });
+  queueEventFlash({ ...payload, visual });
+}
+
+function eventFlashBlocked() {
+  return !$('#dice-overlay')?.hidden
+    || !$('#warp-overlay')?.hidden
+    || !$('#scratch-match-overlay')?.hidden
+    || !$('#minigame-overlay')?.hidden
+    || !$('#money-fx')?.hidden;
+}
+
+function queueEventFlash(payload) {
+  if (!payload?.title) return;
+  app.eventFlashQueue.push(payload);
+  pumpEventFlash();
+}
+
+function pumpEventFlash() {
+  if (app.eventFlashOpen) return;
+  if (eventFlashBlocked()) return;
+  const payload = app.eventFlashQueue.shift();
+  if (!payload) {
+    if (app.eventFlashHoldingBusy) {
+      app.eventFlashHoldingBusy = false;
+      app.busy = false;
+      flushPendingMoneyFx();
+      refreshGameUI();
+      scheduleCpu();
+    }
+    return;
+  }
+  presentEventFlash(payload);
+}
+
+/** 手番プレイヤーが閉じる。ローカルは操作側、オンラインは手番席（ホストは進行管理でも可） */
+function canDismissEventFlash() {
+  if (!app.game) return false;
+  if (app.mode === 'local') return true;
+  // ホストはゲーム進行の責任者として常に閉じられる（CPU手番含む）
+  if (app.mode === 'host') return true;
+  // ゲストは自分の手番のときだけ
+  if (app.mode === 'guest') return isMyTurn();
+  return false;
 }
 
 function resolveEventVisual(payload) {
@@ -2207,7 +2274,7 @@ function resolveEventVisual(payload) {
 
   if (kind === 'shop') {
     if (/5倍|奪取/.test(text)) {
-      base.glyph = '×5';
+      base.glyph = '5';
       chips.unshift('5倍買い');
     } else if (/増資/.test(text)) {
       base.glyph = '+';
@@ -2251,7 +2318,7 @@ function resolveEventVisual(payload) {
       base.glyph = '★';
       chips.unshift('ラッキー');
     } else if (/ミニゲーム|当たり|ハズレ|ジャックポット/.test(text)) {
-      base.glyph = 'MG';
+      base.glyph = '遊';
       chips.unshift('ミニゲーム');
     }
   } else if (kind === 'stock') {
@@ -2351,7 +2418,9 @@ function moneyFxBlocked() {
   return !$('#dice-overlay')?.hidden
     || !$('#warp-overlay')?.hidden
     || !$('#scratch-match-overlay')?.hidden
-    || !$('#minigame-overlay')?.hidden;
+    || !$('#minigame-overlay')?.hidden
+    || app.eventFlashOpen
+    || !$('#event-flash')?.hidden;
 }
 
 /** 本番: 所持金デルタから内容表示。競合中はキューして後で再生 */
@@ -2545,6 +2614,7 @@ function showMoneyFxOverlay(deltas, { remote = false } = {}) {
       overlay.hidden = true;
       coins.innerHTML = '';
       flushPendingMoneyFx();
+      pumpEventFlash();
     }, 240);
   }, 1250 + tier * 120);
 }
@@ -2566,26 +2636,40 @@ function spawnPlayerCashFloat(delta) {
   setTimeout(() => floater.remove(), 1000);
 }
 
-/** 盤面中央に視覚的なイベントフラッシュを出す */
+/** 盤面中央に視覚的なイベントフラッシュを出す（手動でつづけるまで残す） */
 function presentEventFlash(payload) {
   const overlay = $('#event-flash');
-  if (!overlay || !payload?.title) return;
-  // 既存の専用オーバーレイが出ているときは二重にしない
-  if (!$('#dice-overlay')?.hidden) return;
-  if (!$('#warp-overlay')?.hidden) return;
-  if (!$('#scratch-match-overlay')?.hidden) return;
-  if (!$('#minigame-overlay')?.hidden) return;
-  if (!$('#money-fx')?.hidden) return;
+  if (!overlay || !payload?.title) {
+    pumpEventFlash();
+    return;
+  }
+  if (eventFlashBlocked()) {
+    app.eventFlashQueue.unshift(payload);
+    return;
+  }
 
   const visual = payload.visual || resolveEventVisual(payload);
   const kind = payload.kind || 'info';
   const color = payload.color || '#c4a574';
   const seq = ++app.eventFlashSeq;
+  // マス／アイコン枠からはみ出さないよう最大2文字＆長さに応じて縮小
+  const glyph = String(visual.glyph || '!').slice(0, 2);
 
   clearTimeout(app.eventFlashTimer);
+  app.eventFlashOpen = true;
+  // 確認完了まで手番進行を止める（ホスト／ローカルのみ）
+  if (canDismissEventFlash()) {
+    app.eventFlashHoldingBusy = true;
+    app.busy = true;
+  }
+
+  const spectator = !canDismissEventFlash();
   overlay.dataset.visual = kind;
+  overlay.dataset.spectator = spectator ? '1' : '0';
   overlay.style.setProperty('--efc', color);
-  $('#ef-icon').textContent = visual.glyph || '!';
+  const icon = $('#ef-icon');
+  icon.textContent = glyph;
+  icon.dataset.len = String([...glyph].length);
   $('#ef-kicker').textContent = payload.kicker || '';
   $('#ef-title').textContent = payload.title || '';
   $('#ef-detail').textContent = payload.detail || '';
@@ -2593,25 +2677,90 @@ function presentEventFlash(payload) {
   chips.innerHTML = (visual.chips || [])
     .map((c, i) => `<span class="ef-chip" style="--i:${i}">${escapeHtml(c)}</span>`)
     .join('');
+  const hint = $('#ef-hint');
+  const btn = $('#ef-continue');
+  const queued = app.eventFlashQueue.length;
+  if (hint) {
+    if (spectator) {
+      hint.textContent = 'ホストが「つづける」と閉じます';
+    } else {
+      hint.textContent = queued
+        ? `確認したら「つづける」（残り ${queued}）`
+        : '確認したら「つづける」';
+    }
+  }
+  if (btn) {
+    btn.hidden = spectator;
+    btn.textContent = queued ? `つづける（残り ${queued}）` : 'つづける';
+  }
 
   overlay.hidden = false;
   overlay.classList.remove('show');
   requestAnimationFrame(() => {
     if (app.eventFlashSeq !== seq) return;
     overlay.classList.add('show');
+    try { (btn && !spectator ? btn : overlay).focus({ preventScroll: true }); } catch (_) { /* ignore */ }
   });
 
   // フィードも開いて出来事を追えるようにする
   $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+  if (canDismissEventFlash()) {
+    $('#btn-roll').disabled = true;
+    $('#btn-roll').textContent = '出来事を確認中…';
+  }
+}
 
+/** 手番側のクリック／Enter で次へ。ゲストはホストへ送り、配信で全員閉じる */
+function dismissEventFlash({ remote = false, force = false } = {}) {
+  if (!app.eventFlashOpen) return;
+  if (!remote && !force && !canDismissEventFlash()) return;
+  const overlay = $('#event-flash');
+  if (!overlay || overlay.hidden) return;
+
+  if (!remote && app.mode === 'guest' && app.net) {
+    audio.sfx.click();
+    // busy 解除と他端末同期はホスト経由
+    app.net.sendToHost({ type: 'event_flash_dismiss', seat: app.localSeat });
+    return;
+  }
+
+  const seq = app.eventFlashSeq;
+  clearTimeout(app.eventFlashTimer);
+  if (!remote) {
+    audio.sfx.click();
+    if (app.mode === 'host') broadcastFx({ kind: 'eventFlashDismiss' });
+  }
+  overlay.classList.remove('show');
   app.eventFlashTimer = setTimeout(() => {
     if (app.eventFlashSeq !== seq) return;
-    overlay.classList.remove('show');
-    setTimeout(() => {
-      if (app.eventFlashSeq !== seq) return;
-      overlay.hidden = true;
-    }, 220);
-  }, 1180);
+    overlay.hidden = true;
+    overlay.dataset.spectator = '0';
+    app.eventFlashOpen = false;
+    pumpEventFlash();
+  }, 180);
+}
+
+function bindEventFlashControls() {
+  const overlay = $('#event-flash');
+  if (!overlay || overlay.dataset.bound === '1') return;
+  overlay.dataset.bound = '1';
+  const onDismiss = (e) => {
+    e.preventDefault();
+    dismissEventFlash();
+  };
+  overlay.addEventListener('click', onDismiss);
+  $('#ef-continue')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dismissEventFlash();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!app.eventFlashOpen) return;
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+      e.preventDefault();
+      dismissEventFlash();
+    }
+  });
 }
 
 /** 左上フィードへ即時スタンプ追加（上→下・さかのぼり可） */
@@ -2625,8 +2774,9 @@ function pushEventStamp({ kicker, title, detail, kind, color, mine, visual }) {
   stamp.dataset.kind = kind || 'info';
   stamp.dataset.mine = mine ? '1' : '0';
   stamp.style.setProperty('--eb', color || '#ffe08a');
+  const glyph = String(v.glyph || '!');
   stamp.innerHTML = `
-    <div class="eb-glyph" aria-hidden="true">${escapeHtml(v.glyph || '!')}</div>
+    <div class="eb-glyph" data-len="${[...glyph].length}" aria-hidden="true">${escapeHtml(glyph)}</div>
     <div class="eb-kicker">${escapeHtml(kicker || '')}</div>
     <div class="eb-title">${escapeHtml(title || '')}</div>
     ${detail ? `<div class="eb-detail">${escapeHtml(detail)}</div>` : ''}
@@ -3353,6 +3503,7 @@ function escapeHtml(s) {
 bindVolumeUI();
 bindSideChrome();
 bindTitle();
+bindEventFlashControls();
 showScreen('screen-title');
 
 const field = $('#title-field');
