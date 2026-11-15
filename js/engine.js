@@ -1278,14 +1278,19 @@ function handleBank(g, p, landed) {
     addLog(g, `${p.name} 昇進！ Lv.${old}→${to} 賞金 +${bonus}G（Lv.${to}基準）`, 'level');
   }
 
-  if (landed) {
-    const assets = getPlayerAssets(g, p);
-    if (assets.total >= g.goal) {
-      g.winnerId = p.id;
-      g.phase = 'gameover';
-      addLog(g, `🏆 ${p.name} の勝利！ 総資産 ${assets.total}G`, 'win');
-      return true;
-    }
+  // 目標到達済みなら停止でも通過でもゴール
+  const assets = getPlayerAssets(g, p);
+  if (assets.total >= g.goal) {
+    g.winnerId = p.id;
+    g.phase = 'gameover';
+    addLog(
+      g,
+      landed
+        ? `🏆 ${p.name} の勝利！ 総資産 ${assets.total.toLocaleString()}G`
+        : `🏆 ${p.name} の勝利！ 銀行通過でゴール（総資産 ${assets.total.toLocaleString()}G）`,
+      'win',
+    );
+    return true;
   }
   return false;
 }

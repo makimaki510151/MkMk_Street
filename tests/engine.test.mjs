@@ -849,6 +849,44 @@ describe('MkMk Street engine', () => {
     assert.ok(g.move?.stepsLeft >= 1);
   });
 
+  it('wins immediately when passing the bank at or above the goal', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 46,
+      cash: 1000,
+    });
+    g.goal = 5000;
+    g.players[0].cash = 6000;
+    const arm = getForwardNexts(g, g.startId, null)[0];
+    g.players[0].pos = arm;
+    g.players[0].prevPos = g.map.find((n) => n.id === arm).nexts.find((id) => id !== g.startId) ?? null;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 2, path: [], passedBank: false, startPos: arm };
+    const r = advanceMove(g);
+    assert.equal(g.players[0].pos, g.startId);
+    assert.equal(g.phase, 'gameover');
+    assert.equal(g.winnerId, 0);
+    assert.ok(g.logs.some((l) => /銀行通過でゴール/.test(l.text)));
+    assert.equal(r.state?.phase, 'gameover');
+  });
+
+  it('still wins when landing on the bank at or above the goal', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 47,
+      cash: 1000,
+    });
+    g.goal = 5000;
+    g.players[0].cash = 5500;
+    g.players[0].pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: true, startPos: g.startId };
+    advanceMove(g);
+    assert.equal(g.phase, 'gameover');
+    assert.equal(g.winnerId, 0);
+    assert.ok(g.logs.some((l) => /勝利/.test(l.text)));
+  });
+
   it('auto-skips resting player without starting a move', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B', isCPU: true }],
