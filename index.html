@@ -140,6 +140,16 @@
           </div>
         </div>
       </div>
+      <div id="event-flash" hidden>
+        <div class="ef-stage">
+          <div class="ef-burst" aria-hidden="true"></div>
+          <div class="ef-icon" id="ef-icon"></div>
+          <div class="ef-kicker" id="ef-kicker"></div>
+          <div class="ef-title" id="ef-title"></div>
+          <div class="ef-detail" id="ef-detail"></div>
+          <div class="ef-chips" id="ef-chips" aria-hidden="true"></div>
+        </div>
+      </div>
       <div id="event-feed-wrap" class="feed-collapsed" aria-live="polite">
         <button type="button" id="btn-feed-toggle" class="feed-toggle" title="出来事フィード">出来事</button>
         <div id="status-chip" hidden>
@@ -158,13 +168,6 @@
 
       <div class="side-pane active" data-pane="turn" role="tabpanel">
         <div id="players-panel"></div>
-        <div class="controls">
-          <div class="dice-row">
-            <div id="dice-face">·</div>
-            <button class="btn primary" id="btn-roll">サイコロを振る</button>
-          </div>
-          <div id="wait-hint" hidden></div>
-        </div>
       </div>
 
       <div class="side-pane" data-pane="holdings" role="tabpanel" hidden>
@@ -173,6 +176,14 @@
 
       <div class="side-pane" data-pane="log" role="tabpanel" hidden>
         <div id="log"></div>
+      </div>
+
+      <div class="controls side-controls" id="side-controls">
+        <div class="dice-row">
+          <div id="dice-face">·</div>
+          <button class="btn primary" id="btn-roll">サイコロを振る</button>
+        </div>
+        <div id="wait-hint" hidden></div>
       </div>
     </aside>
   </section>
