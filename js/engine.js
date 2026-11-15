@@ -97,6 +97,10 @@ const TOLL_MULTI_BY_AREA = {
 };
 /** 独占達成時：エリア店価合計に対する現金ボーナス率 */
 export const MONOPOLY_BONUS_RATE = 0.15;
+/** 独占崩壊時：エリア係数 B に掛ける倍率（強い株価下落） */
+export const MONOPOLY_BREAK_B_RATE = 0.68;
+/** 独占崩壊時：元独占主の残店増資を削る割合 */
+export const MONOPOLY_BREAK_INVEST_CUT = 0.3;
 export { investMultiByMonopolyRate };
 
 /**
@@ -346,6 +350,7 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     logs: [{ text: 'ゲーム開始！分岐路を選んで目標資産を目指そう', kind: 'system' }],
     winnerId: null,
     turn: 1,
+    goalPressure: false,
     _seed: seed,
     _rngCount: 0,
     _rngState: seed,
@@ -469,6 +474,73 @@ export function clearMonopolyClaim(g, pid, area) {
   if (p?.flags?.monopolyBonusClaimed) {
     delete p.flags.monopolyBonusClaimed[area];
   }
+}
+
+/**
+ * 独占崩壊ペナルティ：株価を大きく下げ、元独占主の残店増資も削る。
+ * 所有変更のあとに呼ぶ（hadClaim かつ もう独占でないときだけ発動）。
+ * @returns {{ broken: true, area: number, areaName: string, oldPrice: number, newPrice: number, investCut: number } | null}
+ */
+export function applyMonopolyBreak(g, pid, area) {
+  const p = g.players[pid];
+  const hadClaim = !!p?.flags?.monopolyBonusClaimed?.[area];
+  const stillMono = hasAreaMonopoly(g, pid, area);
+  if (!hadClaim || stillMono) {
+    clearMonopolyClaim(g, pid, area);
+    return null;
+  }
+
+  const meta = g.areas[area];
+  const oldPrice = meta?.stockPrice || 0;
+  if (meta) {
+    meta.B = Math.max(70, Math.floor((meta.B || 100) * MONOPOLY_BREAK_B_RATE));
+  }
+
+  let investCut = 0;
+  for (const sq of getAreaShops(g, area)) {
+    if (sq.owner !== pid) continue;
+    const cut = Math.floor((sq.extraInvest || 0) * MONOPOLY_BREAK_INVEST_CUT);
+    if (cut <= 0) continue;
+    sq.extraInvest -= cut;
+    sq.price -= cut;
+    investCut += cut;
+  }
+
+  clearMonopolyClaim(g, pid, area);
+  updateAreaStockPrices(g);
+  const newPrice = meta?.stockPrice || 0;
+  const areaName = meta?.name || `エリア${area}`;
+  addLog(
+    g,
+    `「${areaName}」独占崩壊！ 株価 ${oldPrice.toLocaleString()}→${newPrice.toLocaleString()}G`
+      + (investCut > 0 ? `／残店増資 −${investCut.toLocaleString()}G` : ''),
+    'stock',
+  );
+  return { broken: true, area, areaName, oldPrice, newPrice, investCut };
+}
+
+/** 総資産が目標以上の生存プレイヤー */
+export function getGoalPressurePlayers(g) {
+  if (!g || g.phase === 'gameover') return [];
+  return g.players.filter((p) => !p.bankrupt && getPlayerAssets(g, p).total >= g.goal);
+}
+
+/** 目標到達者がいるときの焦りフラグ＆ログ（一度だけ） */
+export function refreshGoalPressure(g) {
+  if (!g || g.phase === 'gameover') {
+    if (g) g.goalPressure = false;
+    return false;
+  }
+  const reached = getGoalPressurePlayers(g);
+  const on = reached.length > 0;
+  if (on && !g.goalPressure) {
+    g.goalPressure = true;
+    const names = reached.map((p) => p.name).join('・');
+    addLog(g, `⚠ ${names} が目標資産に到達！銀行を目指せ／止めろ！`, 'level');
+  } else if (!on) {
+    g.goalPressure = false;
+  }
+  return on;
 }
 
 export function updateAreaStockPrices(g) {
@@ -696,6 +768,7 @@ export function currentPlayer(g) {
 }
 
 export function serializeState(g) {
+  refreshGoalPressure(g);
   return JSON.parse(JSON.stringify({
     map: g.map,
     areas: g.areas,
@@ -712,6 +785,7 @@ export function serializeState(g) {
     logs: g.logs.slice(0, 30),
     winnerId: g.winnerId,
     turn: g.turn,
+    goalPressure: !!g.goalPressure,
     _seed: g._seed,
     _rngCount: g._rngCount,
     sharedEventTable: g.sharedEventTable,
@@ -1366,10 +1440,10 @@ function sellShopForCash(g, p, shopId) {
   sq.owner = -1;
   sq.extraInvest = 0;
   sq.price = sq.basePrice;
-  clearMonopolyClaim(g, p.id, area);
-  updateAreaStockPrices(g);
+  const brk = applyMonopolyBreak(g, p.id, area);
+  if (!brk) updateAreaStockPrices(g);
   addLog(g, `${p.name} が「${sq.label}」を売却（+${got}G）`, 'system');
-  return { ok: true, got };
+  return { ok: true, got, monopolyBreak: brk || undefined };
 }
 
 function sellStockForCash(g, p, area, count) {
@@ -1394,12 +1468,14 @@ export function declareBankrupt(g, p) {
   p.offline = false;
   p.peerId = null;
   p.isCPU = false;
+  const claimedAreas = Object.keys(p.flags?.monopolyBonusClaimed || {}).map(Number);
   for (const sq of g.map.filter((s) => s.type === 'shop' && s.owner === p.id)) {
     sq.owner = -1;
     sq.extraInvest = 0;
     sq.price = sq.basePrice;
   }
   p.stocks = {};
+  for (const area of claimedAreas) applyMonopolyBreak(g, p.id, area);
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
 }
@@ -1617,10 +1693,11 @@ export function applyChoice(g, choice) {
         sq.extraInvest = 0;
         sq.price = sq.basePrice;
         bumpStat(p, 'shopsStolen', 1);
+        let monopolyBreak = null;
         if (prevOwnerId >= 0 && prevOwnerId !== p.id) {
-          clearMonopolyClaim(g, prevOwnerId, area);
+          monopolyBreak = applyMonopolyBreak(g, prevOwnerId, area);
         }
-        updateAreaStockPrices(g);
+        if (!monopolyBreak) updateAreaStockPrices(g);
         addLog(
           g,
           `${p.name} が${multi}倍買いで「${sq.label}」を奪取！${usedCoupon ? '（クーポン）' : ''}`,
@@ -1629,7 +1706,13 @@ export function applyChoice(g, choice) {
         const mono = tryGrantMonopolyBonus(g, p, area);
         g.pending = null;
         endTurn(g);
-        return { ok: true, fiveBuy: true, ...(mono || {}), state: serializeState(g) };
+        return {
+          ok: true,
+          fiveBuy: true,
+          ...(monopolyBreak ? { monopolyBreak } : {}),
+          ...(mono || {}),
+          state: serializeState(g),
+        };
       }
     }
     g.pending = null;
