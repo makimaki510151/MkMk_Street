@@ -27,6 +27,8 @@ export function createAudio() {
   let seGain = null;
   let bgmTimer = null;
   let bgmStep = 0;
+  /** @type {'normal' | 'urgency'} */
+  let bgmMode = 'normal';
   const vol = loadVol();
 
   function ensure() {
@@ -274,13 +276,37 @@ export function createAudio() {
     262, 0, 294, 0, 330, 392, 440, 523,
     494, 440, 392, 349, 330, 294, 262, 0,
   ];
+  /** 目標到達時の焦りフレーズ（短調・速い） */
+  const BGM_URGENCY_NOTES = [
+    392, 370, 349, 330, 349, 370, 392, 0,
+    415, 392, 370, 349, 370, 392, 415, 440,
+    466, 440, 415, 392, 370, 349, 330, 311,
+    330, 349, 370, 392, 415, 440, 466, 0,
+    523, 494, 466, 440, 415, 392, 370, 349,
+    392, 0, 415, 0, 440, 466, 494, 523,
+    494, 466, 440, 415, 392, 370, 349, 330,
+    349, 370, 392, 415, 440, 0, 392, 0,
+  ];
   const BGM_STEP_MS = 500;
+  const BGM_URGENCY_STEP_MS = 260;
 
   function tickBgm() {
     if (!ctx || vol.muted) return;
-    const note = BGM_NOTES[bgmStep % BGM_NOTES.length];
+    const urgent = bgmMode === 'urgency';
+    const notes = urgent ? BGM_URGENCY_NOTES : BGM_NOTES;
+    const note = notes[bgmStep % notes.length];
     bgmStep++;
     if (!note) return;
+    if (urgent) {
+      const pulse = 0.045 + (bgmStep % 4 === 0 ? 0.022 : 0);
+      tone(note, 0.22, 'square', pulse * 0.55, 0, bgmGain);
+      tone(note * 1.5, 0.18, 'sawtooth', pulse * 0.28, 0.02, bgmGain);
+      tone(note / 2, 0.28, 'triangle', pulse * 0.35, 0, bgmGain);
+      if (bgmStep % 8 === 0) {
+        tone(note * 2, 0.12, 'square', 0.03, 0.04, bgmGain);
+      }
+      return;
+    }
     const soft = 0.038 + (bgmStep % 8 === 0 ? 0.012 : 0);
     tone(note, 0.42, 'sine', soft, 0, bgmGain);
     tone(note * 1.5, 0.34, 'triangle', soft * 0.45, 0.03, bgmGain);
@@ -289,12 +315,19 @@ export function createAudio() {
     }
   }
 
+  function restartBgmTimer() {
+    if (bgmTimer) clearInterval(bgmTimer);
+    bgmTimer = null;
+    const ms = bgmMode === 'urgency' ? BGM_URGENCY_STEP_MS : BGM_STEP_MS;
+    tickBgm();
+    bgmTimer = setInterval(tickBgm, ms);
+  }
+
   function startBgm() {
     resume();
     if (bgmTimer) return;
     bgmStep = 0;
-    tickBgm();
-    bgmTimer = setInterval(tickBgm, BGM_STEP_MS);
+    restartBgmTimer();
   }
 
   function stopBgm() {
@@ -302,10 +335,33 @@ export function createAudio() {
     bgmTimer = null;
   }
 
+  /** @param {'normal' | 'urgency'} mode */
+  function setBgmMode(mode) {
+    const next = mode === 'urgency' ? 'urgency' : 'normal';
+    if (next === bgmMode) return bgmMode;
+    const prev = bgmMode;
+    bgmMode = next;
+    bgmStep = 0;
+    if (bgmTimer) restartBgmTimer();
+    if (prev !== 'urgency' && next === 'urgency') {
+      SFX.urgencyAlert();
+    }
+    return bgmMode;
+  }
+
+  SFX.urgencyAlert = function urgencyAlert() {
+    tone(520, 0.12, 'square', 0.09);
+    tone(415, 0.14, 'square', 0.08, 0.1);
+    tone(330, 0.18, 'sawtooth', 0.07, 0.22);
+    tone(622, 0.22, 'triangle', 0.08, 0.32);
+  };
+
   return {
     resume,
     startBgm,
     stopBgm,
+    setBgmMode,
+    getBgmMode() { return bgmMode; },
     sfx: SFX,
     getVolume() { return { ...vol } },
     setMaster(v) { vol.master = clamp01(v); applyVol(); },

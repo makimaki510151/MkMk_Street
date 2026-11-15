@@ -5,7 +5,12 @@ import {
   calcToll,
   hasAreaMonopoly,
   tryGrantMonopolyBonus,
+  applyMonopolyBreak,
   MONOPOLY_BONUS_RATE,
+  MONOPOLY_BREAK_B_RATE,
+  getGoalPressurePlayers,
+  refreshGoalPressure,
+  serializeState,
   getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
@@ -37,6 +42,7 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
+  getLevelBonus,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE } from '../js/board.js';
 import {
@@ -138,6 +144,43 @@ describe('MkMk Street engine', () => {
     assert.equal(added, rem);
     assert.equal(getRemainingInvest(g, sq), 0);
     assert.equal(applyCappedShopBoost(g, sq, 50), 0);
+  });
+
+  it('lets owner invest any owned shop when landing on own shop', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+      cash: 5000,
+    });
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const landed = shops[0];
+    const other = shops[1];
+    landed.owner = 0;
+    other.owner = 0;
+    g.players[0].pos = landed.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [landed.id], passedBank: false, startPos: g.startId };
+    const landedResult = advanceMove(g);
+    assert.equal(landedResult.ok, true);
+    assert.equal(g.pending?.type, 'invest');
+    assert.equal(g.pending.shopId, landed.id);
+    assert.equal(g.pending.landedShopId, landed.id);
+    assert.ok(g.pending.shopIds.includes(landed.id));
+    assert.ok(g.pending.shopIds.includes(other.id));
+
+    const beforeLanded = landed.price;
+    const beforeOther = other.price;
+    const remOther = getRemainingInvest(g, other);
+    const amount = Math.min(100, remOther);
+    assert.ok(amount > 0, 'other shop should have invest room');
+    const cashBefore = g.players[0].cash;
+    const r = applyChoice(g, { action: 'invest', shopId: other.id, amount });
+    assert.equal(r.ok, true);
+    assert.equal(other.price, beforeOther + amount);
+    assert.equal(other.extraInvest, amount);
+    assert.equal(landed.price, beforeLanded);
+    assert.equal(landed.extraInvest || 0, 0);
+    assert.equal(g.players[0].cash, cashBefore - amount);
   });
 
   it('raises toll when owning multiple shops in an area', () => {
@@ -297,6 +340,59 @@ describe('MkMk Street engine', () => {
     assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
   });
 
+  it('crashes stock hard when a monopoly breaks', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 13,
+      cash: 20000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    for (const sq of shops) {
+      sq.owner = 0;
+      sq.basePrice = 8000;
+      sq.extraInvest = 4000;
+      sq.price = 12000;
+    }
+    g.players[0].flags.monopolyBonusClaimed = { [area]: true };
+    g.areas[area].B = 200;
+    updateAreaStockPrices(g);
+    const priceBefore = g.areas[area].stockPrice;
+    const BBefore = g.areas[area].B;
+    assert.ok(priceBefore > 1, `need visible stock price, got ${priceBefore}`);
+
+    // 1軒奪われて独占崩壊
+    shops[0].owner = 1;
+    shops[0].extraInvest = 0;
+    shops[0].price = shops[0].basePrice;
+    const brk = applyMonopolyBreak(g, 0, area);
+    assert.ok(brk?.broken);
+    assert.equal(g.areas[area].B, Math.max(70, Math.floor(BBefore * MONOPOLY_BREAK_B_RATE)));
+    assert.ok(brk.newPrice < priceBefore, `stock should drop: ${brk.newPrice} >= ${priceBefore}`);
+    assert.equal(g.players[0].flags.monopolyBonusClaimed?.[area], undefined);
+    // 残店の増資が削られる
+    const remain = shops.filter((s) => s.owner === 0);
+    assert.ok(remain.every((s) => s.extraInvest < 4000));
+    assert.ok(brk.investCut > 0);
+  });
+
+  it('sets goal pressure when a player reaches the goal assets', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 15,
+      cash: 1000,
+    });
+    g.goal = 5000;
+    assert.equal(getGoalPressurePlayers(g).length, 0);
+    g.players[0].cash = 6000;
+    const on = refreshGoalPressure(g);
+    assert.equal(on, true);
+    assert.equal(g.goalPressure, true);
+    assert.ok(g.logs.some((l) => /目標資産に到達/.test(l.text)));
+    const state = serializeState(g);
+    assert.equal(state.goalPressure, true);
+  });
+
   it('updates stock prices from shop values', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
@@ -448,7 +544,9 @@ describe('MkMk Street engine', () => {
   it('keeps scratch event catalog diverse (not mostly cash)', () => {
     assert.equal(EVENT_CATALOG.length, EVENT_COUNT);
     const cashOnly = EVENT_CATALOG.filter((e) => e.effect === 'cash').length;
-    assert.ok(cashOnly <= 40, `too many cash-only events: ${cashOnly}`);
+    assert.ok(cashOnly <= 45, `too many cash-only events: ${cashOnly}`);
+    const levelScaled = EVENT_CATALOG.filter((e) => e.levelScale).length;
+    assert.ok(levelScaled >= 20, `expected level-scaled scratch events, got ${levelScaled}`);
     const kinds = new Set(EVENT_CATALOG.map((e) => e.effect || e.kind));
     assert.ok(kinds.size >= 15, `expected many effect kinds, got ${kinds.size}`);
     assert.ok(kinds.has('extra_roll') || kinds.has('grant_mark'));
@@ -456,10 +554,147 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('stocks') || kinds.has('shop_boost'));
     assert.ok(kinds.has('all_cash'), 'expected all-player cash events');
     assert.ok(kinds.has('minigame'), 'expected minigame events');
+    assert.ok(kinds.has('seize_mono_shop'), 'expected monopoly-break seize events');
+    assert.ok(kinds.has('five_buy_coupon'), 'expected cheap takeover coupon events');
     const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
     const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
     assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
     assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
+  });
+
+  it('keeps lucky status until the start of the next own turn', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 17,
+      cash: 2000,
+    });
+    const a = g.players[0];
+    a.lucky = true;
+    a.flags.luckyExpireOnTurn = false;
+    // Aのターン終了 → ラッキーは残る
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: g.map.find((n) => n.type === 'shop').id, price: 99999 };
+    applyChoice(g, { action: 'skip' });
+    assert.equal(a.lucky, true);
+    assert.equal(a.flags.luckyExpireOnTurn, true);
+    assert.equal(g.currentPlayerIdx, 1);
+
+    // With 2 players, lucky never pays tips. Still test duration.
+    assert.equal(a.lucky, true);
+
+    // when A's turn starts (roll), lucky expires
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_roll';
+    const rolled = rollDice(g);
+    assert.equal(rolled.ok, true);
+    assert.equal(a.lucky, false);
+    assert.equal(a.flags.luckyExpireOnTurn, false);
+  });
+
+  it('lucky tip pays 20% from bank when a third party is lucky', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 19,
+      cash: 5000,
+    });
+    const lucky = g.players[0];
+    lucky.lucky = true;
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const sq = shops[0];
+    sq.owner = 1;
+    sq.basePrice = 1000;
+    sq.price = 1000;
+    sq.extraInvest = 0;
+    g.players[1].shopsClosed = false;
+    const toll = calcToll(g, sq);
+    assert.ok(toll > 0, 'toll should be positive');
+    g.players[2].pos = sq.id;
+    g.currentPlayerIdx = 2;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [sq.id], passedBank: false, startPos: g.startId };
+    const before = lucky.cash;
+    advanceMove(g);
+    const expectedTip = Math.floor(toll * 0.2);
+    assert.equal(lucky.cash, before + expectedTip);
+    assert.ok(g.logs.some((l) => /ラッキー/.test(l.text) && /20%/.test(l.text)));
+  });
+
+  it('seize_mono_shop breaks a rival monopoly', () => {
+    const seizeId = EVENT_CATALOG.findIndex((e) => e.effect === 'seize_mono_shop');
+    assert.ok(seizeId >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 21,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.ok(shops.length >= 2);
+    for (const sq of shops) sq.owner = 1;
+    g.players[1].flags.monopolyBonusClaimed = { [area]: true };
+    assert.equal(hasAreaMonopoly(g, 1, area), true);
+
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = seizeId + 1;
+    cell.label = EVENT_CATALOG[seizeId].label;
+    cell.scratched = false;
+    const r = scratchCell(g, g.players[0], 0);
+    assert.equal(r.ok, true);
+    assert.equal(hasAreaMonopoly(g, 1, area), false);
+    const taken = shops.filter((s) => s.owner === 0);
+    assert.equal(taken.length, 1);
+    assert.ok(r.messages.some((m) => /奪取/.test(m)));
+  });
+
+  it('scales level-up bonus by promotion target level', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+      cash: 1000,
+    });
+    g.players[0].level = 1;
+    const b2 = getLevelBonus(g, g.players[0], 2);
+    g.players[0].level = 3;
+    const b4 = getLevelBonus(g, g.players[0], 4);
+    assert.ok(b2 >= 700, `Lv2 bonus too low: ${b2}`);
+    assert.ok(b4 > b2, `higher level should pay more: ${b4} <= ${b2}`);
+    assert.equal(b4 - b2, 500, 'each +2 levels adds 500G base');
+  });
+
+  it('scales scratch cash by player level when levelScale is set', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'cash' && e.levelScale);
+    assert.ok(idx >= 0);
+    const def = EVENT_CATALOG[idx];
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 9,
+      cash: 500,
+    });
+    g.players[0].level = 1;
+    const cell = g.sharedEventTable.cells[2];
+    cell.eventId = idx + 1;
+    cell.label = def.label;
+    cell.scratched = false;
+    const before = g.players[0].cash;
+    const r1 = scratchCell(g, g.players[0], 2);
+    assert.equal(r1.ok, true);
+    const gain1 = g.players[0].cash - before;
+    const expected1 = Math.floor((def.cash || 0) + 1 * def.levelScale);
+    assert.equal(gain1, expected1);
+
+    g.players[0].level = 4;
+    g.players[0].cash = before;
+    const cell2 = g.sharedEventTable.cells[3];
+    cell2.eventId = idx + 1;
+    cell2.label = def.label;
+    cell2.scratched = false;
+    const r2 = scratchCell(g, g.players[0], 3);
+    assert.equal(r2.ok, true);
+    const gain2 = g.players[0].cash - before;
+    const expected2 = Math.floor((def.cash || 0) + 4 * def.levelScale);
+    assert.equal(gain2, expected2);
+    assert.ok(gain2 > gain1);
   });
 
   it('rejects scratching an already opened cell on the shared table', () => {
@@ -851,12 +1086,14 @@ describe('MkMk Street engine', () => {
   it('pick_invest event lets player choose a shop to boost', () => {
     const pickId = EVENT_CATALOG.findIndex((e) => e.effect === 'pick_invest');
     assert.ok(pickId >= 0, 'catalog has pick_invest');
-    const amount = EVENT_CATALOG[pickId].amount || 80;
+    const def = EVENT_CATALOG[pickId];
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 21,
       cash: 3000,
     });
+    const lv = g.players[0].level || 1;
+    const amount = Math.floor((def.amount || 80) + lv * (def.levelScale || 0));
     const shops = g.map.filter((n) => n.type === 'shop');
     const a = shops[0];
     const b = shops[1];
@@ -864,7 +1101,7 @@ describe('MkMk Street engine', () => {
     b.owner = 0;
     const cell = g.sharedEventTable.cells[0];
     cell.eventId = pickId + 1;
-    cell.label = EVENT_CATALOG[pickId].label;
+    cell.label = def.label;
     cell.scratched = false;
     g.phase = 'await_choice';
     g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
