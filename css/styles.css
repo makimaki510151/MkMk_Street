@@ -393,6 +393,14 @@ button:disabled { opacity: .42; cursor: default; }
   color: #ff8a80;
   animation: moneyPulseLoss .55s ease;
 }
+.pc-money.invest-pulse {
+  color: #d8bc8e;
+  animation: moneyPulseGain .55s ease;
+}
+.pc-money.impact-pulse {
+  color: #e09a6a;
+  animation: moneyPulseGain .55s ease;
+}
 .pc-cash-float {
   position: absolute;
   left: 0.55rem;
@@ -410,6 +418,8 @@ button:disabled { opacity: .42; cursor: default; }
   color: #ff8a80;
 }
 .pc-cash-float.gain { color: #8fd4a8; }
+.pc-cash-float.invest { color: #d8bc8e; }
+.pc-cash-float.impact { color: #e09a6a; }
 @keyframes moneyPulseGain {
   0% { transform: scale(1); }
   35% { transform: scale(1.12); }
@@ -835,6 +845,16 @@ button:disabled { opacity: .42; cursor: default; }
     radial-gradient(ellipse at 50% 45%, color-mix(in srgb, #ff8a80 22%, transparent), transparent 58%),
     rgba(18, 10, 12, 0.32);
 }
+#money-fx[data-mood="invest"] {
+  background:
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, #c4a574 22%, transparent), transparent 58%),
+    rgba(12, 14, 16, 0.22);
+}
+#money-fx[data-mood="five_buy"] {
+  background:
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, #e09a6a 26%, transparent), transparent 58%),
+    rgba(20, 12, 8, 0.3);
+}
 .mf-stage {
   position: relative;
   text-align: center;
@@ -888,6 +908,10 @@ button:disabled { opacity: .42; cursor: default; }
   border-color: color-mix(in srgb, #5a2020 50%, #fff);
   color: #3a1010;
   animation-name: mfCoinLoss;
+}
+#money-fx[data-mood="invest"] .mf-coin,
+#money-fx[data-mood="five_buy"] .mf-coin {
+  animation-name: mfCoinGain;
 }
 .mf-face {
   width: 3.2rem;
