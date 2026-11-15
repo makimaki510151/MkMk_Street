@@ -677,6 +677,10 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'eventFlashFlush') {
     flushEventFlashImmediate({ remote: true });
+    // 同一ログからの再フラッシュで次手番が塞がらないよう既読にする
+    if (data.throughLogKey) app.lastSeenLogKey = data.throughLogKey;
+    app.busy = false;
+    refreshGameUI();
   }
   if (data.kind === 'eventFlashDismiss') {
     dismissEventFlash({ remote: true });
@@ -1332,7 +1336,6 @@ function renderForkRails(pend) {
 
 /** プレイヤーの能動選択時は告知UIを閉じて進行を優先する */
 function flushEventFlashImmediate({ remote = false } = {}) {
-  const hadFlash = app.eventFlashOpen || (app.eventFlashQueue?.length > 0);
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
   clearTimeout(app.eventFlashDismissWait);
@@ -1354,9 +1357,11 @@ function flushEventFlashImmediate({ remote = false } = {}) {
     btn.disabled = false;
     btn.textContent = 'つづける';
   }
-  // ホストの choice などで閉じたとき、ゲスト側に「つづける」が残らないよう同期
-  if (!remote && hadFlash && app.mode === 'host') {
-    broadcastFx({ kind: 'eventFlashFlush' });
+  // 5倍買いキャンセル等: ホスト側は既に閉じていても、他端末の取り残し告知を必ず解放する
+  if (!remote && app.mode === 'host') {
+    const throughLogKey = app.game?.logs?.[0] ? logKey(app.game.logs[0]) : null;
+    if (throughLogKey) app.lastSeenLogKey = throughLogKey;
+    broadcastFx({ kind: 'eventFlashFlush', throughLogKey });
   }
 }
 
@@ -2434,6 +2439,14 @@ function refreshGameUI() {
   }
 
   const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
+  // 5倍買いキャンセル後など: 自分のサイコロ番なのに前プレイヤーの告知が残って振れないのを解放
+  if (g.phase === 'await_roll' && humanTurn && !cur?.resting && isEventUiBlocking()) {
+    const readerId = app.eventFlashReaderId;
+    if (readerId == null || readerId !== cur.id) {
+      flushEventFlashImmediate({ remote: true });
+      app.busy = false;
+    }
+  }
   const eventBlocked = isEventUiBlocking();
   const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
   $('#btn-roll').disabled = !canRoll;
@@ -2495,6 +2508,16 @@ function refreshGameUI() {
   updateInspectPanel();
   maybeYourTurnChime();
   announceNewLogs(g);
+  // ログ再フラッシュで「前の人の確認待ち」のままサイコロ不能になるのを防ぐ
+  if (g.phase === 'await_roll' && humanTurn && !cur?.resting && isEventUiBlocking()) {
+    const readerId = app.eventFlashReaderId;
+    if (readerId == null || readerId !== cur.id) {
+      flushEventFlashImmediate({ remote: true });
+      app.busy = false;
+      $('#btn-roll').disabled = false;
+      $('#btn-roll').textContent = 'サイコロを振る';
+    }
+  }
   maybeAutoSkipRest();
 }
 
@@ -2763,6 +2786,8 @@ function eventFlashReader(payload) {
 /** 人間の確認担当だけ手動で閉じられる。NPC担当はNPCが進める */
 function canDismissEventFlash() {
   if (!app.game || !app.eventFlashOpen) return false;
+  // 手番が移ったあとに残った告知は、いまサイコロを振る側も閉じられる
+  if (app.game.phase === 'await_roll' && isMyTurn()) return true;
   const reader = app.game.players[app.eventFlashReaderId];
   if (!reader) {
     if (app.mode === 'local' || app.mode === 'host') return true;
