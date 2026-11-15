@@ -3971,9 +3971,11 @@ function showChoiceModal(g) {
       return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">マスを1つ選んでめくります。結果はこの下に大きく出ます。同じ色が縦・横・斜めに3つ以上そろうと<strong>${MATCH_BONUS_PER}G×枚数</strong></p>
+      <p class="hint">マスを1つ選んでめくります。同じ色が縦・横・斜めに隣接3つ以上で<strong>${MATCH_BONUS_PER}G×枚数</strong></p>
       <div class="scratch-legends">${legend}</div>
-      <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
+      <div class="scratch-board-fit">
+        <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
+      </div>
       <div class="scratch-result" id="scratch-result" hidden></div>
     `;
     if (!canPick) {
