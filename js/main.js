@@ -2296,9 +2296,11 @@ function classifyMoneyMood(g, p, amount) {
       if (/購入|増資/.test(t) && amount <= 0) return 'invest';
     }
     if (l.kind === 'stock' && t.includes(name)) {
+      if (/わけ前|配当/.test(t) && amount > 0) return 'dividend';
       if (/購入/.test(t) && amount < 0) return 'invest';
       if (/売却/.test(t) && amount > 0) return 'gain';
     }
+    if (l.kind === 'stock' && /わけ前|配当/.test(t) && amount > 0) return 'dividend';
     if ((l.kind === 'level' || l.kind === 'win') && t.includes(name) && amount > 0) return 'gain';
     if (l.kind === 'event' && t.includes(name)) {
       if (amount > 0) return 'gain';
@@ -2455,6 +2457,19 @@ function resolveMoneyFxCopy(focus) {
       title: '買い物料の収入',
       amount: signed,
       who: who ? `${who} が買い物料を受け取り` : '買い物料の受け取り',
+      coinMode: 'gain',
+      se: 'gain',
+      floatClass: 'gain',
+    };
+  }
+  if (mood === 'dividend') {
+    return {
+      mood: 'gain',
+      color: '#6e8fad',
+      face: '株',
+      title: '株わけ前',
+      amount: signed,
+      who: who ? `${who} がエリア収益のわけ前を受け取り` : 'エリア収益のわけ前',
       coinMode: 'gain',
       se: 'gain',
       floatClass: 'gain',
