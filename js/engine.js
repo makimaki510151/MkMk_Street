@@ -162,13 +162,17 @@ export function payAreaStockDividend(g, area, revenue) {
   return { area: a, pool: given.reduce((s, p) => s + p.amount, 0), payouts: given };
 }
 
-/** プレイヤーごとの累積統計（終了画面用） */
+/** プレイヤーごとの累積統計（終了画面・本家風） */
 export function createEmptyStats() {
   return {
     rolls: 0,
     diceTotal: 0,
     tollEarned: 0,
     tollPaid: 0,
+    tollSaleCount: 0,
+    tollPayCount: 0,
+    tollSaleMax: 0,
+    tollPayMax: 0,
     dividendEarned: 0,
     luckyIncome: 0,
     shopsBought: 0,
@@ -182,6 +186,8 @@ export function createEmptyStats() {
     stockSpent: 0,
     stockSold: 0,
     stockIncome: 0,
+    /** 株価変動による含み益・損の累計 */
+    stockReturn: 0,
     scratchCount: 0,
     matchBonus: 0,
     minigamePlays: 0,
@@ -206,6 +212,53 @@ function bumpStat(p, key, n = 1) {
   if (!p || !n) return;
   const s = ensureStats(p);
   s[key] = (s[key] || 0) + n;
+}
+
+function getStockAssetOnly(g, p) {
+  let stockAsset = 0;
+  for (const [a, cnt] of Object.entries(p.stocks || {})) {
+    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * cnt;
+  }
+  return stockAsset;
+}
+
+/** 売買直後：含み益計算の基準を現在値に合わせる（変動分は計上しない） */
+export function syncStockValueSnap(g, p) {
+  if (!p) return;
+  if (!p.flags) p.flags = {};
+  p.flags.stockValueSnap = getStockAssetOnly(g, p);
+}
+
+/** 株価更新後：持ち株の含み益・損を stockReturn に加算 */
+function applyStockReturnDeltas(g) {
+  for (const p of g.players || []) {
+    if (p.bankrupt) continue;
+    if (!p.flags) p.flags = {};
+    const now = getStockAssetOnly(g, p);
+    const prev = p.flags.stockValueSnap;
+    if (typeof prev === 'number') {
+      const delta = now - prev;
+      if (delta) bumpStat(p, 'stockReturn', delta);
+    }
+    p.flags.stockValueSnap = now;
+  }
+}
+
+/** 総資産ヒストリ（終了画面の順位グラフ用） */
+export function recordWorthSnapshot(g) {
+  if (!g) return;
+  if (!g.worthHistory) g.worthHistory = [];
+  const values = {};
+  for (const p of g.players || []) {
+    values[p.id] = getPlayerAssets(g, p).total;
+  }
+  const turn = g.turn || 1;
+  const last = g.worthHistory[g.worthHistory.length - 1];
+  if (last && last.turn === turn) {
+    last.values = values;
+    return;
+  }
+  g.worthHistory.push({ turn, values });
 }
 
 function giveAllCash(g, amount) {
@@ -332,7 +385,7 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     };
   });
 
-  return {
+  const g = {
     map: board.nodes,
     areas: board.areas,
     /** 全員共通のイベント表（1マスずつ誰かがめくる） */
@@ -351,10 +404,14 @@ export function createGame({ players, goal = DEFAULT_GOAL, seed = Date.now(), ca
     winnerId: null,
     turn: 1,
     goalPressure: false,
+    worthHistory: [],
     _seed: seed,
     _rngCount: 0,
     _rngState: seed,
   };
+  for (const p of plist) syncStockValueSnap(g, p);
+  recordWorthSnapshot(g);
+  return g;
 }
 
 function rngNext(g) {
@@ -556,6 +613,10 @@ export function updateAreaStockPrices(g) {
     }
     g.areas[a].stockPrice = newPrice;
   }
+  if (changes.length) applyStockReturnDeltas(g);
+  else {
+    for (const p of g.players || []) syncStockValueSnap(g, p);
+  }
   return changes;
 }
 
@@ -570,20 +631,27 @@ export function getPlayerAssets(g, p) {
   return { cash: p.cash, stockAsset, shopAsset, total: p.cash + stockAsset + shopAsset };
 }
 
-/** 終了画面用アワード定義 */
+/** 終了画面用アワード定義（本家のトロフィー／特賞に相当） */
 const RESULT_AWARD_DEFS = [
   {
     id: 'landlord',
-    title: '土地王',
+    title: '物件王',
     desc: 'もっとも多くのお店を所有',
     metric: (row) => row.shopCount,
     format: (v) => `${v}軒`,
   },
   {
     id: 'toll_king',
-    title: '買い物料王',
-    desc: '買い物料収入 No.1',
+    title: '売上王',
+    desc: '買い物料収入の合計',
     metric: (row) => row.stats.tollEarned,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'big_sale',
+    title: '高額請求王',
+    desc: '1回の最大買い物料収入',
+    metric: (row) => row.stats.tollSaleMax,
     format: (v) => `${Number(v).toLocaleString()}G`,
   },
   {
@@ -591,6 +659,13 @@ const RESULT_AWARD_DEFS = [
     title: '株の達人',
     desc: '株式資産 No.1',
     metric: (row) => row.assets.stockAsset,
+    format: (v) => `${Number(v).toLocaleString()}G`,
+  },
+  {
+    id: 'stock_return',
+    title: '相場上手',
+    desc: '株価変動の含み益',
+    metric: (row) => row.stats.stockReturn,
     format: (v) => `${Number(v).toLocaleString()}G`,
   },
   {
@@ -602,7 +677,7 @@ const RESULT_AWARD_DEFS = [
   },
   {
     id: 'investor',
-    title: '増資マニア',
+    title: '増資キャプテン',
     desc: '増資総額 No.1',
     metric: (row) => row.stats.investTotal,
     format: (v) => `${Number(v).toLocaleString()}G`,
@@ -656,19 +731,39 @@ const RESULT_AWARD_DEFS = [
     metric: (row) => row.stats.dividendEarned,
     format: (v) => `${Number(v).toLocaleString()}G`,
   },
+  {
+    id: 'shopaholic',
+    title: 'お買い物上手',
+    desc: '買い物料を払った回数',
+    metric: (row) => row.stats.tollPayCount,
+    format: (v) => `${v}回`,
+  },
 ];
 
 /**
  * 本家風の終了統計を組み立てる。
- * @returns {{ winnerId: number|null, ranking: object[], awards: object[], maxTotal: number, goal: number, turn: number }}
+ * 順位／売上と支払い／資産と給料／特賞
  */
 export function buildGameResults(g) {
+  recordWorthSnapshot(g);
+  const startCash = g.worthHistory?.[0]
+    ? Object.values(g.worthHistory[0].values || {})[0]
+    : null;
+
   const rows = (g.players || []).map((p) => {
     const assets = getPlayerAssets(g, p);
     const shopCount = g.map.filter((s) => s.type === 'shop' && s.owner === p.id).length;
     const monopolyAreas = Object.keys(g.areas || {})
       .map(Number)
       .filter((a) => hasAreaMonopoly(g, p.id, a)).length;
+    const stats = { ...createEmptyStats(), ...(p.stats || {}) };
+    const saleAvg = stats.tollSaleCount > 0
+      ? Math.floor(stats.tollEarned / stats.tollSaleCount)
+      : 0;
+    const payAvg = stats.tollPayCount > 0
+      ? Math.floor(stats.tollPaid / stats.tollPayCount)
+      : 0;
+    const nextSalary = p.bankrupt ? 0 : getLevelBonus(g, p, (p.level || 1) + 1);
     return {
       id: p.id,
       name: p.name,
@@ -678,7 +773,21 @@ export function buildGameResults(g) {
       assets,
       shopCount,
       monopolyAreas,
-      stats: { ...createEmptyStats(), ...(p.stats || {}) },
+      stats,
+      sales: {
+        count: stats.tollSaleCount,
+        total: stats.tollEarned,
+        average: saleAvg,
+        greatest: stats.tollSaleMax,
+      },
+      payments: {
+        count: stats.tollPayCount,
+        total: stats.tollPaid,
+        average: payAvg,
+        greatest: stats.tollPayMax,
+      },
+      stockReturn: stats.stockReturn,
+      nextSalary,
       isWinner: g.winnerId === p.id,
     };
   });
@@ -691,7 +800,12 @@ export function buildGameResults(g) {
   });
 
   const ranking = rows.map((row, i) => ({ ...row, rank: i + 1 }));
-  const maxTotal = Math.max(1, ...ranking.map((r) => Math.max(0, r.assets.total)));
+  const maxTotal = Math.max(
+    1,
+    g.goal || 1,
+    ...ranking.map((r) => Math.max(0, r.assets.total)),
+    ...(g.worthHistory || []).flatMap((h) => Object.values(h.values || {}).map((n) => Math.max(0, n))),
+  );
 
   const awards = [];
   for (const def of RESULT_AWARD_DEFS) {
@@ -725,6 +839,11 @@ export function buildGameResults(g) {
     maxTotal,
     goal: g.goal,
     turn: g.turn || 1,
+    startCash: startCash ?? ranking[0]?.assets?.cash ?? 0,
+    worthHistory: (g.worthHistory || []).map((h) => ({
+      turn: h.turn,
+      values: { ...h.values },
+    })),
   };
 }
 
@@ -786,6 +905,7 @@ export function serializeState(g) {
     winnerId: g.winnerId,
     turn: g.turn,
     goalPressure: !!g.goalPressure,
+    worthHistory: (g.worthHistory || []).slice(-80),
     _seed: g._seed,
     _rngCount: g._rngCount,
     sharedEventTable: g.sharedEventTable,
@@ -1290,6 +1410,7 @@ function handleBank(g, p, landed) {
         : `🏆 ${p.name} の勝利！ 銀行通過でゴール（総資産 ${assets.total.toLocaleString()}G）`,
       'win',
     );
+    recordWorthSnapshot(g);
     return true;
   }
   return false;
@@ -1379,7 +1500,13 @@ function payToll(g, payer, sq) {
   payer.cash -= toll;
   owner.cash += toll;
   bumpStat(payer, 'tollPaid', toll);
+  bumpStat(payer, 'tollPayCount', 1);
+  const payerStats = ensureStats(payer);
+  if (toll > (payerStats.tollPayMax || 0)) payerStats.tollPayMax = toll;
   bumpStat(owner, 'tollEarned', toll);
+  bumpStat(owner, 'tollSaleCount', 1);
+  const ownerStats = ensureStats(owner);
+  if (toll > (ownerStats.tollSaleMax || 0)) ownerStats.tollSaleMax = toll;
   addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll.toLocaleString()}G`, 'toll');
 
   // 同エリアの株保有者へ、収益の一部をわけ前（銀行から）
@@ -1461,6 +1588,7 @@ function sellStockForCash(g, p, area, count) {
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
+  syncStockValueSnap(g, p);
   if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
@@ -1845,6 +1973,7 @@ export function applyChoice(g, choice) {
       p.stocks[area] = (p.stocks[area] || 0) + count;
       bumpStat(p, 'stockBought', count);
       bumpStat(p, 'stockSpent', cost);
+      syncStockValueSnap(g, p);
       if (count >= 10) {
         g.areas[area].B = Math.floor(g.areas[area].B * 1.07);
       }
@@ -1873,6 +2002,7 @@ export function applyChoice(g, choice) {
       p.cash += got;
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
+      syncStockValueSnap(g, p);
       if (count >= 10) {
         g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * 0.93));
       }
@@ -2201,6 +2331,7 @@ export function preTurnSell(g, playerId, area, count) {
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
+  syncStockValueSnap(g, p);
   if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
@@ -2225,12 +2356,15 @@ function endTurn(g) {
     p.flags.bankPassStock = false;
   }
 
+  recordWorthSnapshot(g);
+
   // 生存プレイヤーへ
   const alive = g.players.filter((pl) => !pl.bankrupt);
   if (alive.length <= 1) {
     g.winnerId = alive[0]?.id ?? null;
     g.phase = 'gameover';
     if (alive[0]) addLog(g, `🏆 ${alive[0].name} の勝利（他プレイヤー破産）`, 'win');
+    recordWorthSnapshot(g);
     return;
   }
 

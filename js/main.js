@@ -991,44 +991,48 @@ function seedResultsDemo(g) {
       cash: 4200,
       level: 4,
       stats: {
-        rolls: 28, diceTotal: 98, tollEarned: 6200, tollPaid: 1800, dividendEarned: 420,
-        shopsBought: 7, shopsStolen: 1, investTotal: 3400, salaryEarned: 2100, levelUps: 3,
-        monopolyCount: 2, monopolyBonus: 1800, stockBought: 40, stockSpent: 2200,
-        stockSold: 8, stockIncome: 500, scratchCount: 6, matchBonus: 300,
-        minigamePlays: 3, minigameWins: 2, minigamePrize: 520,
+        rolls: 28, diceTotal: 98, tollEarned: 6200, tollPaid: 1800,
+        tollSaleCount: 12, tollPayCount: 5, tollSaleMax: 980, tollPayMax: 520,
+        dividendEarned: 420, shopsBought: 7, shopsStolen: 1, investTotal: 3400,
+        salaryEarned: 2100, levelUps: 3, monopolyCount: 2, monopolyBonus: 1800,
+        stockBought: 40, stockSpent: 2200, stockSold: 8, stockIncome: 500, stockReturn: 640,
+        scratchCount: 6, matchBonus: 300, minigamePlays: 3, minigameWins: 2, minigamePrize: 520,
       },
     },
     {
       cash: 2800,
       level: 3,
       stats: {
-        rolls: 26, diceTotal: 90, tollEarned: 3100, tollPaid: 2400, dividendEarned: 980,
-        shopsBought: 4, shopsStolen: 0, investTotal: 900, salaryEarned: 1200, levelUps: 2,
-        monopolyCount: 0, monopolyBonus: 0, stockBought: 85, stockSpent: 4800,
-        stockSold: 20, stockIncome: 1400, scratchCount: 4, matchBonus: 100,
-        minigamePlays: 2, minigameWins: 0, minigamePrize: 0,
+        rolls: 26, diceTotal: 90, tollEarned: 3100, tollPaid: 2400,
+        tollSaleCount: 8, tollPayCount: 9, tollSaleMax: 610, tollPayMax: 740,
+        dividendEarned: 980, shopsBought: 4, shopsStolen: 0, investTotal: 900,
+        salaryEarned: 1200, levelUps: 2, monopolyCount: 0, monopolyBonus: 0,
+        stockBought: 85, stockSpent: 4800, stockSold: 20, stockIncome: 1400, stockReturn: 1280,
+        scratchCount: 4, matchBonus: 100, minigamePlays: 2, minigameWins: 0, minigamePrize: 0,
       },
     },
     {
       cash: 1500,
       level: 3,
       stats: {
-        rolls: 24, diceTotal: 85, tollEarned: 4500, tollPaid: 3200, dividendEarned: 200,
-        shopsBought: 6, shopsStolen: 2, investTotal: 2100, salaryEarned: 900, levelUps: 2,
-        monopolyCount: 1, monopolyBonus: 900, stockBought: 15, stockSpent: 800,
-        stockSold: 5, stockIncome: 280, scratchCount: 8, matchBonus: 450,
-        minigamePlays: 5, minigameWins: 3, minigamePrize: 780,
+        rolls: 24, diceTotal: 85, tollEarned: 4500, tollPaid: 3200,
+        tollSaleCount: 10, tollPayCount: 11, tollSaleMax: 880, tollPayMax: 690,
+        dividendEarned: 200, shopsBought: 6, shopsStolen: 2, investTotal: 2100,
+        salaryEarned: 900, levelUps: 2, monopolyCount: 1, monopolyBonus: 900,
+        stockBought: 15, stockSpent: 800, stockSold: 5, stockIncome: 280, stockReturn: -180,
+        scratchCount: 8, matchBonus: 450, minigamePlays: 5, minigameWins: 3, minigamePrize: 780,
       },
     },
     {
       cash: 600,
       level: 2,
       stats: {
-        rolls: 22, diceTotal: 70, tollEarned: 800, tollPaid: 4100, dividendEarned: 60,
-        shopsBought: 2, shopsStolen: 0, investTotal: 200, salaryEarned: 400, levelUps: 1,
-        monopolyCount: 0, monopolyBonus: 0, stockBought: 10, stockSpent: 400,
-        stockSold: 2, stockIncome: 90, scratchCount: 3, matchBonus: 50,
-        minigamePlays: 1, minigameWins: 0, minigamePrize: 0,
+        rolls: 22, diceTotal: 70, tollEarned: 800, tollPaid: 4100,
+        tollSaleCount: 3, tollPayCount: 14, tollSaleMax: 320, tollPayMax: 910,
+        dividendEarned: 60, shopsBought: 2, shopsStolen: 0, investTotal: 200,
+        salaryEarned: 400, levelUps: 1, monopolyCount: 0, monopolyBonus: 0,
+        stockBought: 10, stockSpent: 400, stockSold: 2, stockIncome: 90, stockReturn: -90,
+        scratchCount: 3, matchBonus: 50, minigamePlays: 1, minigameWins: 0, minigamePrize: 0,
       },
     },
   ];
@@ -1077,6 +1081,21 @@ function seedResultsDemo(g) {
   }
 
   updateAreaStockPrices(g);
+
+  // 本家風グラフ用の仮推移
+  const startCash = 2000;
+  const finals = g.players.map((p) => getPlayerAssets(g, p).total);
+  g.worthHistory = [];
+  for (let t = 1; t <= 18; t++) {
+    const r = (t - 1) / 17;
+    const values = {};
+    g.players.forEach((p, i) => {
+      const wobble = Math.sin(t * 0.7 + i) * 180 * (1 - r);
+      values[p.id] = Math.max(0, Math.round(startCash + (finals[i] - startCash) * r + wobble));
+    });
+    g.worthHistory.push({ turn: t, values });
+  }
+
   g.goal = Math.min(g.goal, 8000);
   g.turn = 18;
   g.winnerId = 0;
@@ -4095,11 +4114,88 @@ function showWinner(g) {
   audio.sfx.win();
 }
 
-function renderResultsBody(results) {
-  const body = $('#results-body');
-  if (!body) return;
-  const maxTotal = Math.max(1, results.maxTotal || 1);
+function fmtG(n) {
+  return `${Number(n || 0).toLocaleString()}G`;
+}
 
+function fmtSignedG(n) {
+  const v = Number(n) || 0;
+  const abs = Math.abs(v).toLocaleString();
+  if (v > 0) return `+${abs}G`;
+  if (v < 0) return `−${abs}G`;
+  return '0G';
+}
+
+/** 本家風・総資産推移グラフ */
+function renderWorthGraphSvg(results) {
+  const hist = results.worthHistory || [];
+  const ranking = results.ranking || [];
+  if (!hist.length || !ranking.length) {
+    return '<p class="results-empty">推移データなし</p>';
+  }
+  const W = 640;
+  const H = 220;
+  const pad = { t: 18, r: 18, b: 30, l: 52 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  const maxY = Math.max(1, results.maxTotal || 1);
+  const goal = Math.max(0, Number(results.goal) || 0);
+  const startCash = Math.max(0, Number(results.startCash) || 0);
+  const turns = hist.map((h) => h.turn);
+  const tMin = turns[0];
+  const tMax = Math.max(tMin + 1, turns[turns.length - 1]);
+  const xAt = (turn) => pad.l + ((turn - tMin) / (tMax - tMin)) * plotW;
+  const yAt = (v) => pad.t + plotH - (Math.max(0, v) / maxY) * plotH;
+
+  const goalY = yAt(goal);
+  const startY = yAt(startCash);
+  const gridYs = [0, 0.25, 0.5, 0.75, 1].map((r) => {
+    const v = Math.round(maxY * r);
+    const y = yAt(v);
+    return `<line class="wg-grid" x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" />
+      <text class="wg-axis" x="${pad.l - 6}" y="${y + 3}" text-anchor="end">${v >= 1000 ? `${Math.round(v / 1000)}k` : v}</text>`;
+  }).join('');
+
+  const lines = ranking.map((row) => {
+    const pts = hist.map((h) => {
+      const v = h.values?.[row.id];
+      if (v == null) return null;
+      return `${xAt(h.turn).toFixed(1)},${yAt(v).toFixed(1)}`;
+    }).filter(Boolean);
+    if (pts.length < 2) return '';
+    return `<polyline class="wg-line" points="${pts.join(' ')}" stroke="${escapeHtml(row.color)}" fill="none" />`;
+  }).join('');
+
+  const dots = ranking.map((row) => {
+    const last = hist[hist.length - 1];
+    const v = last?.values?.[row.id];
+    if (v == null) return '';
+    return `<circle class="wg-dot" cx="${xAt(last.turn).toFixed(1)}" cy="${yAt(v).toFixed(1)}" r="3.5" fill="${escapeHtml(row.color)}" />`;
+  }).join('');
+
+  const legend = ranking.map((row) =>
+    `<span class="wg-legend-item"><i style="background:${escapeHtml(row.color)}"></i>${escapeHtml(row.name)}</span>`
+  ).join('');
+
+  return `
+    <div class="worth-graph">
+      <svg viewBox="0 0 ${W} ${H}" class="worth-graph-svg" role="img" aria-label="総資産の推移">
+        ${gridYs}
+        <line class="wg-goal" x1="${pad.l}" y1="${goalY}" x2="${W - pad.r}" y2="${goalY}" />
+        <text class="wg-goal-label" x="${W - pad.r}" y="${goalY - 4}" text-anchor="end">目標 ${goal.toLocaleString()}G</text>
+        <line class="wg-start" x1="${pad.l}" y1="${startY}" x2="${W - pad.r}" y2="${startY}" />
+        <text class="wg-start-label" x="${pad.l + 4}" y="${startY - 4}">開始 ${startCash.toLocaleString()}G</text>
+        ${lines}
+        ${dots}
+        <text class="wg-axis" x="${pad.l}" y="${H - 8}">T${tMin}</text>
+        <text class="wg-axis" x="${W - pad.r}" y="${H - 8}" text-anchor="end">T${tMax}</text>
+      </svg>
+      <div class="wg-legend">${legend}</div>
+    </div>`;
+}
+
+function renderResultsRankingPane(results) {
+  const maxTotal = Math.max(1, results.maxTotal || 1);
   const rankingHtml = results.ranking.map((row, i) => {
     const { cash, shopAsset, stockAsset, total } = row.assets;
     const safeTotal = Math.max(0, total);
@@ -4118,7 +4214,7 @@ function renderResultsBody(results) {
         <div class="results-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</div>
         <div class="results-meta">Lv.${row.level} · 店${row.shopCount}軒 · 独占${row.monopolyAreas} · ${row.bankrupt ? '破産' : '生存'}</div>
       </div>
-      <div class="results-total">${safeTotal.toLocaleString()}G</div>
+      <div class="results-total">${fmtG(safeTotal)}</div>
       <div class="results-bar-wrap">
         <div class="results-bar" style="--bar-w:${barPct}%">
           <i class="seg-cash" style="width:${cashPct}%"></i>
@@ -4126,32 +4222,134 @@ function renderResultsBody(results) {
           <i class="seg-stock" style="width:${stockPct}%"></i>
         </div>
         <div class="results-legend">
-          <span><i class="lg-cash"></i>現金 ${Math.max(0, cash).toLocaleString()}G</span>
-          <span><i class="lg-shop"></i>お店 ${shopAsset.toLocaleString()}G</span>
-          <span><i class="lg-stock"></i>株 ${stockAsset.toLocaleString()}G</span>
+          <span><i class="lg-cash"></i>現金 ${fmtG(Math.max(0, cash))}</span>
+          <span><i class="lg-shop"></i>お店 ${fmtG(shopAsset)}</span>
+          <span><i class="lg-stock"></i>株 ${fmtG(stockAsset)}</span>
         </div>
       </div>
     </article>`;
   }).join('');
 
-  const awardsHtml = results.awards.length
-    ? results.awards.map((a, i) => `<article class="results-award" style="--i:${i}">
-        <div class="results-award-title">${escapeHtml(a.title)}</div>
-        <div class="results-award-who" style="color:${escapeHtml(a.playerColor)}">${escapeHtml(a.playerName)}</div>
-        <div class="results-award-val">${escapeHtml(a.desc)} · ${escapeHtml(a.valueLabel)}</div>
-      </article>`).join('')
-    : '<p class="results-award-val">特賞なし</p>';
+  return `
+    <div class="results-pane-stack">
+      ${renderWorthGraphSvg(results)}
+      <div class="results-ranking">${rankingHtml}</div>
+    </div>`;
+}
+
+function renderResultsSalesPane(results) {
+  const head = `
+    <div class="rs-table rs-head">
+      <span>プレイヤー</span>
+      <span>売上回数</span><span>売上合計</span><span>平均</span><span>最大</span>
+      <span>支払回数</span><span>支払合計</span><span>平均</span><span>最大</span>
+      <span>株リターン</span>
+    </div>`;
+  const rows = results.ranking.map((row, i) => {
+    const s = row.sales;
+    const p = row.payments;
+    const ret = row.stockReturn || 0;
+    const retCls = ret > 0 ? 'is-plus' : ret < 0 ? 'is-minus' : '';
+    return `<div class="rs-table rs-row ${row.isWinner ? 'is-winner' : ''} ${row.bankrupt ? 'is-bankrupt' : ''}" style="--i:${i}">
+      <span class="rs-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</span>
+      <span>${s.count}</span><span>${fmtG(s.total)}</span><span>${fmtG(s.average)}</span><span>${fmtG(s.greatest)}</span>
+      <span>${p.count}</span><span>${fmtG(p.total)}</span><span>${fmtG(p.average)}</span><span>${fmtG(p.greatest)}</span>
+      <span class="rs-return ${retCls}">${fmtSignedG(ret)}</span>
+    </div>`;
+  }).join('');
+  return `<div class="rs-scroll">${head}${rows}</div>
+    <p class="results-hint">売上＝受け取った買い物料／支払＝払った買い物料／株リターン＝株価変動の含み損益</p>`;
+}
+
+function renderResultsAssetsPane(results) {
+  const head = `
+    <div class="ra-table ra-head">
+      <span>プレイヤー</span>
+      <span>総資産</span><span>現金</span><span>お店</span><span>株</span>
+      <span>レベル</span><span>次の給料</span>
+    </div>`;
+  const rows = results.ranking.map((row, i) => {
+    const a = row.assets;
+    return `<div class="ra-table ra-row ${row.isWinner ? 'is-winner' : ''} ${row.bankrupt ? 'is-bankrupt' : ''}" style="--i:${i}">
+      <span class="ra-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</span>
+      <span class="ra-total">${fmtG(a.total)}</span>
+      <span>${fmtG(Math.max(0, a.cash))}</span>
+      <span>${fmtG(a.shopAsset)}</span>
+      <span>${fmtG(a.stockAsset)}</span>
+      <span>Lv.${row.level}</span>
+      <span>${fmtG(row.nextSalary)}</span>
+    </div>`;
+  }).join('');
+  return `<div class="ra-scroll">${head}${rows}</div>
+    <p class="results-hint">次の給料＝あと1レベル昇進したときの昇進賞金見込み</p>`;
+}
+
+function renderResultsAwardsPane(results) {
+  if (!results.awards.length) {
+    return '<p class="results-empty">特賞なし</p>';
+  }
+  return `<div class="results-awards">${results.awards.map((a, i) =>
+    `<article class="results-award" style="--i:${i}">
+      <div class="results-award-title">${escapeHtml(a.title)}</div>
+      <div class="results-award-who" style="color:${escapeHtml(a.playerColor)}">${escapeHtml(a.playerName)}</div>
+      <div class="results-award-val">${escapeHtml(a.desc)} · ${escapeHtml(a.valueLabel)}</div>
+    </article>`
+  ).join('')}</div>`;
+}
+
+function renderResultsBody(results) {
+  const body = $('#results-body');
+  if (!body) return;
+
+  const tabs = [
+    { id: 'rank', label: '順位' },
+    { id: 'sales', label: '売上と支払い' },
+    { id: 'assets', label: '資産と給料' },
+    { id: 'awards', label: '特賞' },
+  ];
 
   body.innerHTML = `
-    <section>
-      <h3 class="results-section-title">RANKING</h3>
-      <div class="results-ranking">${rankingHtml}</div>
-    </section>
-    <section>
-      <h3 class="results-section-title">SPECIAL AWARDS</h3>
-      <div class="results-awards">${awardsHtml}</div>
-    </section>
+    <nav class="results-tabs" role="tablist" aria-label="結果パネル">
+      ${tabs.map((t, i) =>
+        `<button type="button" class="results-tab ${i === 0 ? 'active' : ''}" role="tab"
+          data-results-tab="${t.id}" aria-selected="${i === 0 ? 'true' : 'false'}">${escapeHtml(t.label)}</button>`
+      ).join('')}
+    </nav>
+    <div class="results-panes">
+      <section class="results-pane active" data-results-pane="rank" role="tabpanel">
+        <h3 class="results-section-title">順位グラフ</h3>
+        ${renderResultsRankingPane(results)}
+      </section>
+      <section class="results-pane" data-results-pane="sales" role="tabpanel" hidden>
+        <h3 class="results-section-title">売上と支払い</h3>
+        ${renderResultsSalesPane(results)}
+      </section>
+      <section class="results-pane" data-results-pane="assets" role="tabpanel" hidden>
+        <h3 class="results-section-title">資産と給料</h3>
+        ${renderResultsAssetsPane(results)}
+      </section>
+      <section class="results-pane" data-results-pane="awards" role="tabpanel" hidden>
+        <h3 class="results-section-title">特賞</h3>
+        ${renderResultsAwardsPane(results)}
+      </section>
+    </div>
   `;
+
+  body.querySelectorAll('[data-results-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.resultsTab;
+      body.querySelectorAll('[data-results-tab]').forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      body.querySelectorAll('[data-results-pane]').forEach((pane) => {
+        const on = pane.dataset.resultsPane === id;
+        pane.classList.toggle('active', on);
+        pane.hidden = !on;
+      });
+    });
+  });
 }
 
 function localHumanSeat(g) {
