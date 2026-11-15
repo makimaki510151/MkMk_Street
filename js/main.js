@@ -76,6 +76,8 @@ const app = {
   prevCash: null,
   moneyFxTimer: null,
   moneyFxSeq: 0,
+  /** @type {object[]|null} オーバーレイ競合時の待機キュー */
+  pendingMoneyFx: null,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
@@ -810,6 +812,7 @@ function enterGame() {
   app.hideDiceResult = false;
   app.lastSeenLogKey = null;
   app.prevCash = null;
+  app.pendingMoneyFx = null;
   app.feedPinnedBottom = true;
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
@@ -1894,6 +1897,7 @@ function refreshGameUI() {
     `;
   }).join('');
   maybePresentMoneyFx(g);
+  flushPendingMoneyFx();
 
   $('#goal-chip').textContent = `目標 ${g.goal.toLocaleString()}G`;
   $('#turn-chip').textContent = `ターン ${g.turn}`;
@@ -2242,20 +2246,47 @@ function moneyTier(absAmount) {
   return 1;
 }
 
-function presentMoneyFx(deltas) {
-  if (!deltas?.length) return;
-  // 専用オーバーレイ中はカード側だけ動かす
-  const blocked = !$('#dice-overlay')?.hidden
+function moneyFxBlocked() {
+  return !$('#dice-overlay')?.hidden
     || !$('#warp-overlay')?.hidden
     || !$('#scratch-match-overlay')?.hidden
     || !$('#minigame-overlay')?.hidden;
+}
 
+/** 本番: 所持金デルタから感情演出。競合中はキューして後で再生 */
+function presentMoneyFx(deltas, { remote = false } = {}) {
+  if (!deltas?.length) return;
   for (const d of deltas) spawnPlayerCashFloat(d);
 
-  // ローカル優先、なければ絶対値最大を中央演出
+  if (moneyFxBlocked()) {
+    app.pendingMoneyFx = mergeMoneyDeltas(app.pendingMoneyFx, deltas);
+    return;
+  }
+  showMoneyFxOverlay(deltas, { remote });
+}
+
+function mergeMoneyDeltas(prev, next) {
+  const map = new Map();
+  for (const d of [...(prev || []), ...next]) {
+    const cur = map.get(d.pid);
+    if (!cur) map.set(d.pid, { ...d });
+    else map.set(d.pid, { ...cur, amount: cur.amount + d.amount, cash: d.cash ?? cur.cash });
+  }
+  return [...map.values()].filter((d) => d.amount);
+}
+
+function flushPendingMoneyFx() {
+  if (!app.pendingMoneyFx?.length || moneyFxBlocked()) return;
+  if (!$('#money-fx')?.hidden) return;
+  const queued = app.pendingMoneyFx;
+  app.pendingMoneyFx = null;
+  showMoneyFxOverlay(queued);
+}
+
+function showMoneyFxOverlay(deltas, { remote = false } = {}) {
   const focus = deltas.find((d) => d.mine)
     || [...deltas].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))[0];
-  if (!focus || blocked) return;
+  if (!focus || !focus.amount) return;
 
   const gain = focus.amount > 0;
   const abs = Math.abs(focus.amount);
@@ -2279,7 +2310,7 @@ function presentMoneyFx(deltas) {
 
   const coins = $('#mf-coins');
   const count = 6 + tier * 4;
-  coins.innerHTML = Array.from({ length: count }, (_, i) => {
+  coins.innerHTML = Array.from({ length: count }, () => {
     const x = 8 + Math.random() * 84;
     const y = gain ? 55 + Math.random() * 30 : 18 + Math.random() * 28;
     const drift = Math.round((Math.random() - 0.5) * 70);
@@ -2307,6 +2338,7 @@ function presentMoneyFx(deltas) {
       if (app.moneyFxSeq !== seq) return;
       overlay.hidden = true;
       coins.innerHTML = '';
+      flushPendingMoneyFx();
     }, 240);
   }, 1250 + tier * 120);
 }
