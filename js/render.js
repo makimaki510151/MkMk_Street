@@ -288,7 +288,7 @@ export function createRenderer(canvas) {
       ctx.setLineDash([Math.max(3, size * 0.12), Math.max(4, size * 0.16)]);
       ctx.beginPath();
       for (const gate of g.switchGates) {
-        if ((gate.when ? 1 : 0) === state) continue;
+        if (Number(gate.when) === state) continue;
         const a = g.map.find((n) => n.id === gate.a);
         const b = g.map.find((n) => n.id === gate.b);
         if (!a || !b) continue;

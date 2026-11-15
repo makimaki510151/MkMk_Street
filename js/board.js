@@ -91,25 +91,27 @@ function freezeBaseNexts(nodes) {
 
 /**
  * スイッチ状態に応じて nexts / 座標を組み立てる（エンジンからも呼ぶ）。
- * @param {{ map: object[], switchState?: number, switchGates?: object[], switchMoves?: object[] }} g
+ * @param {{ map?: object[], nodes?: object[], switchState?: number, switchGates?: object[], switchMoves?: object[] }} g
  */
 export function applySwitchState(g) {
-  if (!g?.map) return;
-  const state = g.switchState ? 1 : 0;
-  for (const n of g.map) {
+  const nodes = g?.map || g?.nodes;
+  if (!nodes) return;
+  const state = Number(g.switchState) ? 1 : 0;
+  for (const n of nodes) {
     const base = n.baseNexts || n.nexts || [];
-    n.nexts = [...base];
+    n.nexts.length = 0;
+    for (const id of base) n.nexts.push(id);
   }
   for (const gate of g.switchGates || []) {
-    if ((gate.when ? 1 : 0) !== state) continue;
-    const a = g.map.find((n) => n.id === gate.a);
-    const b = g.map.find((n) => n.id === gate.b);
+    if (Number(gate.when) !== state) continue;
+    const a = nodes.find((n) => n.id === gate.a);
+    const b = nodes.find((n) => n.id === gate.b);
     if (!a || !b) continue;
     if (!a.nexts.includes(b.id)) a.nexts.push(b.id);
     if (!b.nexts.includes(a.id)) b.nexts.push(a.id);
   }
   for (const mv of g.switchMoves || []) {
-    const n = g.map.find((x) => x.id === mv.id);
+    const n = nodes.find((x) => x.id === mv.id);
     const pos = mv.pos?.[state];
     if (!n || !pos) continue;
     n.col = pos.col;
@@ -238,120 +240,109 @@ export function buildCentralCross() {
 }
 
 /**
- * 本家「貝がら島」系を整理した環状マップ。
- * 外周は常時接続。スイッチで縦／横ショートカットと動くマスが切り替わる。
+ * 本家「貝がら島」系：外周の長方形リング＋直径1本だけ。
+ * スイッチで直径が縦↔横に切り替わり、動くマスもその直径上を移動する。
+ * 斜めなし・横枝なし・行き止まりなし。
+ *
+ *   ♠─店─店─店─SW─店─店─EV─店─♥
+ *   │                           │
+ *   SC                          店
+ *   │                           │
+ *   店     船──賽──船            証
+ *   │      ↕ 縦直径 ↕            │
+ *   銀 ←──── 横直径 ────→
+ *   │                           │
+ *   店                          店
+ *   │                           │
+ *   店                          ★
+ *   │                           │
+ *   ♦─店─店─店─SW─MG─店─CH─店─♣
  */
 export function buildShellHarbor() {
   const { nodes, N } = makeNodeFactory();
-  // きれいに整えた 11x9 の環
-  const bank = N('bank', { label: '銀行', isStart: true, col: 1, row: 4 });
 
-  const mkW = N('mark', { label: '♠', mark: 0, col: 0, row: 4 });
-  const scratchW = N('scratch', { label: 'スクラッチ', col: 0, row: 2 });
-  const chanceW = N('chance', { label: 'チャンス', col: 0, row: 6 });
-  const a1 = N('shop', { label: '貝細工', area: 1, basePrice: 220, col: 1, row: 2 });
-  const a2 = N('shop', { label: '潮干狩', area: 1, basePrice: 180, col: 1, row: 6 });
-  const a3 = N('shop', { label: '真珠店', area: 1, basePrice: 350, col: 2, row: 4 });
-  const a4 = N('shop', { label: '珊瑚屋', area: 1, basePrice: 240, col: 3, row: 4 });
+  const mkNW = N('mark', { label: '♠', mark: 0, col: 0, row: 0 });
+  const mkNE = N('mark', { label: '♥', mark: 1, col: 9, row: 0 });
+  const mkSE = N('mark', { label: '♣', mark: 3, col: 9, row: 7 });
+  const mkSW = N('mark', { label: '♦', mark: 2, col: 0, row: 7 });
 
-  const b1 = N('shop', { label: '砂浜カフェ', area: 2, basePrice: 260, col: 2, row: 1 });
-  const b2 = N('shop', { label: 'サーフ屋', area: 2, basePrice: 300, col: 3, row: 0 });
-  const b3 = N('shop', { label: 'かき氷', area: 2, basePrice: 140, col: 4, row: 0 });
-  const b4 = N('shop', { label: '土産屋', area: 2, basePrice: 200, col: 5, row: 0 });
-  const hubN = N('switch', { label: 'スイッチ', col: 5, row: 1 });
-  const eventN = N('event', { label: 'イベント', col: 6, row: 0 });
+  // 北辺
+  const aN1 = N('shop', { label: '真珠店', area: 1, basePrice: 350, col: 1, row: 0 });
+  const aN2 = N('shop', { label: '珊瑚屋', area: 1, basePrice: 240, col: 2, row: 0 });
+  const b1 = N('shop', { label: '砂浜カフェ', area: 2, basePrice: 260, col: 3, row: 0 });
+  const swN = N('switch', { label: 'スイッチ', col: 4, row: 0 });
+  const b2 = N('shop', { label: 'サーフ屋', area: 2, basePrice: 300, col: 5, row: 0 });
+  const b3 = N('shop', { label: 'かき氷', area: 2, basePrice: 140, col: 6, row: 0 });
+  const eventN = N('event', { label: 'イベント', col: 7, row: 0 });
+  const c1 = N('shop', { label: 'ホテル', area: 3, basePrice: 420, col: 8, row: 0 });
 
-  const c1 = N('shop', { label: 'ホテル', area: 3, basePrice: 420, col: 7, row: 0 });
-  const c2 = N('shop', { label: '水族館', area: 3, basePrice: 380, col: 8, row: 0 });
-  const c3 = N('shop', { label: '港食堂', area: 3, basePrice: 240, col: 9, row: 1 });
-  const c4 = N('shop', { label: 'ヨット屋', area: 3, basePrice: 360, col: 8, row: 2 });
-  const mkNE = N('mark', { label: '♥', mark: 1, col: 10, row: 0 });
+  // 東辺
+  const c2 = N('shop', { label: '水族館', area: 3, basePrice: 380, col: 9, row: 1 });
+  const c3 = N('shop', { label: '港食堂', area: 3, basePrice: 240, col: 9, row: 2 });
+  const broker = N('stockbroker', { label: '証券', col: 9, row: 3 });
+  const c4 = N('shop', { label: 'ヨット屋', area: 3, basePrice: 360, col: 9, row: 4 });
+  const d1 = N('shop', { label: '灯台茶屋', area: 4, basePrice: 280, col: 9, row: 5 });
+  const luckyE = N('lucky', { label: '★', col: 9, row: 6 });
 
-  const d1 = N('shop', { label: '灯台茶屋', area: 4, basePrice: 280, col: 10, row: 2 });
-  const broker = N('stockbroker', { label: '証券', col: 10, row: 4 });
-  const d2 = N('shop', { label: '魚市場', area: 4, basePrice: 320, col: 10, row: 3 });
-  const d3 = N('shop', { label: '干物屋', area: 4, basePrice: 160, col: 10, row: 5 });
-  const d4 = N('shop', { label: '民宿', area: 4, basePrice: 210, col: 9, row: 4 });
-  const luckyE = N('lucky', { label: '★', col: 10, row: 6 });
-  const mkE = N('mark', { label: '♣', mark: 3, col: 10, row: 8 });
+  // 南辺
+  const e1 = N('shop', { label: '温泉宿', area: 4, basePrice: 400, col: 8, row: 7 });
+  const chanceS = N('chance', { label: 'チャンス', col: 7, row: 7 });
+  const e2 = N('shop', { label: '銭湯', area: 5, basePrice: 170, col: 6, row: 7 });
+  const slot = N('minigame', { label: 'スロット', game: 'slot', col: 5, row: 7 });
+  const swS = N('switch', { label: 'スイッチ', col: 4, row: 7 });
+  const e4 = N('shop', { label: 'うどん', area: 5, basePrice: 150, col: 3, row: 7 });
+  const e3 = N('shop', { label: 'たこ焼き', area: 5, basePrice: 110, col: 2, row: 7 });
+  const f1 = N('shop', { label: '鮮魚', area: 6, basePrice: 290, col: 1, row: 7 });
 
-  const e1 = N('shop', { label: '温泉宿', area: 5, basePrice: 400, col: 8, row: 8 });
-  const e2 = N('shop', { label: '銭湯', area: 5, basePrice: 170, col: 7, row: 8 });
-  const hubS = N('switch', { label: 'スイッチ', col: 5, row: 7 });
-  const slotS = N('minigame', { label: 'スロット', game: 'slot', col: 5, row: 8 });
-  const e3 = N('shop', { label: 'たこ焼き', area: 5, basePrice: 110, col: 4, row: 8 });
-  const e4 = N('shop', { label: 'うどん', area: 5, basePrice: 150, col: 3, row: 8 });
+  // 西辺
+  const f2 = N('shop', { label: '海女小屋', area: 6, basePrice: 210, col: 0, row: 6 });
+  const f3 = N('shop', { label: '網元', area: 6, basePrice: 250, col: 0, row: 5 });
+  const aW = N('shop', { label: '潮干狩', area: 1, basePrice: 180, col: 0, row: 4 });
+  const bank = N('bank', { label: '銀行', isStart: true, col: 0, row: 3 });
+  const a1 = N('shop', { label: '貝細工', area: 1, basePrice: 220, col: 0, row: 2 });
+  const scratch = N('scratch', { label: 'スクラッチ', col: 0, row: 1 });
 
-  const f1 = N('shop', { label: '鮮魚', area: 6, basePrice: 290, col: 2, row: 8 });
-  const f2 = N('shop', { label: '海女小屋', area: 6, basePrice: 210, col: 1, row: 7 });
-  const f3 = N('shop', { label: '網元', area: 6, basePrice: 250, col: 2, row: 6 });
-  const f4 = N('shop', { label: '海産物', area: 6, basePrice: 190, col: 3, row: 6 });
-  const mkSW = N('mark', { label: '♦', mark: 2, col: 0, row: 8 });
-  const diceE = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 8, row: 4 });
-  const rollMid = N('rollon', { label: 'もう一回', col: 5, row: 4 });
-  const chanceMid = N('chance', { label: 'チャンス', col: 6, row: 4 });
+  // 直径（リング外・ゲートのみで常に2接続）
+  const center = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 4, row: 3 });
+  const boatN = N('shop', { label: '屋台船', area: 2, basePrice: 170, col: 4, row: 2 });
+  const boatS = N('shop', { label: '渡し舟', area: 4, basePrice: 200, col: 4, row: 4 });
 
-  // 動くマス（スイッチで位置が変わる）
-  const float1 = N('shop', { label: '屋台船', area: 2, basePrice: 170, col: 4, row: 3 });
-  const float2 = N('shop', { label: '渡し舟', area: 3, basePrice: 200, col: 6, row: 3 });
-
-  // 外周＋銀行まわり（常時）
+  // 外周リング（直交・一周のみ）
   link(
-    [bank, a1], [a1, scratchW], [scratchW, mkW], [mkW, chanceW], [chanceW, a2], [a2, bank],
-    [bank, a3], [a3, a4],
+    [mkNW, aN1], [aN1, aN2], [aN2, b1], [b1, swN], [swN, b2], [b2, b3], [b3, eventN], [eventN, c1], [c1, mkNE],
+    [mkNE, c2], [c2, c3], [c3, broker], [broker, c4], [c4, d1], [d1, luckyE], [luckyE, mkSE],
+    [mkSE, e1], [e1, chanceS], [chanceS, e2], [e2, slot], [slot, swS], [swS, e4], [e4, e3], [e3, f1], [f1, mkSW],
+    [mkSW, f2], [f2, f3], [f3, aW], [aW, bank], [bank, a1], [a1, scratch], [scratch, mkNW],
   );
-  link(
-    [a1, b1], [b1, b2], [b2, b3], [b3, b4], [b4, eventN], [eventN, c1],
-    [c1, c2], [c2, mkNE], [mkNE, c3], [c3, d1], [d1, d2], [d2, broker],
-    [broker, d3], [d3, luckyE], [luckyE, mkE], [mkE, e1], [e1, e2], [e2, slotS],
-    [slotS, e3], [e3, e4], [e4, f1], [f1, f2], [f2, mkSW], [mkSW, a2],
-  );
-  link([eventN, hubN], [hubN, b4]);
-  link([slotS, hubS], [hubS, e3]);
-  link([c3, c4], [c4, d1]);
-  link([f2, f3], [f3, f4]);
-  link([broker, d4], [d4, diceE]);
 
-  // スイッチゲート：状態0=縦通路、状態1=横通路
-  // 動くマスはゲート接続先としても使う
   const switchGates = [
-    { a: hubN.id, b: float1.id, when: 0 },
-    { a: float1.id, b: rollMid.id, when: 0 },
-    { a: rollMid.id, b: float2.id, when: 0 },
-    { a: float2.id, b: hubS.id, when: 0 },
-    { a: a4.id, b: float1.id, when: 1 },
-    { a: float1.id, b: rollMid.id, when: 1 },
-    { a: rollMid.id, b: chanceMid.id, when: 1 },
-    { a: chanceMid.id, b: diceE.id, when: 1 },
-    { a: diceE.id, b: d4.id, when: 1 },
-    { a: float2.id, b: c4.id, when: 1 },
-    { a: float2.id, b: f4.id, when: 0 },
+    { a: swN.id, b: boatN.id, when: 0 },
+    { a: boatN.id, b: center.id, when: 0 },
+    { a: center.id, b: boatS.id, when: 0 },
+    { a: boatS.id, b: swS.id, when: 0 },
+    { a: bank.id, b: boatN.id, when: 1 },
+    { a: boatN.id, b: center.id, when: 1 },
+    { a: center.id, b: boatS.id, when: 1 },
+    { a: boatS.id, b: broker.id, when: 1 },
   ];
   const switchMoves = [
     {
-      id: float1.id,
+      id: boatN.id,
       pos: [
-        { col: 4, row: 3 }, // 縦ルート寄り
-        { col: 4, row: 4 }, // 横ルート上
+        { col: 4, row: 2 },
+        { col: 2, row: 3 },
       ],
     },
     {
-      id: float2.id,
+      id: boatS.id,
       pos: [
-        { col: 6, row: 5 }, // 縦ルート寄り
-        { col: 7, row: 4 }, // 横ルート上
-      ],
-    },
-    {
-      id: rollMid.id,
-      pos: [
-        { col: 5, row: 4 },
-        { col: 5, row: 4 },
+        { col: 4, row: 4 },
+        { col: 6, row: 3 },
       ],
     },
   ];
 
-  return packBoard(nodes, bank, 11, 9, {
+  return packBoard(nodes, bank, 10, 8, {
     mapId: 'shell_harbor',
     mapName: '貝がら港',
     goal: 12000,
@@ -372,91 +363,92 @@ export function buildShellHarbor() {
 
 /**
  * 本家「レインフォレスト」系：本島＋離れ小島。
- * 小島へは歩いて渡れず、ワープマスでのみ出入りする。
+ * 小島へはワープのみ。本島・島ともループ構成で行き止まりなし。
  */
 export function buildCliffIsle() {
   const { nodes, N } = makeNodeFactory();
-  // 本島 0..8 / 空白 9-10 / 島 12..15
+  // 本島は角の丸い長方形ループ＋中央十字。島は小さな四角ループ。
   const bank = N('bank', { label: '銀行', isStart: true, col: 4, row: 5 });
 
+  // 中央十字（銀行から四方）
   const n1 = N('shop', { label: 'あまぐも茶', area: 1, basePrice: 200, col: 4, row: 4 });
   const n2 = N('lucky', { label: '★', col: 4, row: 3 });
   const n3 = N('shop', { label: '雨宿り', area: 1, basePrice: 160, col: 4, row: 2 });
   const hubN = N('event', { label: 'イベント', col: 4, row: 1 });
-  const mkN = N('mark', { label: '♠', mark: 0, col: 4, row: 0 });
 
   const s1 = N('shop', { label: 'たいよう食堂', area: 2, basePrice: 240, col: 4, row: 6 });
   const s2 = N('chance', { label: 'チャンス', col: 4, row: 7 });
   const s3 = N('shop', { label: '果実店', area: 2, basePrice: 180, col: 4, row: 8 });
   const hubS = N('minigame', { label: 'スロット', game: 'slot', col: 4, row: 9 });
-  const mkS = N('mark', { label: '♦', mark: 2, col: 4, row: 10 });
 
   const w1 = N('shop', { label: 'どぜう屋', area: 3, basePrice: 150, col: 3, row: 5 });
   const w2 = N('shop', { label: '川魚', area: 3, basePrice: 210, col: 2, row: 5 });
   const w3 = N('shop', { label: '釣り具', area: 3, basePrice: 170, col: 1, row: 5 });
-  const w4 = N('shop', { label: '川辺民宿', area: 3, basePrice: 250, col: 1, row: 4 });
   const hubW = N('scratch', { label: 'スクラッチ', col: 0, row: 5 });
-  const mkW = N('mark', { label: '♣', mark: 3, col: 0, row: 3 });
 
   const e1 = N('shop', { label: '渓流宿', area: 4, basePrice: 280, col: 5, row: 5 });
   const e2 = N('rollon', { label: 'もう一回', col: 6, row: 5 });
   const e3 = N('shop', { label: '吊り橋茶屋', area: 4, basePrice: 190, col: 7, row: 5 });
   const mainWarp = N('warp', { label: '島ワープ', col: 8, row: 5 });
 
-  link([bank, n1], [n1, n2], [n2, n3], [n3, hubN], [hubN, mkN]);
-  link([bank, s1], [s1, s2], [s2, s3], [s3, hubS], [hubS, mkS]);
-  link([bank, w1], [w1, w2], [w2, w3], [w3, hubW], [w3, w4], [w4, mkW]);
+  link([bank, n1], [n1, n2], [n2, n3], [n3, hubN]);
+  link([bank, s1], [s1, s2], [s2, s3], [s3, hubS]);
+  link([bank, w1], [w1, w2], [w2, w3], [w3, hubW]);
   link([bank, e1], [e1, e2], [e2, e3], [e3, mainWarp]);
 
+  // 外周ループ（マークは角で2本接続）
+  const mkNW = N('mark', { label: '♠', mark: 0, col: 0, row: 1 });
   const nw1 = N('shop', { label: '苔むした店', area: 1, basePrice: 320, col: 2, row: 1 });
   const nw2 = N('shop', { label: 'きのこ屋', area: 1, basePrice: 140, col: 1, row: 1 });
-  const nw3 = N('shop', { label: '滝見台', area: 5, basePrice: 260, col: 0, row: 1 });
-  const nw4 = N('shop', { label: 'ガイド小屋', area: 5, basePrice: 200, col: 0, row: 2 });
-  link([hubN, nw1], [nw1, nw2], [nw2, nw3], [nw3, nw4], [nw4, mkW], [mkW, hubW]);
+  const nw3 = N('shop', { label: '滝見台', area: 5, basePrice: 260, col: 0, row: 2 });
+  const nw4 = N('shop', { label: 'ガイド小屋', area: 5, basePrice: 200, col: 0, row: 3 });
+  link([hubN, nw1], [nw1, nw2], [nw2, mkNW], [mkNW, nw3], [nw3, nw4], [nw4, hubW]);
 
+  const mkSW = N('mark', { label: '♦', mark: 2, col: 0, row: 9 });
   const sw1 = N('shop', { label: 'たいよう屋台', area: 2, basePrice: 120, col: 2, row: 9 });
   const sw2 = N('shop', { label: 'フルーツ', area: 2, basePrice: 170, col: 1, row: 9 });
-  const sw3 = N('shop', { label: 'カヌー屋', area: 5, basePrice: 300, col: 0, row: 9 });
+  const sw3 = N('shop', { label: 'カヌー屋', area: 5, basePrice: 300, col: 0, row: 8 });
   const sw4 = N('shop', { label: '川辺食堂', area: 5, basePrice: 220, col: 0, row: 7 });
   const sw5 = N('lucky', { label: '★', col: 0, row: 6 });
-  link([hubS, sw1], [sw1, sw2], [sw2, sw3], [sw3, sw4], [sw4, sw5], [sw5, hubW]);
+  link([hubS, sw1], [sw1, sw2], [sw2, mkSW], [mkSW, sw3], [sw3, sw4], [sw4, sw5], [sw5, hubW]);
 
+  const mkNE = N('mark', { label: '♥', mark: 1, col: 8, row: 1 });
   const ne1 = N('shop', { label: '展望台', area: 6, basePrice: 340, col: 6, row: 1 });
   const ne2 = N('shop', { label: '写真屋', area: 6, basePrice: 180, col: 7, row: 1 });
-  const ne3 = N('shop', { label: 'ロープウェイ', area: 6, basePrice: 400, col: 8, row: 1 });
+  const ne3 = N('shop', { label: 'ロープウェイ', area: 6, basePrice: 400, col: 8, row: 2 });
   const ne4 = N('chance', { label: 'チャンス', col: 8, row: 3 });
-  const mkNE = N('mark', { label: '♥', mark: 1, col: 8, row: 0 });
-  link([hubN, ne1], [ne1, ne2], [ne2, ne3], [ne3, mkNE]);
-  link([ne3, ne4], [ne4, mainWarp]);
+  link([hubN, ne1], [ne1, ne2], [ne2, mkNE], [mkNE, ne3], [ne3, ne4], [ne4, mainWarp]);
 
+  const mkSE = N('mark', { label: '♣', mark: 3, col: 8, row: 9 });
   const se1 = N('shop', { label: '下山口', area: 4, basePrice: 160, col: 6, row: 9 });
   const se2 = N('shop', { label: 'みやげ', area: 6, basePrice: 130, col: 7, row: 9 });
-  const se3 = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 8, row: 9 });
+  const se3 = N('minigame', { label: 'サイコロ', game: 'guess_dice', col: 8, row: 8 });
   const se4 = N('shop', { label: 'バス停', area: 4, basePrice: 210, col: 8, row: 7 });
-  link([hubS, se1], [se1, se2], [se2, se3], [se3, se4], [se4, mainWarp]);
+  const se5 = N('shop', { label: '川辺民宿', area: 3, basePrice: 250, col: 8, row: 6 });
+  link([hubS, se1], [se1, se2], [se2, mkSE], [mkSE, se3], [se3, se4], [se4, se5], [se5, mainWarp]);
 
-  // ── 離れ小島（徒歩不可・ワープのみ）──
+  // 離れ小島：四角ループ（全マス deg>=2）＋ワープ
   const isleWarp = N('warp', { label: '本島ワープ', col: 12, row: 5 });
   const isleGate = N('stockbroker', { label: '証券', col: 13, row: 5 });
-  const isle1 = N('shop', { label: 'がけ茶屋', area: 11, basePrice: 260, col: 13, row: 3 });
+  const isle1 = N('shop', { label: 'がけ茶屋', area: 11, basePrice: 260, col: 12, row: 3 });
   const isle2 = N('shop', { label: '滝つぼ', area: 11, basePrice: 300, col: 14, row: 3 });
   const isle3 = N('shop', { label: '吊り橋宿', area: 11, basePrice: 380, col: 14, row: 7 });
-  const isle4 = N('shop', { label: 'かもめ屋', area: 11, basePrice: 220, col: 13, row: 7 });
-  const isleTip = N('event', { label: '島イベント', col: 15, row: 5 });
-  const isleChance = N('chance', { label: 'チャンス', col: 14, row: 5 });
-  const isleLucky = N('lucky', { label: '★', col: 12, row: 3 });
+  const isle4 = N('shop', { label: 'かもめ屋', area: 11, basePrice: 220, col: 12, row: 7 });
+  const isleN = N('event', { label: '島イベント', col: 13, row: 3 });
+  const isleS = N('chance', { label: 'チャンス', col: 13, row: 7 });
+  const isleE = N('lucky', { label: '★', col: 14, row: 5 });
 
-  // 本島ワープ → 島の証券前／島ワープ → 本島ワープマス（着地後は再ワープしない）
   mainWarp.warpTo = isleGate.id;
   isleWarp.warpTo = mainWarp.id;
 
-  link([isleWarp, isleGate], [isleGate, isleChance], [isleChance, isleTip]);
+  // 島の外周四角＋中央十字（証券・ワープ）
   link(
-    [isleGate, isle1], [isle1, isleLucky], [isle1, isle2], [isle2, isleChance],
-    [isleChance, isle3], [isle3, isle4], [isle4, isleGate],
+    [isle1, isleN], [isleN, isle2], [isle2, isleE], [isleE, isle3],
+    [isle3, isleS], [isleS, isle4], [isle4, isle1],
   );
+  link([isleWarp, isleGate], [isleGate, isleN], [isleGate, isleS], [isleGate, isleE], [isleWarp, isle1], [isleWarp, isle4]);
 
-  return packBoard(nodes, bank, 16, 11, {
+  return packBoard(nodes, bank, 15, 11, {
     mapId: 'cliff_isle',
     mapName: 'がけした島',
     goal: 14000,

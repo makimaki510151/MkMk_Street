@@ -159,6 +159,31 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].pos, mainWarp.warpTo);
   });
 
+  it('all maps keep every square at least 2-connected (no dead ends)', () => {
+    for (const def of MAP_CATALOG) {
+      for (const state of def.id === 'shell_harbor' ? [0, 1] : [0]) {
+        const g = createGame({
+          players: [{ name: 'A' }, { name: 'B' }],
+          seed: 9,
+          mapId: def.id,
+        });
+        if (state === 1) toggleBoardSwitch(g);
+        for (const n of g.map) {
+          assert.ok(
+            (n.nexts?.length || 0) >= 2,
+            `${def.id} state ${g.switchState}: ${n.type}:${n.label} deg=${n.nexts?.length || 0}`,
+          );
+          for (const nid of n.nexts) {
+            const other = getNode(g, nid);
+            assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+            const diag = Math.abs(other.col - n.col) > 0 && Math.abs(other.row - n.row) > 0;
+            assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
+          }
+        }
+      }
+    }
+  });
+
   it('shell harbor switch toggles routes and movable squares', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
