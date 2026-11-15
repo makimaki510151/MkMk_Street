@@ -85,6 +85,8 @@ const app = {
   /** 表示中イベントの確認担当プレイヤー */
   eventFlashReaderId: null,
   eventFlashNpcTimer: null,
+  /** ゲストがホスト応答待ちのとき */
+  eventFlashDismissWait: null,
   /** 移動アニメ中はイベントUIを出さず、着地後にまとめて表示 */
   deferEventFlash: false,
   /** @type {Record<number, number>|null} */
@@ -537,12 +539,20 @@ function handleNetEvent({ from, data }) {
       return;
     }
     if (data.type === 'event_flash_dismiss') {
-      if (!app.eventFlashOpen) return;
       const seat = app.game?.players?.findIndex((p) => p.peerId === from);
+      if (seat < 0) return;
       const readerId = app.eventFlashReaderId;
-      // 確認担当（行動した手番）からの閉じ要求をホストが代行して全員へ配信
-      if (seat >= 0 && (seat === readerId || seat === app.actionActorId)) {
+      const claimed = Number(data.seat);
+      // 確認担当からの閉じ要求。ホスト側が既に閉じていてもクライアント解放のため中継する
+      const allowed = seat === readerId
+        || seat === app.actionActorId
+        || claimed === readerId
+        || claimed === seat;
+      if (!allowed) return;
+      if (app.eventFlashOpen) {
         dismissEventFlash({ force: true });
+      } else {
+        broadcastFx({ kind: 'eventFlashDismiss' });
       }
       return;
     }
@@ -664,6 +674,9 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'banner') {
     enqueueBanner(data.payload || data);
+  }
+  if (data.kind === 'eventFlashFlush') {
+    flushEventFlashImmediate({ remote: true });
   }
   if (data.kind === 'eventFlashDismiss') {
     dismissEventFlash({ remote: true });
@@ -1024,6 +1037,8 @@ function enterGame() {
   clearAllDisconnectTimers();
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
+  clearTimeout(app.eventFlashDismissWait);
+  app.eventFlashDismissWait = null;
   const flash = $('#event-flash');
   if (flash) {
     flash.hidden = true;
@@ -1316,18 +1331,32 @@ function renderForkRails(pend) {
 }
 
 /** プレイヤーの能動選択時は告知UIを閉じて進行を優先する */
-function flushEventFlashImmediate() {
+function flushEventFlashImmediate({ remote = false } = {}) {
+  const hadFlash = app.eventFlashOpen || (app.eventFlashQueue?.length > 0);
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
+  clearTimeout(app.eventFlashDismissWait);
+  app.eventFlashDismissWait = null;
   app.eventFlashQueue = [];
   app.eventFlashOpen = false;
   app.eventFlashHoldingBusy = false;
+  app.eventFlashReaderId = null;
   const overlay = $('#event-flash');
   if (overlay) {
     overlay.hidden = true;
     overlay.classList.remove('show');
     overlay.dataset.spectator = '0';
     overlay.dataset.npc = '0';
+  }
+  const btn = $('#ef-continue');
+  if (btn) {
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.textContent = 'つづける';
+  }
+  // ホストの choice などで閉じたとき、ゲスト側に「つづける」が残らないよう同期
+  if (!remote && hadFlash && app.mode === 'host') {
+    broadcastFx({ kind: 'eventFlashFlush' });
   }
 }
 
@@ -2630,9 +2659,8 @@ function bannerFromLog(g, l) {
     return null;
   }
 
-  const actorId = app.actionActorId != null
-    ? app.actionActorId
-    : (player?.id ?? null);
+  // ログ本文の当事者を優先（ゲストで actionActorId が古いと確認担当がズレて詰まる）
+  const actorId = player?.id ?? app.actionActorId ?? null;
 
   return {
     kicker,
@@ -3225,16 +3253,29 @@ function presentEventFlash(payload) {
 function dismissEventFlash({ remote = false, force = false } = {}) {
   if (!app.eventFlashOpen) return;
   if (!remote && !force && !canDismissEventFlash()) return;
-  const overlay = $('#event-flash');
-  if (!overlay || overlay.hidden) return;
 
   if (!remote && !force && app.mode === 'guest' && app.net) {
     audio.sfx.click();
-    // busy 解除と他端末同期はホスト経由
+    // busy 解除と他端末同期はホスト経由。未応答でも詰まらないよう待ち表示＋タイムアウト解放
+    const btn = $('#ef-continue');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '同期中…';
+    }
     app.net.sendToHost({ type: 'event_flash_dismiss', seat: app.localSeat });
+    clearTimeout(app.eventFlashDismissWait);
+    app.eventFlashDismissWait = setTimeout(() => {
+      app.eventFlashDismissWait = null;
+      if (!app.eventFlashOpen) return;
+      // ホスト側が既に閉じて応答が来ないケース（2Pで起きやすい）
+      dismissEventFlash({ remote: true });
+    }, 1500);
     return;
   }
 
+  clearTimeout(app.eventFlashDismissWait);
+  app.eventFlashDismissWait = null;
+  const overlay = $('#event-flash');
   const seq = app.eventFlashSeq;
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
@@ -3244,15 +3285,26 @@ function dismissEventFlash({ remote = false, force = false } = {}) {
     // ローカルの NPC 進行でも音は控えめに
     else if (force && app.mode === 'local') audio.sfx.click();
   }
-  overlay.classList.remove('show');
-  app.eventFlashTimer = setTimeout(() => {
-    if (app.eventFlashSeq !== seq) return;
-    overlay.hidden = true;
-    overlay.dataset.spectator = '0';
-    overlay.dataset.npc = '0';
+  if (overlay) {
+    overlay.classList.remove('show');
+    // hidden 済みでも open フラグが残ると進行が止まるので必ず解放する
+    app.eventFlashTimer = setTimeout(() => {
+      if (app.eventFlashSeq !== seq) return;
+      overlay.hidden = true;
+      overlay.dataset.spectator = '0';
+      overlay.dataset.npc = '0';
+      app.eventFlashOpen = false;
+      const btn = $('#ef-continue');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'つづける';
+      }
+      pumpEventFlash();
+    }, 180);
+  } else {
     app.eventFlashOpen = false;
     pumpEventFlash();
-  }, 180);
+  }
 }
 
 function bindEventFlashControls() {
