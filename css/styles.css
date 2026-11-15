@@ -791,8 +791,10 @@ button:disabled { opacity: .42; cursor: default; }
   min-width: 8.5rem;
   pointer-events: auto;
 }
-#event-flash[data-spectator="1"] .ef-continue { display: none; }
-#event-flash[data-spectator="1"] .ef-hint {
+#event-flash[data-spectator="1"] .ef-continue,
+#event-flash[data-npc="1"] .ef-continue { display: none; }
+#event-flash[data-spectator="1"] .ef-hint,
+#event-flash[data-npc="1"] .ef-hint {
   color: color-mix(in srgb, var(--muted) 85%, #ffe08a);
 }
 .ef-kicker {

@@ -78,6 +78,11 @@ const app = {
   eventFlashOpen: false,
   /** このフラッシュ表示のために busy を立てたとき true */
   eventFlashHoldingBusy: false,
+  /** いまの行動を起こした手番プレイヤー（endTurn後もイベント確認の主体） */
+  actionActorId: null,
+  /** 表示中イベントの確認担当プレイヤー */
+  eventFlashReaderId: null,
+  eventFlashNpcTimer: null,
   /** @type {Record<number, number>|null} */
   prevCash: null,
   moneyFxTimer: null,
@@ -405,9 +410,9 @@ function handleNetEvent({ from, data }) {
     if (data.type === 'event_flash_dismiss') {
       if (!app.eventFlashOpen) return;
       const seat = app.game?.players?.findIndex((p) => p.peerId === from);
-      const turnSeat = app.game?.currentPlayerIdx;
-      // 手番プレイヤーからの閉じ要求をホストが代行して全員へ配信
-      if (seat >= 0 && seat === turnSeat) {
+      const readerId = app.eventFlashReaderId;
+      // 確認担当（行動した手番）からの閉じ要求をホストが代行して全員へ配信
+      if (seat >= 0 && (seat === readerId || seat === app.actionActorId)) {
         dismissEventFlash({ force: true });
       }
       return;
@@ -501,21 +506,21 @@ function playRemoteFx(data) {
   if (data.kind === 'scratchMatch' && data.matches?.length) {
     app.busy = true;
     playScratchMatchReveal(data.matches, data.messages || [], { banner: false }).finally(() => {
-      app.busy = false;
+      clearBusyUnlessEventUi();
       refreshGameUI();
     });
   }
   if (data.kind === 'minigameReveal' && data.reveal) {
     app.busy = true;
     playMinigameReveal(data.reveal).finally(() => {
-      app.busy = false;
+      clearBusyUnlessEventUi();
       refreshGameUI();
     });
   }
   if (data.kind === 'warp' && data.warp) {
     app.busy = true;
     presentWarpFx([data.warp], { remote: true }).finally(() => {
-      app.busy = false;
+      clearBusyUnlessEventUi();
       refreshGameUI();
     });
   }
@@ -875,11 +880,16 @@ function enterGame() {
   app.eventFlashQueue = [];
   app.eventFlashOpen = false;
   app.eventFlashHoldingBusy = false;
+  app.actionActorId = null;
+  app.eventFlashReaderId = null;
   clearTimeout(app.eventFlashTimer);
+  clearTimeout(app.eventFlashNpcTimer);
   const flash = $('#event-flash');
   if (flash) {
     flash.hidden = true;
     flash.classList.remove('show');
+    flash.dataset.spectator = '0';
+    flash.dataset.npc = '0';
   }
   app.feedPinnedBottom = true;
   const feed = $('#event-feed');
@@ -936,16 +946,17 @@ function updateInspectPanel() {
 /** 休み中は自動スキップ（人間がNPCのダイスを振らされるのを防ぐ） */
 function maybeAutoSkipRest() {
   clearTimeout(app.restSkipTimer);
-  if (!app.game || app.busy || app.mode === 'guest') return;
+  if (!app.game || app.busy || isEventUiBlocking() || app.mode === 'guest') return;
   if (app.game.phase !== 'await_roll') return;
   const cur = currentPlayer(app.game);
   if (!cur?.resting || cur.bankrupt) return;
 
   // 人間プレイヤーが休みのときも自動で進める
   app.restSkipTimer = setTimeout(async () => {
-    if (!app.game || app.busy || app.game.phase !== 'await_roll') return;
+    if (!app.game || app.busy || isEventUiBlocking() || app.game.phase !== 'await_roll') return;
     const p = currentPlayer(app.game);
     if (!p?.resting) return;
+    noteActionActor(p.id);
     enqueueBanner({
       kicker: `${p.name} は休憩中`,
       title: 'ターンスキップ',
@@ -958,7 +969,7 @@ function maybeAutoSkipRest() {
     if (result.state) app.game = restoreState(result.state);
     syncState();
     refreshGameUI();
-    scheduleCpu();
+    if (clearBusyUnlessEventUi()) scheduleCpu();
   }, 700);
 }
 
@@ -1130,7 +1141,9 @@ function renderForkRails(pend) {
 }
 
 function sendAction(action) {
+  if (isEventUiBlocking()) return;
   if (app.mode === 'guest') {
+    noteActionActor(app.localSeat);
     app.net.sendToHost({ type: 'action', action, seat: app.localSeat });
     return;
   }
@@ -1138,7 +1151,7 @@ function sendAction(action) {
 }
 
 async function applyLocalAction(action) {
-  if (!app.game || app.busy) return;
+  if (!app.game || app.busy || isEventUiBlocking()) return;
 
   if (action.type === 'roll') {
     const cur = currentPlayer(app.game);
@@ -1148,13 +1161,15 @@ async function applyLocalAction(action) {
       return toast('あなたのターンではありません');
     }
     if (app.game.phase !== 'await_roll') return;
+    if (isEventUiBlocking()) return;
+    noteActionActor(app.game.currentPlayerIdx);
     const result = rollDice(app.game);
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
     if (result.skipped) {
       syncState();
       refreshGameUI();
-      scheduleCpu();
+      if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
     // 出目は演出後に同期（ネタバレ防止）
@@ -1168,6 +1183,8 @@ async function applyLocalAction(action) {
     const pend = app.game.pending;
     if (!pend) return;
     if (app.mode === 'guest') return;
+    if (isEventUiBlocking()) return;
+    noteActionActor(pend.playerId ?? app.game.currentPlayerIdx);
 
     if (pend.type === 'fork') {
       await resolveForkChoice(Number(action.choice.nextId));
@@ -1218,10 +1235,9 @@ async function applyLocalAction(action) {
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
       app.busy = true;
       await continueAdvancing();
-      app.busy = false;
       refreshGameUI();
     }
-    scheduleCpu();
+    if (clearBusyUnlessEventUi()) scheduleCpu();
     return;
   }
 
@@ -1244,6 +1260,7 @@ async function applyLocalAction(action) {
 
 async function resolveForkChoice(nextId) {
   const pid = app.game.currentPlayerIdx;
+  noteActionActor(pid);
   const from = app.game.players[pid].pos;
   const result = chooseFork(app.game, nextId);
   if (!result.ok) return toast(result.error || '失敗');
@@ -1256,19 +1273,19 @@ async function resolveForkChoice(nextId) {
   refreshGameUI();
   await wait(420);
   await continueAdvancing();
-  app.busy = false;
   refreshGameUI();
-  scheduleCpu();
+  if (clearBusyUnlessEventUi()) scheduleCpu();
 }
 
 async function runDiceAndMove(face) {
+  noteActionActor(app.game?.currentPlayerIdx);
   app.busy = true;
   app.hideDiceResult = true;
   $('#btn-roll').disabled = true;
   broadcastFx({ kind: 'dice', face });
   await playDiceOverlay(face);
   app.hideDiceResult = false;
-  const roller = currentPlayer(app.game);
+  const roller = app.game?.players?.[app.actionActorId] || currentPlayer(app.game);
   if (roller && app.game) {
     app.game.logs.unshift({ text: `${roller.name} のサイコロ → ${face}`, kind: 'dice', t: Date.now() });
     if (app.game.logs.length > 80) app.game.logs.length = 80;
@@ -1282,12 +1299,12 @@ async function runDiceAndMove(face) {
       detail: `${face} マス進みます`,
       kind: 'dice',
       color: roller.color,
+      actorId: roller.id,
     });
   }
   await continueAdvancing();
-  app.busy = false;
   refreshGameUI();
-  scheduleCpu();
+  if (clearBusyUnlessEventUi()) scheduleCpu();
 }
 
 async function continueAdvancing() {
@@ -1384,7 +1401,7 @@ async function presentScratchMatches(result) {
   });
   await playScratchMatchReveal(matches, result.messages || [], { banner: true });
   hideModal();
-  app.busy = false;
+  clearBusyUnlessEventUi();
 }
 
 function nodeLabel(g, id) {
@@ -1428,7 +1445,11 @@ async function presentWarpFx(warps, { remote = false } = {}) {
     await wait(1280);
     hideWarpOverlay();
   }
-  if (!wasBusy) app.busy = false;
+  if (!wasBusy) clearBusyUnlessEventUi();
+  else if (isEventUiBlocking()) {
+    app.eventFlashHoldingBusy = true;
+    app.busy = true;
+  }
   pumpEventFlash();
 }
 
@@ -1570,8 +1591,8 @@ async function presentMinigameResult(result) {
       color,
     },
   });
-  // busy はイベント確認（クリック）側で解除
-  if (!app.eventFlashOpen && !app.eventFlashQueue.length) app.busy = false;
+  // busy はイベント確認完了まで維持
+  clearBusyUnlessEventUi();
 }
 
 async function playMinigameReveal(reveal) {
@@ -1734,8 +1755,8 @@ async function animateCoinReveal(body, reveal) {
 }
 
 async function handleHostAction(from, data) {
-  if (app.busy) {
-    app.net.sendTo(from, { type: 'reject', reason: '演出中です' });
+  if (app.busy || isEventUiBlocking()) {
+    app.net.sendTo(from, { type: 'reject', reason: '出来事の確認中です' });
     return;
   }
   const action = data.action;
@@ -1747,12 +1768,13 @@ async function handleHostAction(from, data) {
       app.net.sendTo(from, { type: 'reject', reason: 'あなたのターンではありません' });
       return;
     }
+    noteActionActor(seat);
     const result = rollDice(app.game);
     if (result.state) app.game = restoreState(result.state);
     if (result.skipped) {
       syncState();
       refreshGameUI();
-      scheduleCpu();
+      if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
     app.hideDiceResult = true;
@@ -1767,6 +1789,7 @@ async function handleHostAction(from, data) {
       app.net.sendTo(from, { type: 'reject', reason: '選択できません' });
       return;
     }
+    noteActionActor(seat);
     if (pend.type === 'fork') {
       await resolveForkChoice(Number(action.choice.nextId));
       return;
@@ -1791,6 +1814,14 @@ async function handleHostAction(from, data) {
     } else if (result.minigame && result.messages) {
       if (result.win) audio.sfx.levelUp();
       else audio.sfx.buy();
+      enqueueBanner({
+        kicker: 'ミニゲーム',
+        title: result.win ? '当たり！' : '結果発表',
+        detail: result.messages.join(' / '),
+        kind: 'event',
+        color: app.game.players[seat]?.color || '#ffe08a',
+        actorId: seat,
+      });
       broadcastFx({
         kind: 'banner',
         payload: {
@@ -1799,6 +1830,7 @@ async function handleHostAction(from, data) {
           detail: result.messages.join(' / '),
           kind: 'event',
           color: app.game.players[seat]?.color || '#ffe08a',
+          actorId: seat,
         },
       });
     }
@@ -1807,10 +1839,9 @@ async function handleHostAction(from, data) {
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
       app.busy = true;
       await continueAdvancing();
-      app.busy = false;
       refreshGameUI();
     }
-    scheduleCpu();
+    if (clearBusyUnlessEventUi()) scheduleCpu();
     return;
   }
 
@@ -1841,15 +1872,39 @@ function broadcastFx(fx) {
   if (app.mode === 'host' && app.net) app.net.broadcast({ type: 'fx', ...fx });
 }
 
+/** イベントUI（表示中・待ち行列）がある間は絶対に進行しない */
+function isEventUiBlocking() {
+  return !!(app.eventFlashOpen || app.eventFlashHoldingBusy || (app.eventFlashQueue?.length > 0));
+}
+
+/** イベント確認が残っているなら busy を維持。空なら解除して true */
+function clearBusyUnlessEventUi() {
+  if (isEventUiBlocking()) {
+    app.eventFlashHoldingBusy = true;
+    app.busy = true;
+    return false;
+  }
+  app.busy = false;
+  return true;
+}
+
+function noteActionActor(pid = app.game?.currentPlayerIdx) {
+  if (pid == null || pid < 0) return;
+  app.actionActorId = pid;
+}
+
 function scheduleCpu() {
   clearTimeout(app.cpuTimer);
+  // イベント確認中は次のNPCを絶対に動かさない
+  if (isEventUiBlocking()) return;
   if (!app.game || app.game.phase === 'gameover' || app.busy) return;
   if (app.mode === 'guest') return;
   const cur = currentPlayer(app.game);
   if (!cur?.isCPU) return;
 
   app.cpuTimer = setTimeout(async () => {
-    if (app.busy || !app.game) return;
+    if (app.busy || isEventUiBlocking() || !app.game) return;
+    noteActionActor(app.game.currentPlayerIdx);
     const phase = app.game.phase;
 
     if (phase === 'await_roll') {
@@ -1862,7 +1917,7 @@ function scheduleCpu() {
       } else {
         syncState();
         refreshGameUI();
-        scheduleCpu();
+        if (clearBusyUnlessEventUi()) scheduleCpu();
       }
       return;
     }
@@ -1881,10 +1936,9 @@ function scheduleCpu() {
         refreshGameUI();
         await wait(420);
         await continueAdvancing();
-        app.busy = false;
       }
       refreshGameUI();
-      scheduleCpu();
+      if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
 
@@ -1908,10 +1962,9 @@ function scheduleCpu() {
       if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
         app.busy = true;
         await continueAdvancing();
-        app.busy = false;
         refreshGameUI();
       }
-      scheduleCpu();
+      if (clearBusyUnlessEventUi()) scheduleCpu();
     }
   }, 550 + Math.random() * 350);
 }
@@ -2004,13 +2057,23 @@ function refreshGameUI() {
   }
 
   const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
-  const canRoll = !app.busy && g.phase === 'await_roll' && humanTurn && !cur?.resting;
+  const eventBlocked = isEventUiBlocking();
+  const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
   $('#btn-roll').disabled = !canRoll;
-  $('#btn-roll').textContent = app.busy
-    ? '演出中…'
-    : (cur?.resting && humanTurn
-      ? '休憩中（自動スキップ）…'
-      : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
+  const reader = g.players[app.eventFlashReaderId];
+  if (eventBlocked || app.eventFlashOpen) {
+    $('#btn-roll').textContent = reader?.isCPU
+      ? `${reader.name} が確認中…`
+      : (canDismissEventFlash() || (app.mode === 'local' && !reader?.isCPU)
+        ? '出来事を確認中…'
+        : `${reader?.name || '手番'} の確認待ち…`);
+  } else {
+    $('#btn-roll').textContent = app.busy
+      ? '演出中…'
+      : (cur?.resting && humanTurn
+        ? '休憩中（自動スキップ）…'
+        : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
+  }
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
@@ -2207,6 +2270,10 @@ function bannerFromLog(g, l) {
     return null;
   }
 
+  const actorId = app.actionActorId != null
+    ? app.actionActorId
+    : (player?.id ?? null);
+
   return {
     kicker,
     title,
@@ -2214,14 +2281,16 @@ function bannerFromLog(g, l) {
     kind,
     color: player?.color || '#ffe08a',
     mine: !!mine,
+    actorId,
   };
 }
 
 function enqueueBanner(payload) {
   if (!payload?.title) return;
   const visual = resolveEventVisual(payload);
-  pushEventStamp({ ...payload, visual });
-  queueEventFlash({ ...payload, visual });
+  const actorId = payload.actorId != null ? payload.actorId : app.actionActorId;
+  pushEventStamp({ ...payload, visual, actorId });
+  queueEventFlash({ ...payload, visual, actorId });
 }
 
 function eventFlashBlocked() {
@@ -2235,6 +2304,12 @@ function eventFlashBlocked() {
 function queueEventFlash(payload) {
   if (!payload?.title) return;
   app.eventFlashQueue.push(payload);
+  // 待ち行列に入った時点で進行を止める（ホスト／ローカル）
+  if (app.mode !== 'guest') {
+    app.eventFlashHoldingBusy = true;
+    app.busy = true;
+    clearTimeout(app.cpuTimer);
+  }
   pumpEventFlash();
 }
 
@@ -2243,6 +2318,8 @@ function pumpEventFlash() {
   if (eventFlashBlocked()) return;
   const payload = app.eventFlashQueue.shift();
   if (!payload) {
+    clearTimeout(app.eventFlashNpcTimer);
+    app.eventFlashReaderId = null;
     if (app.eventFlashHoldingBusy) {
       app.eventFlashHoldingBusy = false;
       app.busy = false;
@@ -2255,15 +2332,40 @@ function pumpEventFlash() {
   presentEventFlash(payload);
 }
 
-/** 手番プレイヤーが閉じる。ローカルは操作側、オンラインは手番席（ホストは進行管理でも可） */
+function eventFlashReader(payload) {
+  const id = payload?.actorId != null ? payload.actorId : app.actionActorId;
+  if (id == null || !app.game) return null;
+  return app.game.players[id] || null;
+}
+
+/** 人間の確認担当だけ手動で閉じられる。NPC担当はNPCが進める */
 function canDismissEventFlash() {
-  if (!app.game) return false;
+  if (!app.game || !app.eventFlashOpen) return false;
+  const reader = app.game.players[app.eventFlashReaderId];
+  if (!reader) {
+    if (app.mode === 'local' || app.mode === 'host') return true;
+    return isMyTurn();
+  }
+  if (reader.isCPU) return false; // NPCタイマーが force で閉じる
   if (app.mode === 'local') return true;
-  // ホストはゲーム進行の責任者として常に閉じられる（CPU手番含む）
-  if (app.mode === 'host') return true;
-  // ゲストは自分の手番のときだけ
-  if (app.mode === 'guest') return isMyTurn();
+  if (app.mode === 'host') return reader.id === app.localSeat || reader.peerId === app.net?.peerId || reader.id === 0;
+  if (app.mode === 'guest') return reader.id === app.localSeat || reader.peerId === app.net?.peerId;
   return false;
+}
+
+function scheduleNpcEventFlashIfNeeded() {
+  clearTimeout(app.eventFlashNpcTimer);
+  if (!app.eventFlashOpen) return;
+  if (app.mode === 'guest') return; // ホスト側のNPCが進める
+  const reader = app.game?.players?.[app.eventFlashReaderId];
+  if (!reader?.isCPU) return;
+  const delay = 1200 + Math.random() * 600;
+  app.eventFlashNpcTimer = setTimeout(() => {
+    if (!app.eventFlashOpen) return;
+    const r = app.game?.players?.[app.eventFlashReaderId];
+    if (!r?.isCPU) return;
+    dismissEventFlash({ force: true });
+  }, delay);
 }
 
 function resolveEventVisual(payload) {
@@ -2636,7 +2738,7 @@ function spawnPlayerCashFloat(delta) {
   setTimeout(() => floater.remove(), 1000);
 }
 
-/** 盤面中央に視覚的なイベントフラッシュを出す（手動でつづけるまで残す） */
+/** 盤面中央に視覚的なイベントフラッシュを出す（確認完了まで進行停止） */
 function presentEventFlash(payload) {
   const overlay = $('#event-flash');
   if (!overlay || !payload?.title) {
@@ -2654,18 +2756,23 @@ function presentEventFlash(payload) {
   const seq = ++app.eventFlashSeq;
   // マス／アイコン枠からはみ出さないよう最大2文字＆長さに応じて縮小
   const glyph = String(visual.glyph || '!').slice(0, 2);
+  const reader = eventFlashReader(payload);
+  app.eventFlashReaderId = reader?.id ?? payload.actorId ?? app.actionActorId;
 
   clearTimeout(app.eventFlashTimer);
+  clearTimeout(app.eventFlashNpcTimer);
   app.eventFlashOpen = true;
-  // 確認完了まで手番進行を止める（ホスト／ローカルのみ）
-  if (canDismissEventFlash()) {
-    app.eventFlashHoldingBusy = true;
-    app.busy = true;
-  }
+  // 確認完了まで絶対に手番進行を止める
+  app.eventFlashHoldingBusy = true;
+  app.busy = true;
+  clearTimeout(app.cpuTimer);
 
-  const spectator = !canDismissEventFlash();
+  const npcReading = !!reader?.isCPU;
+  const canDismiss = canDismissEventFlash();
+  const spectator = !canDismiss;
   overlay.dataset.visual = kind;
   overlay.dataset.spectator = spectator ? '1' : '0';
+  overlay.dataset.npc = npcReading ? '1' : '0';
   overlay.style.setProperty('--efc', color);
   const icon = $('#ef-icon');
   icon.textContent = glyph;
@@ -2680,9 +2787,14 @@ function presentEventFlash(payload) {
   const hint = $('#ef-hint');
   const btn = $('#ef-continue');
   const queued = app.eventFlashQueue.length;
+  const readerName = reader?.name || '手番プレイヤー';
   if (hint) {
-    if (spectator) {
-      hint.textContent = 'ホストが「つづける」と閉じます';
+    if (npcReading) {
+      hint.textContent = queued
+        ? `${readerName}（NPC）が確認中…（残り ${queued}）`
+        : `${readerName}（NPC）が確認中…`;
+    } else if (spectator) {
+      hint.textContent = `${readerName} が確認するまで待機`;
     } else {
       hint.textContent = queued
         ? `確認したら「つづける」（残り ${queued}）`
@@ -2690,7 +2802,8 @@ function presentEventFlash(payload) {
     }
   }
   if (btn) {
-    btn.hidden = spectator;
+    btn.hidden = spectator || npcReading;
+    btn.disabled = npcReading;
     btn.textContent = queued ? `つづける（残り ${queued}）` : 'つづける';
   }
 
@@ -2699,25 +2812,27 @@ function presentEventFlash(payload) {
   requestAnimationFrame(() => {
     if (app.eventFlashSeq !== seq) return;
     overlay.classList.add('show');
-    try { (btn && !spectator ? btn : overlay).focus({ preventScroll: true }); } catch (_) { /* ignore */ }
+    try { (btn && canDismiss ? btn : overlay).focus({ preventScroll: true }); } catch (_) { /* ignore */ }
   });
 
   // フィードも開いて出来事を追えるようにする
   $('#event-feed-wrap')?.classList.remove('feed-collapsed');
-  if (canDismissEventFlash()) {
-    $('#btn-roll').disabled = true;
-    $('#btn-roll').textContent = '出来事を確認中…';
-  }
+  $('#btn-roll').disabled = true;
+  $('#btn-roll').textContent = npcReading
+    ? `${readerName} が確認中…`
+    : (canDismiss ? '出来事を確認中…' : `${readerName} の確認待ち…`);
+
+  scheduleNpcEventFlashIfNeeded();
 }
 
-/** 手番側のクリック／Enter で次へ。ゲストはホストへ送り、配信で全員閉じる */
+/** 確認担当のクリック／Enter、または NPC タイマーで次へ */
 function dismissEventFlash({ remote = false, force = false } = {}) {
   if (!app.eventFlashOpen) return;
   if (!remote && !force && !canDismissEventFlash()) return;
   const overlay = $('#event-flash');
   if (!overlay || overlay.hidden) return;
 
-  if (!remote && app.mode === 'guest' && app.net) {
+  if (!remote && !force && app.mode === 'guest' && app.net) {
     audio.sfx.click();
     // busy 解除と他端末同期はホスト経由
     app.net.sendToHost({ type: 'event_flash_dismiss', seat: app.localSeat });
@@ -2726,15 +2841,19 @@ function dismissEventFlash({ remote = false, force = false } = {}) {
 
   const seq = app.eventFlashSeq;
   clearTimeout(app.eventFlashTimer);
+  clearTimeout(app.eventFlashNpcTimer);
   if (!remote) {
-    audio.sfx.click();
+    if (!force) audio.sfx.click();
     if (app.mode === 'host') broadcastFx({ kind: 'eventFlashDismiss' });
+    // ローカルの NPC 進行でも音は控えめに
+    else if (force && app.mode === 'local') audio.sfx.click();
   }
   overlay.classList.remove('show');
   app.eventFlashTimer = setTimeout(() => {
     if (app.eventFlashSeq !== seq) return;
     overlay.hidden = true;
     overlay.dataset.spectator = '0';
+    overlay.dataset.npc = '0';
     app.eventFlashOpen = false;
     pumpEventFlash();
   }, 180);
