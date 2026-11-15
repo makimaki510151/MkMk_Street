@@ -556,6 +556,17 @@ function handleNetEvent({ from, data }) {
       }
       return;
     }
+    if (data.type === 'event_flash_flush') {
+      // クライアントが残留の料金確認などを捨てた → ホストも含め全員解放
+      const seat = app.game?.players?.findIndex((p) => p.peerId === from);
+      if (seat < 0) return;
+      if (data.throughLogKey) app.lastSeenLogKey = data.throughLogKey;
+      flushEventFlashImmediate();
+      app.busy = false;
+      refreshGameUI();
+      scheduleCpu();
+      return;
+    }
     if (data.type === 'action') {
       handleHostAction(from, data);
       return;
@@ -1334,6 +1345,40 @@ function renderForkRails(pend) {
   });
 }
 
+/** ゲストが局所解放したとき、ホスト側の残留告知も捨てさせる */
+function requestHostEventFlashFlush() {
+  if (app.mode !== 'guest' || !app.net) return;
+  const throughLogKey = app.game?.logs?.[0] ? logKey(app.game.logs[0]) : null;
+  app.net.sendToHost({
+    type: 'event_flash_flush',
+    seat: app.localSeat,
+    throughLogKey,
+  });
+}
+
+/**
+ * 手番が移ったあとに残った料金確認などで進行が止まるのを防ぐ。
+ * クライアントだけ解放してホストが止まらないよう、ゲストはホストへも通知する。
+ */
+function reconcileStaleEventFlash(g) {
+  if (!g || !isEventUiBlocking()) return false;
+  if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
+  const readerId = app.eventFlashReaderId;
+  const curId = g.currentPlayerIdx;
+  // 確認担当の手番がもう終わっている残留告知
+  if (readerId != null && readerId === curId) return false;
+  if (app.mode === 'host') {
+    flushEventFlashImmediate();
+  } else if (app.mode === 'guest') {
+    flushEventFlashImmediate({ remote: true });
+    requestHostEventFlashFlush();
+  } else {
+    flushEventFlashImmediate({ remote: true });
+  }
+  app.busy = false;
+  return true;
+}
+
 /** プレイヤーの能動選択時は告知UIを閉じて進行を優先する */
 function flushEventFlashImmediate({ remote = false } = {}) {
   clearTimeout(app.eventFlashTimer);
@@ -1369,6 +1414,8 @@ function sendAction(action) {
   // スクラッチ／お祝い等の能動選択は告知中でも受け付ける
   if (action.type === 'choice') {
     flushEventFlashImmediate();
+    // ゲスト局所flushだけだとホストの料金確認が残って止まる
+    if (app.mode === 'guest') requestHostEventFlashFlush();
   } else if (isEventUiBlocking()) {
     return;
   }
@@ -2073,16 +2120,39 @@ async function animateCoinReveal(body, reveal) {
 
 async function handleHostAction(from, data) {
   const action = data.action;
+  const seat = app.game?.players?.findIndex((p) => p.peerId === from) ?? -1;
+  if (seat < 0) return;
+
   // お祝い／スクラッチ等の能動選択は告知UIより優先
   if (action?.type === 'choice') {
     flushEventFlashImmediate();
     app.busy = false;
   } else if (app.busy || isEventUiBlocking()) {
-    app.net.sendTo(from, { type: 'reject', reason: '出来事の確認中です' });
-    return;
+    // 料金確認がホストにだけ残っているとクライアントの進行を拒否してしまう → 残留なら解放
+    if (isEventUiBlocking() && !app.busy && app.game) {
+      reconcileStaleEventFlash(app.game);
+    }
+    if (app.busy || isEventUiBlocking()) {
+      // 手番プレイヤーのサイコロなら、確認担当が自分でない残留告知を捨てて受理
+      if (action?.type === 'roll'
+        && app.game?.phase === 'await_roll'
+        && app.game.currentPlayerIdx === seat
+        && isEventUiBlocking()
+        && !app.busy) {
+        const readerId = app.eventFlashReaderId;
+        if (readerId == null || readerId !== seat) {
+          flushEventFlashImmediate();
+          app.busy = false;
+        } else {
+          app.net.sendTo(from, { type: 'reject', reason: '出来事の確認中です' });
+          return;
+        }
+      } else {
+        app.net.sendTo(from, { type: 'reject', reason: '出来事の確認中です' });
+        return;
+      }
+    }
   }
-  const seat = app.game.players.findIndex((p) => p.peerId === from);
-  if (seat < 0) return;
 
   if (action.type === 'roll') {
     if (app.game.currentPlayerIdx !== seat || app.game.phase !== 'await_roll') {
@@ -2439,13 +2509,9 @@ function refreshGameUI() {
   }
 
   const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
-  // 5倍買いキャンセル後など: 自分のサイコロ番なのに前プレイヤーの告知が残って振れないのを解放
-  if (g.phase === 'await_roll' && humanTurn && !cur?.resting && isEventUiBlocking()) {
-    const readerId = app.eventFlashReaderId;
-    if (readerId == null || readerId !== cur.id) {
-      flushEventFlashImmediate({ remote: true });
-      app.busy = false;
-    }
+  // 料金確認などが手番移行後に残り、ホストだけ止まる／次が振れないのを解放
+  if (reconcileStaleEventFlash(g)) {
+    /* busy / flash をクリア済み */
   }
   const eventBlocked = isEventUiBlocking();
   const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
@@ -2508,12 +2574,11 @@ function refreshGameUI() {
   updateInspectPanel();
   maybeYourTurnChime();
   announceNewLogs(g);
-  // ログ再フラッシュで「前の人の確認待ち」のままサイコロ不能になるのを防ぐ
-  if (g.phase === 'await_roll' && humanTurn && !cur?.resting && isEventUiBlocking()) {
-    const readerId = app.eventFlashReaderId;
-    if (readerId == null || readerId !== cur.id) {
-      flushEventFlashImmediate({ remote: true });
-      app.busy = false;
+  // ログ再フラッシュでホスト／次手番が止まるのを防ぐ
+  if (reconcileStaleEventFlash(g)) {
+    const canRollNow = !app.busy && !isEventUiBlocking()
+      && g.phase === 'await_roll' && humanTurn && !cur?.resting;
+    if (canRollNow) {
       $('#btn-roll').disabled = false;
       $('#btn-roll').textContent = 'サイコロを振る';
     }
@@ -3292,8 +3357,9 @@ function dismissEventFlash({ remote = false, force = false } = {}) {
     app.eventFlashDismissWait = setTimeout(() => {
       app.eventFlashDismissWait = null;
       if (!app.eventFlashOpen) return;
-      // ホスト側が既に閉じて応答が来ないケース（2Pで起きやすい）
+      // ホスト未応答でもクライアントは進めるが、ホスト残留で止まらないよう flush も依頼
       dismissEventFlash({ remote: true });
+      requestHostEventFlashFlush();
     }, 1500);
     return;
   }
