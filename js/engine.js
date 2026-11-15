@@ -1230,12 +1230,15 @@ function resolveShop(g, p, sq) {
   }
 
   if (sq.owner === p.id) {
+    const ownShops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
     const rem = getRemainingInvest(g, sq);
     g.phase = 'await_choice';
     g.pending = {
       type: 'invest',
       playerId: p.id,
-      shopId: sq.id,
+      shopId: sq.id, // 止まった店（初期選択）
+      landedShopId: sq.id,
+      shopIds: ownShops.map((s) => s.id),
       remaining: rem,
       toll: calcToll(g, sq),
     };
@@ -1446,11 +1449,15 @@ function resumeAfterRaiseFunds(g, p, resume) {
     return;
   }
   if (resume.type === 'invest') {
+    const ownShops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+    const landedId = resume.landedShopId ?? resume.shopId;
     g.phase = 'await_choice';
     g.pending = {
       type: 'invest',
       playerId: p.id,
-      shopId: resume.shopId,
+      shopId: landedId,
+      landedShopId: landedId,
+      shopIds: resume.shopIds?.length ? resume.shopIds : ownShops.map((s) => s.id),
       remaining: resume.remaining,
       toll: resume.toll,
     };
@@ -1507,8 +1514,12 @@ export function applyChoice(g, choice) {
   }
 
   if (pending.type === 'invest') {
-    const sq = getNode(g, pending.shopId);
     if (choice.action === 'invest') {
+      const shopId = Number(choice.shopId ?? pending.shopId);
+      const sq = getNode(g, shopId);
+      if (!sq || sq.type !== 'shop' || sq.owner !== p.id) {
+        return { ok: false, error: 'bad_shop' };
+      }
       const rem = getRemainingInvest(g, sq);
       let amount = Math.max(0, Math.min(Number(choice.amount) || 0, rem));
       const pay = p.flags.investCoupon ? Math.ceil(amount / 2) : amount;
@@ -1522,6 +1533,8 @@ export function applyChoice(g, choice) {
           resume: {
             type: 'invest',
             shopId: sq.id,
+            landedShopId: pending.landedShopId ?? pending.shopId,
+            shopIds: pending.shopIds,
             remaining: rem,
             toll: pending.toll,
             amount,
@@ -1656,11 +1669,17 @@ export function applyChoice(g, choice) {
         g.pending = {
           type: 'invest',
           playerId: p.id,
-          shopId: resume.shopId,
+          shopId: resume.landedShopId ?? resume.shopId,
+          landedShopId: resume.landedShopId ?? resume.shopId,
+          shopIds: resume.shopIds,
           remaining: resume.remaining,
           toll: resume.toll,
         };
-        return applyChoice(g, { action: 'invest', amount: resume.amount });
+        return applyChoice(g, {
+          action: 'invest',
+          shopId: resume.shopId,
+          amount: resume.amount,
+        });
       }
       resumeAfterRaiseFunds(g, p, resume);
       return { ok: true, state: serializeState(g) };
@@ -2310,10 +2329,30 @@ export function cpuAct(g) {
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
     }
     if (pend.type === 'invest') {
-      const rem = pend.remaining || 0;
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : [pend.shopId].filter((id) => id != null);
+      let best = pend.shopId;
+      let bestScore = -1;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq || sq.owner !== p.id) continue;
+        const rem = getRemainingInvest(g, sq);
+        if (rem < 20) continue;
+        const areaCnt = getPlayerAreaCount(g, p.id, sq.area);
+        const score = rem * 1.2 + areaCnt * 40 + sq.price * 0.05
+          + (traits.key === 'magnate' || traits.key === 'tycoon' ? areaCnt * 25 : 0)
+          + (id === pend.landedShopId || id === pend.shopId ? 15 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = id;
+        }
+      }
+      const target = getNode(g, best);
+      const rem = target ? getRemainingInvest(g, target) : 0;
       const liq = getLiquidatableValue(g, p);
       const amount = Math.min(rem, Math.floor(Math.max(0, liq) * traits.investRate));
-      if (amount >= 20) return applyChoice(g, { action: 'invest', amount });
+      if (amount >= 20) return applyChoice(g, { action: 'invest', shopId: best, amount });
       return applyChoice(g, { action: 'skip' });
     }
     if (pend.type === 'pick_invest') {

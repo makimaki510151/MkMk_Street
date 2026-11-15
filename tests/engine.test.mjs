@@ -141,6 +141,43 @@ describe('MkMk Street engine', () => {
     assert.equal(applyCappedShopBoost(g, sq, 50), 0);
   });
 
+  it('lets owner invest any owned shop when landing on own shop', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+      cash: 5000,
+    });
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const landed = shops[0];
+    const other = shops[1];
+    landed.owner = 0;
+    other.owner = 0;
+    g.players[0].pos = landed.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [landed.id], passedBank: false, startPos: g.startId };
+    const landedResult = advanceMove(g);
+    assert.equal(landedResult.ok, true);
+    assert.equal(g.pending?.type, 'invest');
+    assert.equal(g.pending.shopId, landed.id);
+    assert.equal(g.pending.landedShopId, landed.id);
+    assert.ok(g.pending.shopIds.includes(landed.id));
+    assert.ok(g.pending.shopIds.includes(other.id));
+
+    const beforeLanded = landed.price;
+    const beforeOther = other.price;
+    const remOther = getRemainingInvest(g, other);
+    const amount = Math.min(100, remOther);
+    assert.ok(amount > 0, 'other shop should have invest room');
+    const cashBefore = g.players[0].cash;
+    const r = applyChoice(g, { action: 'invest', shopId: other.id, amount });
+    assert.equal(r.ok, true);
+    assert.equal(other.price, beforeOther + amount);
+    assert.equal(other.extraInvest, amount);
+    assert.equal(landed.price, beforeLanded);
+    assert.equal(landed.extraInvest || 0, 0);
+    assert.equal(g.players[0].cash, cashBefore - amount);
+  });
+
   it('raises toll when owning multiple shops in an area', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
