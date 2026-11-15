@@ -87,7 +87,10 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
         });
       });
       hostConn.on('data', (data) => onEvent?.({ from: 'host', data }));
-      hostConn.on('close', () => status('ホストとの接続が切れました', 'error'));
+      hostConn.on('close', () => {
+        status('ホストとの接続が切れました', 'error');
+        onEvent?.({ from: 'host', data: { type: 'host_left' } });
+      });
     }
 
     return { roomCode: code, peerId: myId };

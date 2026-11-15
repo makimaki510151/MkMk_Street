@@ -31,6 +31,8 @@ import {
   getMaxExtraInvest,
   investMultiByMonopolyRate,
   payAreaStockDividend,
+  convertPlayerToCpu,
+  kickDisconnectedPlayer,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -91,6 +93,10 @@ const app = {
   moneyFxSeq: 0,
   /** @type {object[]|null} オーバーレイ競合時の待機キュー */
   pendingMoneyFx: null,
+  /** @type {Record<number, ReturnType<typeof setTimeout>>} */
+  disconnectTimers: {},
+  /** 切断後に自動でCPU化するまでの猶予（ms） */
+  disconnectGraceMs: 20000,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
@@ -133,11 +139,91 @@ function readRejoinSession(roomCode) {
 function findRejoinSeat(g, name, rejoinSeat) {
   const nm = String(name || '').trim();
   if (!nm) return -1;
+  const canReclaim = (p) => p && !p.bankrupt && p.name === nm && (
+    (!p.isCPU && (p.offline || !p.peerId))
+    || (p.isCPU && p.flags?.reclaimableHuman)
+  );
   if (typeof rejoinSeat === 'number' && rejoinSeat >= 0 && rejoinSeat < g.players.length) {
-    const p = g.players[rejoinSeat];
-    if (p && !p.isCPU && p.name === nm && (p.offline || !p.peerId)) return rejoinSeat;
+    if (canReclaim(g.players[rejoinSeat])) return rejoinSeat;
   }
-  return g.players.findIndex((p) => !p.isCPU && p.name === nm && (p.offline || !p.peerId));
+  const offlineHuman = g.players.findIndex((p) => !p.isCPU && !p.bankrupt && p.name === nm && (p.offline || !p.peerId));
+  if (offlineHuman >= 0) return offlineHuman;
+  return g.players.findIndex((p) => p.isCPU && p.flags?.reclaimableHuman && !p.bankrupt && p.name === nm);
+}
+
+function clearDisconnectTimer(seat) {
+  const t = app.disconnectTimers[seat];
+  if (t) clearTimeout(t);
+  delete app.disconnectTimers[seat];
+}
+
+function clearAllDisconnectTimers() {
+  for (const seat of Object.keys(app.disconnectTimers)) clearDisconnectTimer(Number(seat));
+}
+
+function handlePlayerDisconnect(seat, { reason = '切断' } = {}) {
+  if (!app.game || app.mode !== 'host') return;
+  const p = app.game.players[seat];
+  if (!p || p.bankrupt || p.isCPU) return;
+  p.offline = true;
+  p.peerId = null;
+  if (!p.flags) p.flags = {};
+  p.flags.disconnectedAt = Date.now();
+  app.game.logs.unshift({
+    text: `${p.name} が${reason}（再接続／CPU化／キックを選べます）`,
+    kind: 'system',
+    t: Date.now(),
+  });
+  if (app.game.logs.length > 80) app.game.logs.length = 80;
+  clearDisconnectTimer(seat);
+  app.disconnectTimers[seat] = setTimeout(() => {
+    if (!app.game) return;
+    const pl = app.game.players[seat];
+    if (!pl || pl.bankrupt || !pl.offline || pl.isCPU) return;
+    applyConvertToCpu(seat, { auto: true });
+  }, app.disconnectGraceMs);
+  syncState();
+  refreshGameUI();
+  toast(`${p.name} が切断 — ${Math.round(app.disconnectGraceMs / 1000)}秒後に自動でCPU化`);
+}
+
+function applyConvertToCpu(seat, { auto = false } = {}) {
+  if (!app.game || app.mode !== 'host') return;
+  clearDisconnectTimer(seat);
+  const result = convertPlayerToCpu(app.game, seat);
+  if (!result.ok) return;
+  if (result.state) app.game = restoreState(result.state);
+  if (auto) {
+    app.game.logs.unshift({
+      text: `${app.game.players[seat].name} を自動でCPU化`,
+      kind: 'system',
+      t: Date.now(),
+    });
+  }
+  // 確認担当がCPUになったらNPC進行に切り替える
+  if (app.eventFlashOpen && app.eventFlashReaderId === seat) {
+    scheduleNpcEventFlashIfNeeded();
+  }
+  syncState();
+  refreshGameUI();
+  scheduleCpu();
+  toast(`${app.game.players[seat].name} をCPUに切り替えました`);
+}
+
+function applyKickPlayer(seat) {
+  if (!app.game || app.mode !== 'host') return;
+  clearDisconnectTimer(seat);
+  const name = app.game.players[seat]?.name || 'プレイヤー';
+  if (app.eventFlashOpen && app.eventFlashReaderId === seat) {
+    dismissEventFlash({ force: true });
+  }
+  const result = kickDisconnectedPlayer(app.game, seat);
+  if (!result.ok) return;
+  if (result.state) app.game = restoreState(result.state);
+  syncState();
+  refreshGameUI();
+  scheduleCpu();
+  toast(`${name} をキックしました`);
 }
 
 function showScreen(id) {
@@ -157,6 +243,24 @@ function toast(msg) {
   el.classList.add('show');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function showHostReconnectPrompt() {
+  const rejoin = readRejoinSession(app.net?.roomCode || '');
+  const room = app.net?.roomCode || rejoin?.room || '';
+  const name = app.localName || rejoin?.name || '';
+  app.net?.destroy();
+  app.net = null;
+  app.game = null;
+  clearAllDisconnectTimers();
+  showScreen('screen-title');
+  // タイトルから再参加しやすく部屋コードを渡す
+  const joinBtn = $('#btn-join');
+  if (joinBtn && room) {
+    joinBtn.dataset.prefillRoom = room;
+    joinBtn.dataset.prefillName = name;
+  }
+  toast(room ? `部屋 ${room} に同じ名前で再接続できます` : 'タイトルから再接続してください');
 }
 
 function bindVolumeUI() {
@@ -218,7 +322,14 @@ function bindTitle() {
     openSetupLocal();
   };
   $('#btn-host').onclick = () => { audio.sfx.click(); openLobby('host'); };
-  $('#btn-join').onclick = () => { audio.sfx.click(); openLobby('guest'); };
+  $('#btn-join').onclick = () => {
+    audio.sfx.click();
+    const btn = $('#btn-join');
+    openLobby('guest', {
+      room: btn?.dataset.prefillRoom || '',
+      name: btn?.dataset.prefillName || '',
+    });
+  };
   $('#btn-howto').onclick = () => { audio.sfx.click(); showScreen('screen-howto'); };
   $('#btn-howto-back').onclick = () => showScreen('screen-title');
 }
@@ -267,7 +378,7 @@ function readSeatEditors() {
   return seats;
 }
 
-async function openLobby(role) {
+async function openLobby(role, prefill = {}) {
   app.mode = role;
   showScreen('screen-lobby');
   $('#lobby-role').textContent = role === 'host' ? 'ホスト（部屋を作る）' : 'ゲスト（部屋に入る）';
@@ -277,7 +388,16 @@ async function openLobby(role) {
   $('#btn-add-cpu').hidden = role !== 'host';
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
-  setStatus(role === 'host' ? '「接続」で部屋を開きます' : '部屋コードを入れて「接続」');
+  if (prefill.name) $('#lobby-name').value = prefill.name;
+  if (prefill.room && role === 'guest') {
+    const roomInput = $('#lobby-room');
+    if (roomInput) roomInput.value = String(prefill.room).toUpperCase();
+  }
+  const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || '').toUpperCase()) : null;
+  if (role === 'guest' && rejoin?.name && !$('#lobby-name').value.trim()) {
+    $('#lobby-name').value = rejoin.name;
+  }
+  setStatus(role === 'host' ? '「接続」で部屋を開きます' : '部屋コードを入れて「接続」（切断後は同じ名前で再接続）');
 
   $('#btn-lobby-back').onclick = () => {
     app.net?.destroy();
@@ -383,10 +503,16 @@ function handleNetEvent({ from, data }) {
         const seat = findRejoinSeat(app.game, data.name, data.rejoinSeat);
         if (seat >= 0) {
           const pl = app.game.players[seat];
+          clearDisconnectTimer(seat);
           pl.peerId = data.peerId || from;
           pl.offline = false;
-          app.game.logs.unshift({ text: `${pl.name} が再接続`, kind: 'system' });
-          if (app.game.logs.length > 30) app.game.logs.length = 30;
+          pl.isCPU = false;
+          pl.personality = null;
+          if (!pl.flags) pl.flags = {};
+          pl.flags.reclaimableHuman = false;
+          delete pl.flags.disconnectedAt;
+          app.game.logs.unshift({ text: `${pl.name} が再接続`, kind: 'system', t: Date.now() });
+          if (app.game.logs.length > 80) app.game.logs.length = 80;
           app.net.sendTo(from, {
             type: 'game_rejoin',
             state: serializeState(app.game),
@@ -394,6 +520,7 @@ function handleNetEvent({ from, data }) {
           });
           syncState();
           refreshGameUI();
+          toast(`${pl.name} が再接続しました`);
           return;
         }
         app.net.sendTo(from, { type: 'game_already' });
@@ -431,17 +558,8 @@ function handleNetEvent({ from, data }) {
         return;
       }
       const seat = app.game.players.findIndex((p) => p.peerId === data.peerId);
-      if (seat >= 0) {
-        app.game.players[seat].offline = true;
-        app.game.players[seat].peerId = null;
-        app.game.logs.unshift({
-          text: `${app.game.players[seat].name} が切断（同じ名前で再接続できます）`,
-          kind: 'system',
-        });
-        if (app.game.logs.length > 30) app.game.logs.length = 30;
-        syncState();
-        refreshGameUI();
-      }
+      if (seat >= 0) handlePlayerDisconnect(seat, { reason: '切断' });
+      return;
     }
   }
 
@@ -472,7 +590,12 @@ function handleNetEvent({ from, data }) {
       return;
     }
     if (data.type === 'game_already') {
-      toast('進行中のゲームがあります。同じ名前で再接続を試してください');
+      toast('進行中のゲームがあります。同じ部屋コード・同じ名前で再接続してください');
+      return;
+    }
+    if (data.type === 'host_left') {
+      toast('ホストとの接続が切れました。同じ部屋に再接続できます');
+      showHostReconnectPrompt();
       return;
     }
     if (data.type === 'fx') {
@@ -898,6 +1021,7 @@ function enterGame() {
   app.actionActorId = null;
   app.eventFlashReaderId = null;
   app.deferEventFlash = false;
+  clearAllDisconnectTimers();
   clearTimeout(app.eventFlashTimer);
   clearTimeout(app.eventFlashNpcTimer);
   const flash = $('#event-flash');
@@ -2156,6 +2280,56 @@ function maybeYourTurnChime() {
   broadcastFx({ kind: 'yourTurn', seat: cur.id });
 }
 
+function renderDisconnectPanel(g) {
+  let panel = $('#disconnect-panel');
+  if (!panel) {
+    const side = document.querySelector('.side') || $('#players-panel')?.parentElement;
+    if (!side) return;
+    panel = document.createElement('div');
+    panel.id = 'disconnect-panel';
+    panel.hidden = true;
+    const players = $('#players-panel');
+    if (players) players.before(panel);
+    else side.prepend(panel);
+  }
+  if (app.mode !== 'host' || !g) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    return;
+  }
+  const offline = g.players.filter((p) => p.offline && !p.bankrupt && !p.isCPU);
+  if (!offline.length) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    return;
+  }
+  const graceSec = Math.round(app.disconnectGraceMs / 1000);
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="dc-title">切断プレイヤー</div>
+    <p class="dc-hint">${graceSec}秒で自動CPU化。同じ名前で再接続も可。</p>
+    ${offline.map((p) => `
+      <div class="dc-row" style="--pc:${p.color}">
+        <span class="dc-name">${escapeHtml(p.name)}</span>
+        <button type="button" class="btn tiny" data-dc-cpu="${p.id}">CPUに任せる</button>
+        <button type="button" class="btn tiny danger" data-dc-kick="${p.id}">キック</button>
+      </div>
+    `).join('')}
+  `;
+  panel.querySelectorAll('[data-dc-cpu]').forEach((btn) => {
+    btn.onclick = () => {
+      audio.sfx.click();
+      applyConvertToCpu(Number(btn.dataset.dcCpu));
+    };
+  });
+  panel.querySelectorAll('[data-dc-kick]').forEach((btn) => {
+    btn.onclick = () => {
+      audio.sfx.click();
+      applyKickPlayer(Number(btn.dataset.dcKick));
+    };
+  });
+}
+
 function refreshGameUI() {
   const g = app.game;
   if (!g) return;
@@ -2168,6 +2342,7 @@ function refreshGameUI() {
     const me = p.id === app.localSeat ? 'me' : '';
     const persona = p.isCPU ? getCpuPersonality(p) : null;
     const status = [
+      p.offline ? '<span class="pc-flag offline">切断</span>' : '',
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
       persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
@@ -2194,6 +2369,7 @@ function refreshGameUI() {
       </div>
     `;
   }).join('');
+  renderDisconnectPanel(g);
   maybePresentMoneyFx(g);
   flushPendingMoneyFx();
 
@@ -2370,10 +2546,14 @@ function bannerFromLog(g, l) {
   let kicker = mine ? 'あなたにイベント' : (player ? `${player.name} にイベント` : '出来事');
 
   if (kind === 'mark') {
-    kicker = mine ? 'マーク入手！' : `${player?.name || ''} がマーク入手`;
+    // スクラッチ開始ログと二重になるので、入手／停止は1枚にまとめる
+    if (/ぴったり停止/.test(l.text) && !/[♠♥♦♣]/.test(l.text)) {
+      return null;
+    }
+    kicker = mine ? 'マーク' : `${player?.name || ''} のマーク`;
     const m = l.text.match(/[♠♥♦♣]/);
-    title = m ? m[0] : 'マーク';
-    detail = l.text;
+    title = m ? m[0] : 'マークマス';
+    detail = /入手/.test(l.text) ? `${player?.name || ''} がマークを入手 → イベント表` : l.text;
   } else if (kind === 'toll') {
     const amt = (l.text.match(/([\d,]+)\s*G/) || [])[1];
     const m = l.text.match(/^(.+?)\s*→\s*(.+?)[「\s]/);
@@ -2406,6 +2586,10 @@ function bannerFromLog(g, l) {
       detail = l.text;
     }
   } else if (kind === 'event') {
+    // 着地直後の「表を開く」告知はモーダルと二重になるので出さない
+    if (/イベント表をスクラッチ/.test(l.text)) return null;
+    if (/スクラッチマスに停止/.test(l.text)) return null;
+    if (/ミニゲームマス/.test(l.text) && /停止/.test(l.text)) return null;
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
       title = 'お店が休み';
@@ -2413,10 +2597,6 @@ function bannerFromLog(g, l) {
     } else if (/スクラッチ\s*→/.test(l.text)) {
       // presentScratchOutcome 側でイベント名・効果を大きく出す
       return null;
-    } else if (/イベント表をスクラッチ/.test(l.text)) {
-      kicker = mine ? 'マーク停止' : `${player?.name || ''} がマーク停止`;
-      title = 'イベント表オープン';
-      detail = l.text;
     } else if (/チャンス|イベント！/.test(l.text)) {
       kicker = mine ? 'イベント発生' : `${player?.name || '誰か'} のイベント`;
       title = l.text.replace(/（.*）/, '').replace(/^(チャンス！|イベント！)\s*/, '') || 'イベント';
@@ -2481,8 +2661,21 @@ function eventFlashBlocked() {
     || !$('#money-fx')?.hidden;
 }
 
+function eventFlashKey(payload) {
+  return `${payload.kind || ''}|${payload.title || ''}|${payload.detail || ''}|${payload.actorId ?? ''}`;
+}
+
 function queueEventFlash(payload) {
   if (!payload?.title) return;
+  const key = eventFlashKey(payload);
+  // 同一行動内の重複告知を防ぐ
+  if (app.eventFlashOpen && eventFlashKey({
+    kind: $('#event-flash')?.dataset.visual,
+    title: $('#ef-title')?.textContent,
+    detail: $('#ef-detail')?.textContent,
+    actorId: app.eventFlashReaderId,
+  }) === key) return;
+  if (app.eventFlashQueue.some((q) => eventFlashKey(q) === key)) return;
   app.eventFlashQueue.push(payload);
   // 移動中はキューに積むだけ（着地前に busy を掴むとマス選択UIが出ない）
   if (app.deferEventFlash) return;
