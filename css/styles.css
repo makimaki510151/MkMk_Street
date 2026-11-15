@@ -274,6 +274,20 @@ button:disabled { opacity: .42; cursor: default; }
   font-size: 0.75rem;
   color: var(--muted);
 }
+.chip.urgent,
+#goal-chip.urgent {
+  color: #ffb020;
+  border-color: color-mix(in srgb, #ffb020 55%, var(--line));
+  background: color-mix(in srgb, #ffb020 12%, transparent);
+  animation: goal-pulse 1.1s ease-in-out infinite;
+}
+body.goal-pressure .board-wrap {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #ffb020 35%, transparent);
+}
+@keyframes goal-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.25); }
+}
 #current-name {
   margin-left: auto;
   font-weight: 700;
@@ -509,6 +523,11 @@ button:disabled { opacity: .42; cursor: default; }
   color: var(--muted);
 }
 .pc-flag.closed { color: var(--warn); }
+.pc-flag.goal {
+  color: #ffb020;
+  border-color: color-mix(in srgb, #ffb020 50%, transparent);
+  background: color-mix(in srgb, #ffb020 14%, transparent);
+}
 .pc-flag.offline {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);

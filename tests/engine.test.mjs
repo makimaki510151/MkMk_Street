@@ -5,7 +5,12 @@ import {
   calcToll,
   hasAreaMonopoly,
   tryGrantMonopolyBonus,
+  applyMonopolyBreak,
   MONOPOLY_BONUS_RATE,
+  MONOPOLY_BREAK_B_RATE,
+  getGoalPressurePlayers,
+  refreshGoalPressure,
+  serializeState,
   getAreaShops,
   getPlayerAreaCount,
   getTollMulti,
@@ -295,6 +300,59 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].cash, cashBefore - last.price + expectedBonus);
     // 二重付与されない
     assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
+  });
+
+  it('crashes stock hard when a monopoly breaks', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 13,
+      cash: 20000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    for (const sq of shops) {
+      sq.owner = 0;
+      sq.basePrice = 8000;
+      sq.extraInvest = 4000;
+      sq.price = 12000;
+    }
+    g.players[0].flags.monopolyBonusClaimed = { [area]: true };
+    g.areas[area].B = 200;
+    updateAreaStockPrices(g);
+    const priceBefore = g.areas[area].stockPrice;
+    const BBefore = g.areas[area].B;
+    assert.ok(priceBefore > 1, `need visible stock price, got ${priceBefore}`);
+
+    // 1軒奪われて独占崩壊
+    shops[0].owner = 1;
+    shops[0].extraInvest = 0;
+    shops[0].price = shops[0].basePrice;
+    const brk = applyMonopolyBreak(g, 0, area);
+    assert.ok(brk?.broken);
+    assert.equal(g.areas[area].B, Math.max(70, Math.floor(BBefore * MONOPOLY_BREAK_B_RATE)));
+    assert.ok(brk.newPrice < priceBefore, `stock should drop: ${brk.newPrice} >= ${priceBefore}`);
+    assert.equal(g.players[0].flags.monopolyBonusClaimed?.[area], undefined);
+    // 残店の増資が削られる
+    const remain = shops.filter((s) => s.owner === 0);
+    assert.ok(remain.every((s) => s.extraInvest < 4000));
+    assert.ok(brk.investCut > 0);
+  });
+
+  it('sets goal pressure when a player reaches the goal assets', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 15,
+      cash: 1000,
+    });
+    g.goal = 5000;
+    assert.equal(getGoalPressurePlayers(g).length, 0);
+    g.players[0].cash = 6000;
+    const on = refreshGoalPressure(g);
+    assert.equal(on, true);
+    assert.equal(g.goalPressure, true);
+    assert.ok(g.logs.some((l) => /目標資産に到達/.test(l.text)));
+    const state = serializeState(g);
+    assert.equal(state.goalPressure, true);
   });
 
   it('updates stock prices from shop values', () => {

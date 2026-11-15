@@ -33,6 +33,7 @@ import {
   payAreaStockDividend,
   convertPlayerToCpu,
   kickDisconnectedPlayer,
+  getGoalPressurePlayers,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
@@ -92,6 +93,8 @@ const app = {
   /** @type {Record<number, number>|null} */
   prevCash: null,
   moneyFxTimer: null,
+  /** 目標到達の焦りバナーを一度出したか */
+  goalPressureBannerShown: false,
   moneyFxSeq: 0,
   /** @type {object[]|null} オーバーレイ競合時の待機キュー */
   pendingMoneyFx: null,
@@ -704,6 +707,10 @@ function playRemoteFx(data) {
     audio.sfx.monopoly();
     if (data.payload) enqueueBanner(data.payload);
   }
+  if (data.kind === 'monopolyBreak') {
+    audio.sfx.toll();
+    if (data.payload) enqueueBanner(data.payload);
+  }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
 }
 
@@ -724,6 +731,49 @@ function presentMonopolyFx(result) {
   };
   broadcastFx({ kind: 'monopoly', payload, area: result.area, bonus });
   enqueueBanner(payload);
+}
+
+function presentMonopolyBreakFx(result) {
+  const brk = result?.monopolyBreak;
+  if (!brk?.broken || !app.game) return;
+  const areaName = brk.areaName || app.game.areas[brk.area]?.name || `エリア${brk.area}`;
+  audio.sfx.toll();
+  const payload = {
+    kicker: '独占崩壊！',
+    title: areaName,
+    detail: `株価 ${Number(brk.oldPrice || 0).toLocaleString()}→${Number(brk.newPrice || 0).toLocaleString()}G`
+      + (brk.investCut ? `／残店増資 −${Number(brk.investCut).toLocaleString()}G` : ''),
+    kind: 'toll',
+    color: '#ff8a80',
+    mine: false,
+  };
+  broadcastFx({ kind: 'monopolyBreak', payload, area: brk.area });
+  enqueueBanner(payload);
+}
+
+function syncGoalPressureBgm(g) {
+  if (!g || g.phase === 'gameover') {
+    audio.setBgmMode('normal');
+    document.body.classList.remove('goal-pressure');
+    return;
+  }
+  const urgent = !!g.goalPressure || getGoalPressurePlayers(g).length > 0;
+  const prev = audio.getBgmMode();
+  audio.setBgmMode(urgent ? 'urgency' : 'normal');
+  document.body.classList.toggle('goal-pressure', urgent);
+  if (urgent && prev !== 'urgency' && !app.goalPressureBannerShown) {
+    app.goalPressureBannerShown = true;
+    const names = getGoalPressurePlayers(g).map((p) => p.name).join('・') || '誰か';
+    enqueueBanner({
+      kicker: '目標到達！',
+      title: 'エンドゲーム突入',
+      detail: `${names} が目標資産に到達 — 銀行へ急げ！`,
+      kind: 'level',
+      color: '#ffb020',
+      mine: true,
+    });
+  }
+  if (!urgent) app.goalPressureBannerShown = false;
 }
 
 function startLocal(seats) {
@@ -1490,6 +1540,7 @@ async function applyLocalAction(action) {
       broadcastFx({ kind: 'fiveBuy', payload: fivePayload });
       enqueueBanner(fivePayload);
     }
+    if (result.monopolyBreak) presentMonopolyBreakFx(result);
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchOutcome(result);
@@ -2195,6 +2246,7 @@ async function handleHostAction(from, data) {
       audio.sfx.fiveBuy();
       broadcastFx({ kind: 'fiveBuy' });
     }
+    if (result.monopolyBreak) presentMonopolyBreakFx(result);
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
       await presentScratchOutcome(result);
@@ -2346,6 +2398,7 @@ function scheduleCpu() {
         audio.sfx.fiveBuy();
         broadcastFx({ kind: 'fiveBuy' });
       }
+      if (result?.monopolyBreak) presentMonopolyBreakFx(result);
       if (result?.monopoly) presentMonopolyFx(result);
       if (result?.scratched) {
         await presentScratchOutcome(result);
@@ -2445,8 +2498,10 @@ function refreshGameUI() {
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
     const persona = p.isCPU ? getCpuPersonality(p) : null;
+    const atGoal = !p.bankrupt && a.total >= g.goal;
     const status = [
       p.offline ? '<span class="pc-flag offline">切断</span>' : '',
+      atGoal ? '<span class="pc-flag goal" title="総資産が目標以上 — 銀行停止で勝利">目標到達</span>' : '',
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
       persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
@@ -2477,12 +2532,17 @@ function refreshGameUI() {
   maybePresentMoneyFx(g);
   flushPendingMoneyFx();
 
-  $('#goal-chip').textContent = `目標 ${g.goal.toLocaleString()}G`;
+  const pressure = getGoalPressurePlayers(g);
+  $('#goal-chip').textContent = pressure.length
+    ? `目標 ${g.goal.toLocaleString()}G ⚠到達${pressure.length}人`
+    : `目標 ${g.goal.toLocaleString()}G`;
+  $('#goal-chip').classList.toggle('urgent', pressure.length > 0);
   $('#turn-chip').textContent = `ターン ${g.turn}`;
   const cur = currentPlayer(g);
   $('#phase-chip').textContent = phaseLabel(g);
   $('#current-name').textContent = cur ? `${cur.name} の番` : '';
   $('#current-name').style.color = cur?.color || '#fff';
+  syncGoalPressureBgm(g);
 
   // 上→下（古い→新しい）。内部配列は newest-first のため表示時に反転
   const logLines = g.logs.slice(0, 24).reverse().map((l) => {
