@@ -647,19 +647,28 @@ describe('MkMk Street engine', () => {
     assert.ok(r.messages.some((m) => /奪取/.test(m)));
   });
 
-  it('scales level-up bonus by promotion target level', () => {
+  it('scales level-up bonus by promotion target level only (same for all players)', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 3,
       cash: 1000,
     });
+    // A に店を持たせても B と同額になること
+    const shops = getAreaShops(g, Number(Object.keys(g.areas)[0]));
+    for (const sq of shops) {
+      sq.owner = 0;
+      sq.price = sq.basePrice + 500;
+    }
     g.players[0].level = 1;
-    const b2 = getLevelBonus(g, g.players[0], 2);
-    g.players[0].level = 3;
+    g.players[1].level = 1;
+    const b2a = getLevelBonus(g, g.players[0], 2);
+    const b2b = getLevelBonus(g, g.players[1], 2);
+    assert.equal(b2a, 700);
+    assert.equal(b2b, 700);
+    assert.equal(b2a, b2b);
     const b4 = getLevelBonus(g, g.players[0], 4);
-    assert.ok(b2 >= 700, `Lv2 bonus too low: ${b2}`);
-    assert.ok(b4 > b2, `higher level should pay more: ${b4} <= ${b2}`);
-    assert.equal(b4 - b2, 500, 'each +2 levels adds 500G base');
+    assert.equal(b4, 1200);
+    assert.equal(b4 - b2a, 500, 'each +2 levels adds 500G');
   });
 
   it('scales scratch cash by player level when levelScale is set', () => {
