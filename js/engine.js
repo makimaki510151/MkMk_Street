@@ -1261,7 +1261,7 @@ function payToll(g, payer, sq) {
   owner.cash += toll;
   bumpStat(payer, 'tollPaid', toll);
   bumpStat(owner, 'tollEarned', toll);
-  addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll}G`, 'toll');
+  addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll.toLocaleString()}G`, 'toll');
 
   // 同エリアの株保有者へ、収益の一部をわけ前（銀行から）
   payAreaStockDividend(g, sq.area, toll);

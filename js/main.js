@@ -505,7 +505,20 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
-  if (data.kind === 'scratchMatch' && data.matches?.length) {
+  if (data.kind === 'scratchOutcome') {
+    app.busy = true;
+    presentScratchOutcome({
+      scratched: true,
+      cell: data.cell,
+      messages: data.messages || [],
+      matches: data.matches || [],
+      matchBonus: data.matchBonus || 0,
+      warps: [],
+    }, { remote: true }).finally(() => {
+      clearBusyUnlessEventUi();
+      refreshGameUI();
+    });
+  } else if (data.kind === 'scratchMatch' && data.matches?.length) {
     app.busy = true;
     playScratchMatchReveal(data.matches, data.messages || [], { banner: false }).finally(() => {
       clearBusyUnlessEventUi();
@@ -707,7 +720,7 @@ function maybeDemoLanding() {
     });
     refreshGameUI();
     const demos = [
-      { kicker: '買い物料', title: '支払い発生', detail: 'あか → あお「さくら茶屋」買い物料 420G', kind: 'toll', color: '#e85d75' },
+      { kicker: '買い物料', title: '−420G', detail: 'あか が あお の「さくら茶屋」へ支払い', kind: 'toll', color: '#e85d75' },
       { kicker: 'お店', title: '購入！', detail: 'あかが「青空マーケット」を購入', kind: 'shop', color: '#e85d75' },
       { kicker: '昇進！', title: 'レベルアップ', detail: 'あか 昇進！ Lv.2→3', kind: 'level', color: '#e85d75' },
       { kicker: 'マーク入手！', title: '♠', detail: 'あかがマーク♠を入手', kind: 'mark', color: '#e85d75' },
@@ -938,12 +951,47 @@ function enterGame() {
 function updateInspectPanel() {
   const el = $('#inspect');
   if (!el || !app.game) return;
-  const sq = app.inspectedId != null ? getNode(app.game, app.inspectedId) : null;
+  const g = app.game;
+  const sq = app.inspectedId != null ? getNode(g, app.inspectedId) : null;
   if (!sq) {
     el.innerHTML = '<strong>マス情報</strong><span class="inspect-sub">マスをクリックして詳細を固定表示</span>';
     return;
   }
-  el.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(app.game, sq))}</span>`;
+  if (sq.type === 'shop') {
+    const owner = sq.owner >= 0 ? g.players[sq.owner] : null;
+    const toll = calcToll(g, sq);
+    const closed = !!(owner?.shopsClosed);
+    const areaName = AREA_META[sq.area]?.name || `A${sq.area}`;
+    let mono = '';
+    if (owner) {
+      const areaSize = getAreaShops(g, sq.area).length;
+      const cnt = getPlayerAreaCount(g, owner.id, sq.area);
+      const multi = getTollMulti(cnt, areaSize);
+      if (hasAreaMonopoly(g, owner.id, sq.area)) mono = `独占 ×${multi}`;
+      else if (cnt > 1) mono = `${cnt}/${areaSize}軒 ×${multi}`;
+    }
+    const ownMine = owner && (app.mode === 'local' ? !owner.isCPU : owner.id === app.localSeat);
+    const tollClass = !owner ? 'vacant' : (closed ? 'closed' : (ownMine ? 'mine' : 'enemy'));
+    const tollLead = !owner
+      ? '空き店'
+      : (closed ? '店休中' : (ownMine ? '相手が止まると収入' : '止まると支払い'));
+    const tollAmount = !owner
+      ? '買い物料なし'
+      : (closed ? '0G' : `${toll.toLocaleString()}G`);
+    el.innerHTML = `
+      <strong>${escapeHtml(sq.label || 'お店')}</strong>
+      <span class="inspect-owner" style="--pc:${owner?.color || '#888'}">${
+        owner ? `${escapeHtml(owner.name)} の店` : '空き店舗'
+      }</span>
+      <span class="inspect-toll ${tollClass}">
+        <span class="it-label">${tollLead}</span>
+        <span class="it-amount">${tollAmount}</span>
+      </span>
+      <span class="inspect-sub">価格 ${sq.price.toLocaleString()}G · ${escapeHtml(areaName)}${mono ? ` · ${mono}` : ''}</span>
+    `;
+    return;
+  }
+  el.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(g, sq))}</span>`;
 }
 
 /** 休み中は自動スキップ（人間がNPCのダイスを振らされるのを防ぐ） */
@@ -1143,8 +1191,29 @@ function renderForkRails(pend) {
   });
 }
 
+/** プレイヤーの能動選択時は告知UIを閉じて進行を優先する */
+function flushEventFlashImmediate() {
+  clearTimeout(app.eventFlashTimer);
+  clearTimeout(app.eventFlashNpcTimer);
+  app.eventFlashQueue = [];
+  app.eventFlashOpen = false;
+  app.eventFlashHoldingBusy = false;
+  const overlay = $('#event-flash');
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.classList.remove('show');
+    overlay.dataset.spectator = '0';
+    overlay.dataset.npc = '0';
+  }
+}
+
 function sendAction(action) {
-  if (isEventUiBlocking()) return;
+  // スクラッチ／お祝い等の能動選択は告知中でも受け付ける
+  if (action.type === 'choice') {
+    flushEventFlashImmediate();
+  } else if (isEventUiBlocking()) {
+    return;
+  }
   if (app.mode === 'guest') {
     noteActionActor(app.localSeat);
     app.net.sendToHost({ type: 'action', action, seat: app.localSeat });
@@ -1154,7 +1223,13 @@ function sendAction(action) {
 }
 
 async function applyLocalAction(action) {
-  if (!app.game || app.busy || isEventUiBlocking()) return;
+  if (!app.game) return;
+  if (action.type === 'choice') {
+    flushEventFlashImmediate();
+    app.busy = false;
+  } else if (app.busy || isEventUiBlocking()) {
+    return;
+  }
 
   if (action.type === 'roll') {
     const cur = currentPlayer(app.game);
@@ -1186,7 +1261,6 @@ async function applyLocalAction(action) {
     const pend = app.game.pending;
     if (!pend) return;
     if (app.mode === 'guest') return;
-    if (isEventUiBlocking()) return;
     noteActionActor(pend.playerId ?? app.game.currentPlayerIdx);
 
     if (pend.type === 'fork') {
@@ -1213,7 +1287,7 @@ async function applyLocalAction(action) {
     }
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
-      await presentScratchMatches(result);
+      await presentScratchOutcome(result);
       await presentWarpFx(result.warps);
     }
     if (result.reveal) {
@@ -1337,6 +1411,8 @@ async function continueAdvancing() {
 
     if (result.done) {
       onLandingSfx();
+      const landed = app.game.players[pid]?.pos;
+      if (landed != null) app.inspectedId = landed;
       if (result.warps?.length) await presentWarpFx(result.warps);
       syncState();
       refreshGameUI();
@@ -1385,21 +1461,106 @@ async function playDiceOverlay(face, remote = false) {
   pumpEventFlash();
 }
 
-async function presentScratchMatches(result) {
-  const matches = result.matches || [];
-  if (!matches.length) {
-    hideModal();
-    return;
-  }
+function scratchEffectLines(messages = []) {
+  return (messages || []).filter((m) => !String(m).includes('そろい'));
+}
+
+function scratchMatchLines(messages = []) {
+  return (messages || []).filter((m) => String(m).includes('そろい'));
+}
+
+/** モーダル内に「何が起きたか」を大きく表示 */
+function paintScratchResultPanel(result) {
+  const resultEl = $('#scratch-result');
+  if (!resultEl) return;
+  const label = result.cell?.label || 'スクラッチ';
+  const effects = scratchEffectLines(result.messages);
+  const matches = scratchMatchLines(result.messages);
+  const bonus = Number(result.matchBonus || 0);
+  resultEl.hidden = false;
+  resultEl.classList.remove('match-pop', 'outcome-pop');
+  void resultEl.offsetWidth;
+  resultEl.classList.add('outcome-pop');
+  const matchLine = matches.length
+    ? matches.join(' / ')
+    : (bonus > 0 ? `色そろいボーナス +${bonus}G` : '');
+  resultEl.innerHTML = `
+    <span class="sr-kicker">めくった結果</span>
+    <span class="sr-label">${escapeHtml(label)}</span>
+    <span class="sr-effect">${escapeHtml(effects.join(' ・ ') || '効果を適用しました')}</span>
+    ${matchLine ? `<span class="sr-bonus">${escapeHtml(matchLine)}</span>` : ''}
+  `;
+}
+
+/**
+ * スクラッチは能動行動なので、イベント名・効果・そろいを必ず明示する。
+ * remote: 他端末から受け取った演出（バナー二重送信を避ける）
+ */
+async function presentScratchOutcome(result, { remote = false } = {}) {
+  if (!result) return;
   app.busy = true;
-  broadcastFx({
-    kind: 'scratchMatch',
-    matches,
-    messages: result.messages || [],
-  });
-  await playScratchMatchReveal(matches, result.messages || [], { banner: true });
+
+  const cell = result.cell;
+  const label = cell?.label || 'スクラッチ';
+  const effects = scratchEffectLines(result.messages);
+  const effectDetail = effects.join(' / ') || '効果を適用';
+  const actorId = cell?.scratchedBy;
+  const actor = actorId != null ? app.game?.players?.[actorId] : currentPlayer(app.game);
+  const color = actor?.color || '#ffe08a';
+  const mine = actor
+    ? (app.mode === 'local' ? !actor.isCPU : actor.id === app.localSeat)
+    : true;
+  const matches = result.matches || [];
+
+  paintScratchResultPanel(result);
+
+  if (!remote) {
+    broadcastFx({
+      kind: 'scratchOutcome',
+      cell,
+      messages: result.messages || [],
+      matches,
+      matchBonus: result.matchBonus || 0,
+    });
+  }
+
+  if (matches.length) {
+    await playScratchMatchReveal(matches, result.messages || [], { banner: !remote });
+    paintScratchResultPanel(result);
+    await wait(420);
+  } else {
+    await wait(980);
+  }
+
+  const bannerPayload = {
+    kicker: mine ? 'あなたのスクラッチ' : `${actor?.name || ''} のスクラッチ`,
+    title: label,
+    detail: effectDetail,
+    kind: 'event',
+    color,
+    mine,
+    actorId,
+    visual: {
+      glyph: '削',
+      chips: [
+        ...effects.slice(0, 2),
+        ...(Number(result.matchBonus || 0) > 0 ? [`そろい+${result.matchBonus}G`] : []),
+      ].filter(Boolean),
+    },
+  };
+  // remote はホストから banner FX が届くので二重表示しない
+  if (!remote) {
+    enqueueBanner(bannerPayload);
+    broadcastFx({ kind: 'banner', payload: bannerPayload });
+  }
+
   hideModal();
   clearBusyUnlessEventUi();
+}
+
+/** @deprecated presentScratchOutcome に統合 */
+async function presentScratchMatches(result) {
+  return presentScratchOutcome(result);
 }
 
 function nodeLabel(g, id) {
@@ -1753,11 +1914,15 @@ async function animateCoinReveal(body, reveal) {
 }
 
 async function handleHostAction(from, data) {
-  if (app.busy || isEventUiBlocking()) {
+  const action = data.action;
+  // お祝い／スクラッチ等の能動選択は告知UIより優先
+  if (action?.type === 'choice') {
+    flushEventFlashImmediate();
+    app.busy = false;
+  } else if (app.busy || isEventUiBlocking()) {
     app.net.sendTo(from, { type: 'reject', reason: '出来事の確認中です' });
     return;
   }
-  const action = data.action;
   const seat = app.game.players.findIndex((p) => p.peerId === from);
   if (seat < 0) return;
 
@@ -1804,7 +1969,7 @@ async function handleHostAction(from, data) {
     }
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
-      await presentScratchMatches(result);
+      await presentScratchOutcome(result);
       await presentWarpFx(result.warps);
     }
     if (result.reveal) {
@@ -1955,7 +2120,7 @@ function scheduleCpu() {
       }
       if (result?.monopoly) presentMonopolyFx(result);
       if (result?.scratched) {
-        await presentScratchMatches(result);
+        await presentScratchOutcome(result);
         await presentWarpFx(result.warps);
       }
       if (result?.reveal) {
@@ -2210,10 +2375,19 @@ function bannerFromLog(g, l) {
     title = m ? m[0] : 'マーク';
     detail = l.text;
   } else if (kind === 'toll') {
+    const amt = (l.text.match(/([\d,]+)\s*G/) || [])[1];
+    const m = l.text.match(/^(.+?)\s*→\s*(.+?)[「\s]/);
+    const payer = m?.[1]?.trim() || player?.name || '';
+    const owner = m?.[2]?.trim() || '';
+    const shop = (l.text.match(/「([^」]+)」/) || [])[1] || 'お店';
     kicker = '買い物料';
-    title = '支払い発生';
-    detail = l.text;
+    title = amt ? `−${amt}G` : '支払い';
+    detail = owner
+      ? `${payer} が ${owner} の「${shop}」へ支払い`
+      : l.text;
   } else if (kind === 'level') {
+    // 昇進モーダル表示中は重複告知しない（「お祝いする」が塞がるため）
+    if (g.pending?.type === 'level_up') return null;
     kicker = mine ? '昇進！' : `${player?.name || ''} が昇進`;
     title = 'レベルアップ';
     detail = l.text;
@@ -2237,9 +2411,8 @@ function bannerFromLog(g, l) {
       title = 'お店が休み';
       detail = l.text;
     } else if (/スクラッチ\s*→/.test(l.text)) {
-      kicker = mine ? 'スクラッチ' : `${player?.name || ''} のスクラッチ`;
-      title = 'スクラッチ結果';
-      detail = l.text.replace(/^.*?スクラッチ\s*→\s*/, '');
+      // presentScratchOutcome 側でイベント名・効果を大きく出す
+      return null;
     } else if (/イベント表をスクラッチ/.test(l.text)) {
       kicker = mine ? 'マーク停止' : `${player?.name || ''} がマーク停止`;
       title = 'イベント表オープン';
@@ -2421,8 +2594,10 @@ function resolveEventVisual(payload) {
     const suit = (text.match(/[♠♥♦♣]/) || [])[0];
     if (suit) base.glyph = suit;
   } else if (kind === 'toll') {
-    const amt = (text.match(/([\d,]+)\s*G/) || [])[1];
-    if (amt) chips.push(`${amt}G`);
+    base.glyph = '料';
+    const amt = (text.match(/([\d,]+)\s*G/) || [])[1] || (payload.title || '').replace(/[^\d,]/g, '');
+    if (amt) chips.unshift(`${amt}G`);
+    chips.unshift('支払い');
   } else if (kind === 'system') {
     if (/休憩|休み/.test(text)) {
       base.glyph = 'Z';
@@ -2627,10 +2802,10 @@ function resolveMoneyFxCopy(focus) {
     return {
       mood: 'loss',
       color: '#ff8a80',
-      face: 'G',
+      face: '料',
       title: '買い物料',
       amount: signed,
-      who: who ? `${who} が買い物料を支払い` : '買い物料の支払い',
+      who: who ? `${who} → 他人のお店へ支払い` : '他人のお店へ買い物料を支払い',
       coinMode: 'loss',
       se: 'loss',
       floatClass: 'loss',
@@ -2653,10 +2828,10 @@ function resolveMoneyFxCopy(focus) {
     return {
       mood: 'gain',
       color: '#8fd4a8',
-      face: 'G',
-      title: '買い物料の収入',
+      face: '料',
+      title: '買い物料 収入',
       amount: signed,
-      who: who ? `${who} が買い物料を受け取り` : '買い物料の受け取り',
+      who: who ? `${who} の店への買い物料` : '自分の店への買い物料',
       coinMode: 'gain',
       se: 'gain',
       floatClass: 'gain',
@@ -3035,20 +3210,25 @@ function showChoiceModal(g) {
     const ids = pend.shopIds?.length
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
-    title.textContent = '増資するお店を選ぶ';
+    title.textContent = 'スクラッチ特典：店を選んで増資';
     const rows = ids.map((id) => {
       const sq = getNode(g, id);
       if (!sq) return '';
       const rem = getRemainingInvest(g, sq);
       const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      const capped = rem < amount;
       return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
         <strong>${escapeHtml(sq.label)}</strong>
-        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G · 増資枠 ${rem.toLocaleString()}G</small>
+        <span class="pick-invest-gain">+${Math.min(amount, Math.max(0, rem)).toLocaleString()}G</span>
+        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G · 枠 ${rem.toLocaleString()}G${capped ? '（枠内まで）' : ''}</small>
       </button>`;
     }).join('');
     body.innerHTML = `
-      <p class="modal-lead">無料で <strong>+${amount.toLocaleString()}G</strong> 増資できます</p>
-      <p class="hint">自分の店舗から1つ選んでください</p>
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">好きな自分の店へ <strong>+${amount.toLocaleString()}G</strong> 無料増資</p>
+        <p class="hint">タップした店の価値が上がります（増資枠がある店を選んでください）</p>
+      </div>
       <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
     $$('.pick-invest-shop').forEach((btn) => {
       btn.onclick = () => {
@@ -3057,7 +3237,7 @@ function showChoiceModal(g) {
       };
     });
     const skip = $('#btn-skip-choice');
-    if (skip) skip.textContent = 'おまかせ';
+    if (skip) skip.textContent = 'おまかせで増資';
     return;
   }
 
@@ -3068,9 +3248,11 @@ function showChoiceModal(g) {
     const short = (p?.cash || 0) < pend.price;
     const canRaise = getLiquidatableValue(g, p) >= pend.price;
     title.textContent = '5倍買い？';
+    const paidToll = Number(pend.toll || 0);
     body.innerHTML = `
       <p class="modal-lead"><strong>${escapeHtml(sq.label)}</strong>（${escapeHtml(owner?.name || '')}の店）</p>
-      <p>価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
+      ${paidToll > 0 ? `<p class="inspect-toll enemy" style="margin:0.35rem 0"><span class="it-label">たった今の買い物料</span><span class="it-amount">−${paidToll.toLocaleString()}G</span></p>` : ''}
+      <p>5倍買い価格 <strong>${pend.price.toLocaleString()}G</strong>（店価×5）</p>
       <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G${short ? ' — 不足分は株や物件を売って調達できます' : ''}</p>
       <div class="modal-actions">
         <button class="btn danger" id="m-five" ${!canRaise ? 'disabled' : ''}>
@@ -3187,14 +3369,7 @@ function showChoiceModal(g) {
         <button class="btn primary large" id="m-levelup">お祝いする</button>
       </div>`;
     audio.sfx.levelUp?.() || audio.sfx.win();
-    enqueueBanner({
-      kicker: '昇進！',
-      title: `Lv.${pend.to}`,
-      detail: `${p?.name || ''} +${pend.bonus}G`,
-      kind: 'level',
-      color: p?.color,
-      mine: true,
-    });
+    // 告知フラッシュは出さない（モーダル自体がお祝いUI。出すと「お祝いする」が塞がる）
     $('#m-levelup').onclick = () => {
       hideModal();
       sendAction({ type: 'choice', choice: { action: 'celebrate' } });
@@ -3349,10 +3524,10 @@ function showChoiceModal(g) {
       return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">全員共通の表です。めくると<strong>開けた人の色</strong>で塗られます。同じ色が縦・横・斜めに3つ以上そろうとセルが回り、<strong>${MATCH_BONUS_PER}G×枚数</strong>ボーナス</p>
+      <p class="hint">マスを1つ選んでめくります。結果はこの下に大きく出ます。同じ色が縦・横・斜めに3つ以上そろうと<strong>${MATCH_BONUS_PER}G×枚数</strong></p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
-      <p class="scratch-result" id="scratch-result" hidden></p>
+      <div class="scratch-result" id="scratch-result" hidden></div>
     `;
     if (!canPick) {
       body.querySelector('.hint')?.insertAdjacentHTML('afterend', '<p class="hint">他のプレイヤーが選ぶのを待っています…</p>');
@@ -3374,7 +3549,12 @@ function showChoiceModal(g) {
         const resultEl = $('#scratch-result');
         if (resultEl) {
           resultEl.hidden = false;
-          resultEl.textContent = `${cell?.label || ''} をスクラッチ…`;
+          resultEl.classList.add('outcome-pop');
+          resultEl.innerHTML = `
+            <span class="sr-kicker">めくり中</span>
+            <span class="sr-label">${escapeHtml(cell?.label || `No.${cell?.eventId ?? ''}`)}</span>
+            <span class="sr-effect">効果を適用しています…</span>
+          `;
         }
         audio.sfx.buy();
         // そろい演出のためモーダルは残す（結果後に閉じる）
