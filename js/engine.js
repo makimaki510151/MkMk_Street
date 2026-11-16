@@ -23,6 +23,38 @@ import {
 export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
 
+/**
+ * プレイヤー色をパレットへ正規化する。
+ * 未知の色や重複は未使用色へ振り直し、再接続・旧セーブにも耐える。
+ * @param {string|null|undefined} color
+ * @param {number} [index=0]
+ * @param {Iterable<string>} [usedColors]
+ */
+export function normalizePlayerColor(color, index = 0, usedColors = []) {
+  const palette = PLAYER_COLORS;
+  const used = new Set(
+    [...usedColors]
+      .filter(Boolean)
+      .map((c) => String(c).toLowerCase()),
+  );
+  const raw = String(color || '').toLowerCase();
+  const matched = palette.find((p) => p.toLowerCase() === raw);
+  if (matched && !used.has(matched.toLowerCase())) return matched;
+  const free = palette.find((p) => !used.has(p.toLowerCase()));
+  if (free) return free;
+  return palette[((Number(index) || 0) % palette.length + palette.length) % palette.length];
+}
+
+/** ロビー／席配列の色を一括でパレット内・重複なしにする */
+export function normalizeLobbyColors(players = []) {
+  const used = [];
+  return players.map((p, i) => {
+    const color = normalizePlayerColor(p?.color, i, used);
+    used.push(color);
+    return { ...p, color };
+  });
+}
+
 /** CPU個性（席順でローテ。明示指定も可） */
 export const CPU_PERSONALITY_KEYS = ['tycoon', 'broker', 'magnate', 'gambler'];
 export const CPU_PERSONALITIES = {
@@ -373,7 +405,8 @@ export function createGame({
   const rng = mulberry32(seed);
 
   let cpuOrd = 0;
-  const plist = players.map((pl, i) => {
+  const colored = normalizeLobbyColors(players);
+  const plist = colored.map((pl, i) => {
     const isCPU = !!pl.isCPU;
     const personality = isCPU
       ? (pl.personality && CPU_PERSONALITIES[pl.personality]
@@ -384,7 +417,7 @@ export function createGame({
       id: i,
       peerId: pl.peerId || null,
       name: pl.name || PLAYER_NAMES_DEFAULT[i] || `P${i + 1}`,
-      color: pl.color || PLAYER_COLORS[i % PLAYER_COLORS.length],
+      color: pl.color,
       isCPU,
       personality,
       cash: initialCash,
@@ -971,6 +1004,11 @@ export function getSharedEventTable(g) {
 export function restoreState(data) {
   const g = { ...data };
   for (const p of g.players || []) ensureStats(p);
+  // 再接続・旧状態で未知色が残っていてもパレットへ寄せる
+  if (Array.isArray(g.players) && g.players.length) {
+    const normalized = normalizeLobbyColors(g.players);
+    g.players = g.players.map((p, i) => ({ ...p, color: normalized[i].color }));
+  }
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
   g.switchState = g.switchState ? 1 : 0;

@@ -23,6 +23,8 @@ import {
   getNode,
   getSharedEventTable,
   PLAYER_COLORS,
+  normalizePlayerColor,
+  normalizeLobbyColors,
   getCpuPersonality,
   hasAreaMonopoly,
   getTollMulti,
@@ -198,6 +200,37 @@ function findRejoinSeat(g, name, rejoinSeat) {
   const offlineHuman = g.players.findIndex((p) => !p.isCPU && !p.bankrupt && p.name === nm && (p.offline || !p.peerId));
   if (offlineHuman >= 0) return offlineHuman;
   return g.players.findIndex((p) => p.isCPU && p.flags?.reclaimableHuman && !p.bankrupt && p.name === nm);
+}
+
+/** ロビー再接続：同名・旧 peer の席を回収し、色は未使用パレットへ適応 */
+function reclaimOrPushLobbyPlayer(from, data) {
+  const peerId = data.peerId || from;
+  const name = String(data.name || '').trim() || `P${app.lobbyPlayers.length + 1}`;
+  const byPeer = app.lobbyPlayers.findIndex((p) => p.peerId === peerId);
+  const byName = app.lobbyPlayers.findIndex((p) => (
+    !p.isCPU && !p.isHost && p.name === name && p.peerId !== peerId
+  ));
+  const idx = byPeer >= 0 ? byPeer : byName;
+  if (idx >= 0) {
+    const others = app.lobbyPlayers.filter((_, i) => i !== idx).map((p) => p.color);
+    const prev = app.lobbyPlayers[idx];
+    const color = normalizePlayerColor(prev.color, idx, others);
+    app.lobbyPlayers[idx] = { ...prev, peerId, name, color, isCPU: false };
+    return { reclaimed: true, index: idx };
+  }
+  if (app.lobbyPlayers.length >= 4) return { full: true };
+  const used = app.lobbyPlayers.map((p) => p.color);
+  const i = app.lobbyPlayers.length;
+  app.lobbyPlayers.push({
+    peerId,
+    name,
+    color: normalizePlayerColor(data.color, i, used),
+  });
+  return { reclaimed: false, index: i };
+}
+
+function resyncLobbyColors() {
+  app.lobbyPlayers = normalizeLobbyColors(app.lobbyPlayers);
 }
 
 function clearDisconnectTimer(seat) {
@@ -771,10 +804,11 @@ async function openLobby(role, prefill = {}) {
     if (app.lobbyPlayers.length < 2) return toast('あと1人以上待ってください（またはCPUを追加）');
     const goal = Number($('#lobby-goal').value) || 10000;
     const mapId = selectedMapId('#lobby-map-options');
-    const players = app.lobbyPlayers.map((p, i) => ({
+    resyncLobbyColors();
+    const players = app.lobbyPlayers.map((p) => ({
       peerId: p.peerId,
       name: p.name,
-      color: PLAYER_COLORS[i % PLAYER_COLORS.length],
+      color: p.color,
       isCPU: !!p.isCPU,
     }));
     app.game = createGame({ players, goal, mapId });
@@ -788,12 +822,14 @@ async function openLobby(role, prefill = {}) {
     if (!app.net) return toast('先に「部屋作成」してください');
     if (app.lobbyPlayers.length >= 4) return toast('最大4人です');
     const i = app.lobbyPlayers.length;
+    const used = app.lobbyPlayers.map((p) => p.color);
     app.lobbyPlayers.push({
       peerId: `cpu-${i}`,
       name: `CPU${i}`,
-      color: PLAYER_COLORS[i],
+      color: normalizePlayerColor(null, i, used),
       isCPU: true,
     });
+    resyncLobbyColors();
     renderLobbyPlayers();
     app.net?.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
   };
@@ -824,10 +860,6 @@ function handleNetEvent({ from, data }) {
 
   if (app.mode === 'host') {
     if (data.type === 'hello') {
-      if (app.lobbyPlayers.length >= 4) {
-        app.net.sendTo(from, { type: 'lobby_full' });
-        return;
-      }
       if (app.game) {
         const seat = findRejoinSeat(app.game, data.name, data.rejoinSeat);
         if (seat >= 0) {
@@ -840,6 +872,9 @@ function handleNetEvent({ from, data }) {
           if (!pl.flags) pl.flags = {};
           pl.flags.reclaimableHuman = false;
           delete pl.flags.disconnectedAt;
+          // 存在しない／重複色なら未使用パレット色へ
+          const others = app.game.players.filter((_, i) => i !== seat).map((p) => p.color);
+          pl.color = normalizePlayerColor(pl.color, seat, others);
           app.game.logs.unshift({ text: `${pl.name} が再接続`, kind: 'system', t: Date.now() });
           if (app.game.logs.length > 80) app.game.logs.length = 80;
           app.net.sendTo(from, {
@@ -855,12 +890,12 @@ function handleNetEvent({ from, data }) {
         app.net.sendTo(from, { type: 'game_already' });
         return;
       }
-      const i = app.lobbyPlayers.length;
-      app.lobbyPlayers.push({
-        peerId: data.peerId || from,
-        name: data.name || `P${i + 1}`,
-        color: PLAYER_COLORS[i % PLAYER_COLORS.length],
-      });
+      const joined = reclaimOrPushLobbyPlayer(from, data);
+      if (joined.full) {
+        app.net.sendTo(from, { type: 'lobby_full' });
+        return;
+      }
+      resyncLobbyColors();
       renderLobbyPlayers();
       app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
       return;
@@ -913,7 +948,7 @@ function handleNetEvent({ from, data }) {
 
   if (app.mode === 'guest') {
     if (data.type === 'lobby_sync') {
-      app.lobbyPlayers = data.players;
+      app.lobbyPlayers = normalizeLobbyColors(data.players || []);
       renderLobbyPlayers();
       return;
     }
@@ -2395,17 +2430,18 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
   }
   if (typeof audio.sfx.fork === 'function') audio.sfx.fork();
   else audio.sfx.step();
-  // ゲストはスライドSEのみ。告知はホスト／ローカルで1回（ログ告知とも二重にしない）
+  // ゲストはスライドSEのみ。ホストはフィードへ軽量スタンプのみ
+  // （確認ダイアログにすると reader がゲストで閉じられず choice/roll 通信が止まる）
   if (!remote) {
-    enqueueBanner({
+    pushEventStamp({
       kicker: 'スイッチ',
       title: '航路が切り替わった',
       detail: `動くマス ×${moves.length}`,
       kind: 'system',
       color: '#ffe08a',
-      actorId: app.actionActorId,
       silentStamp: true,
     });
+    toast('航路が切り替わった');
   }
   await wait(dur + 80);
   if (!wasBusy) clearBusyUnlessEventUi();
@@ -3128,6 +3164,7 @@ function refreshGameUI() {
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
+    const myTurnCard = active && me ? 'my-turn' : '';
     const persona = p.isCPU ? getCpuPersonality(p) : null;
     const atGoal = !p.bankrupt && a.total >= g.goal;
     const status = [
@@ -3152,8 +3189,8 @@ function refreshGameUI() {
       ? `<div class="pc-stocks">${stockBits.join('')}</div>`
       : '<div class="pc-stocks empty">株なし</div>';
     return `
-      <div class="player-card ${active} ${me}" data-pid="${p.id}" style="--pc:${p.color}">
-        <div class="pc-head"><span class="pc-dot"></span><strong>${escapeHtml(p.name)}</strong><span class="pc-lv">Lv.${p.level}</span></div>
+      <div class="player-card ${active} ${me} ${myTurnCard}" data-pid="${p.id}" style="--pc:${p.color}">
+        <div class="pc-head"><span class="pc-dot"></span><strong>${escapeHtml(p.name)}</strong>${myTurnCard ? '<span class="pc-turn-badge">あなたの番</span>' : ''}<span class="pc-lv">Lv.${p.level}</span></div>
         <div class="pc-money${a.cash < 0 ? ' debt' : ''}" data-cash="${a.cash}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
@@ -3176,9 +3213,20 @@ function refreshGameUI() {
   $('#goal-chip').classList.toggle('urgent', pressure.length > 0);
   $('#turn-chip').textContent = `ターン ${g.turn}`;
   const cur = currentPlayer(g);
+  const myTurnNow = isMyTurn() && g.phase !== 'gameover';
   $('#phase-chip').textContent = phaseLabel(g);
-  $('#current-name').textContent = cur ? `${cur.name} の番` : '';
-  $('#current-name').style.color = cur?.color || '#fff';
+  const currentName = $('#current-name');
+  if (currentName) {
+    if (myTurnNow) {
+      currentName.textContent = 'あなたの番！';
+      currentName.classList.add('your-turn');
+    } else {
+      currentName.textContent = cur ? `${cur.name} の番` : '';
+      currentName.classList.remove('your-turn');
+    }
+    currentName.style.color = cur?.color || '#fff';
+  }
+  document.body.classList.toggle('your-turn', myTurnNow);
   const me = localHumanSeat(g) != null ? g.players[localHumanSeat(g)] : null;
   const buff = $('#buff-chip');
   if (buff) {
@@ -3233,7 +3281,7 @@ function refreshGameUI() {
       ? '演出中…'
       : (cur?.resting && humanTurn
         ? '休憩中（自動スキップ）…'
-        : (canRoll ? 'サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
+        : (canRoll ? 'あなたの番！サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
   }
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
@@ -3248,7 +3296,7 @@ function refreshGameUI() {
         showChoiceModal(g);
       }
       $('#wait-hint').hidden = true;
-      setStatusBanner(false);
+      setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
     } else {
       app.modalActive = false;
       hideModal();
@@ -3263,12 +3311,14 @@ function refreshGameUI() {
     $('#wait-hint').hidden = true;
     $('#btn-modal-restore').hidden = true;
     if (g.phase === 'moving' || app.hideDiceResult) {
-      setStatusBanner(true, `${cur?.name || ''} が移動中`, cur?.color);
+      setStatusBanner(true, myTurnNow ? 'あなたが移動中' : `${cur?.name || ''} が移動中`, cur?.color);
+    } else if (canRoll) {
+      setStatusBanner(true, 'あなたの番！サイコロを振ろう', cur?.color);
     } else {
       setStatusBanner(false);
     }
   } else if (app.hideDiceResult) {
-    setStatusBanner(true, `${cur?.name || ''} がサイコロ中`, cur?.color);
+    setStatusBanner(true, myTurnNow ? 'あなたがサイコロ中' : `${cur?.name || ''} がサイコロ中`, cur?.color);
   }
 
   if (g.phase === 'gameover') {
@@ -3285,7 +3335,7 @@ function refreshGameUI() {
       && g.phase === 'await_roll' && humanTurn && !cur?.resting;
     if (canRollNow) {
       $('#btn-roll').disabled = false;
-      $('#btn-roll').textContent = 'サイコロを振る';
+      $('#btn-roll').textContent = 'あなたの番！サイコロを振る';
     }
   }
   maybeAutoSkipRest();
