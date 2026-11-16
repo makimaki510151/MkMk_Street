@@ -418,6 +418,44 @@ describe('MkMk Street engine', () => {
     const again = restoreState(serializeState(g));
     assert.equal(again.switchState, g.switchState);
     assert.ok(Array.isArray(again.switchGates));
+
+    // 着地ログは UI の bannerFromLog が抑止する文言（確認ダイアログにしない）
+    const switchLog = g.logs.find((l) => /スイッチを倒した/.test(l.text));
+    assert.ok(switchLog, 'switch land should log toggle');
+    assert.equal(switchLog.kind, 'event');
+    assert.match(switchLog.text, /経路が切り替わった/);
+    assert.match(
+      switchLog.text,
+      /スイッチを倒した|経路が切り替わった|航路が切り替わった/,
+      'log must stay in bannerFromLog suppress list',
+    );
+  });
+
+  it('shell harbor switch land without switchMoves still toggles and logs', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+      mapId: 'shell_harbor',
+    });
+    g.switchMoves = [];
+    const hub = g.map.find((n) => n.type === 'switch');
+    assert.ok(hub);
+    const before = g.switchState;
+    g.players[0].pos = hub.id;
+    g.players[0].prevPos = hub.nexts[0];
+    g.currentPlayerIdx = 0;
+    g.move = { stepsLeft: 0, path: [hub.id], passedBank: false, startPos: hub.nexts[0] };
+    g.phase = 'moving';
+    const landed = advanceMove(g);
+    assert.equal(g.switchState, before ? 0 : 1);
+    assert.ok(Array.isArray(landed.switchMoves));
+    assert.equal(landed.switchMoves.length, 0, 'no sliding tiles when switchMoves stripped');
+    assert.equal(g.phase, 'await_roll', 'switch land ends turn');
+    const switchLog = g.logs.find((l) => /スイッチを倒した/.test(l.text));
+    assert.ok(switchLog);
+    assert.equal(switchLog.kind, 'event');
+    // presentSwitchFx は動かないが、ログ抑止で確認ダイアログは出さない契約
+    assert.match(switchLog.text, /スイッチを倒した|経路が切り替わった/);
   });
 
   it('creates a board with shops and areas', () => {
