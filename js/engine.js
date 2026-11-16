@@ -1467,6 +1467,9 @@ function resumeMoveAfterBank(g, p) {
 }
 
 function handleBank(g, p, landed) {
+  // 昇進前の総資産（昇進賞金で初めて目標到達した場合は再通過が必要）
+  const hadGoalBefore = getPlayerAssets(g, p).total >= g.goal;
+  let leveledUp = false;
   if (hasFullMarks(p)) {
     const old = p.level;
     const to = old + 1;
@@ -1477,12 +1480,23 @@ function handleBank(g, p, landed) {
     p.level = to;
     p.marks = [false, false, false, false];
     p.flags.pendingLevelUp = { from: old, to, bonus };
+    leveledUp = true;
     addLog(g, `${p.name} 昇進！ Lv.${old}→${to} 賞金 +${bonus}G（Lv.${to}基準）`, 'level');
   }
 
-  // 目標到達済みなら停止でも通過でもゴール
+  // 目標到達済みなら停止でも通過でもゴール。
+  // ただしこの訪問の昇進賞金で初めて到達した場合は、いったん離れて再通過が必要。
   const assets = getPlayerAssets(g, p);
   if (assets.total >= g.goal) {
+    if (leveledUp && !hadGoalBefore) {
+      addLog(
+        g,
+        `${p.name} が昇進で目標資産に到達！ いったん銀行を出て、もう一度銀行を通過（または停止）で勝利`,
+        'level',
+      );
+      refreshGoalPressure(g);
+      return false;
+    }
     g.winnerId = p.id;
     g.phase = 'gameover';
     addLog(
