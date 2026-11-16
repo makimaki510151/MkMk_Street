@@ -1075,8 +1075,15 @@ function playRemoteFx(data) {
     dismissEventFlash({ remote: true });
   }
   if (data.kind === 'fiveBuy') {
-    audio.sfx.fiveBuy();
-    if (data.payload) enqueueBanner(data.payload);
+    // payload 無しでも最低限の奪取告知を出す（古いホスト互換）
+    presentFiveBuyFx({
+      remote: true,
+      ...(data.payload ? { payload: data.payload } : {}),
+      fiveBuyShop: data.shop,
+      fiveBuyMulti: data.multi,
+      fiveBuyPlayerId: data.playerId,
+      fiveBuyCoupon: data.coupon,
+    });
   }
   if (data.kind === 'monopoly') {
     audio.sfx.monopoly();
@@ -1087,6 +1094,43 @@ function playRemoteFx(data) {
     if (data.payload) enqueueBanner(data.payload);
   }
   if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
+}
+
+/** 5倍買い（／クーポン3倍）奪取のSE＋告知。全経路で payload 付き同期する */
+function presentFiveBuyFx(result = {}) {
+  if (!result || (!result.fiveBuy && !result.remote && !result.payload)) return;
+  const who = app.game?.players?.[result.fiveBuyPlayerId]
+    || app.game?.players?.[app.actionActorId]
+    || currentPlayer(app.game);
+  const multi = Number(result.fiveBuyMulti) || 5;
+  const shop = result.fiveBuyShop || '';
+  const coupon = !!result.fiveBuyCoupon;
+  const mine = who && (app.mode === 'local' ? !who.isCPU : who.id === app.localSeat);
+  const payload = result.payload || {
+    kicker: `${multi}倍買い`,
+    title: 'お店を奪取',
+    detail: shop
+      ? `${who?.name || ''} が「${shop}」を${multi}倍買い${coupon ? '（クーポン）' : ''}`
+      : `店価×${multi}でお店を買収した`,
+    kind: 'shop',
+    color: who?.color || '#ffe08a',
+    mine: !!mine,
+    actorId: who?.id ?? app.actionActorId,
+  };
+  audio.sfx.fiveBuy();
+  if (!result.remote) {
+    broadcastFx({
+      kind: 'fiveBuy',
+      payload,
+      shop,
+      multi,
+      playerId: who?.id,
+      coupon,
+    });
+    enqueueBanner(payload);
+  } else {
+    enqueueBanner(payload);
+  }
 }
 
 function presentMonopolyFx(result) {
@@ -2032,19 +2076,7 @@ async function applyLocalAction(action) {
     if (!result.ok) return toast(result.error || '失敗');
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
-    if (result.fiveBuy) {
-      audio.sfx.fiveBuy();
-      const fivePayload = {
-        kicker: '5倍買い',
-        title: 'お店を奪取',
-        detail: '店価×5でお店を買収した',
-        kind: 'shop',
-        color: currentPlayer(app.game)?.color || '#ffe08a',
-        mine: true,
-      };
-      broadcastFx({ kind: 'fiveBuy', payload: fivePayload });
-      enqueueBanner(fivePayload);
-    }
+    if (result.fiveBuy) presentFiveBuyFx(result);
     if (result.monopolyBreak) presentMonopolyBreakFx(result);
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
@@ -2909,10 +2941,7 @@ async function handleHostAction(from, data) {
     }
     const result = applyChoice(app.game, action.choice);
     if (result.state) app.game = restoreState(result.state);
-    if (result.fiveBuy) {
-      audio.sfx.fiveBuy();
-      broadcastFx({ kind: 'fiveBuy' });
-    }
+    if (result.fiveBuy) presentFiveBuyFx(result);
     if (result.monopolyBreak) presentMonopolyBreakFx(result);
     if (result.monopoly) presentMonopolyFx(result);
     if (result.scratched) {
@@ -3061,10 +3090,7 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
-      if (result?.fiveBuy) {
-        audio.sfx.fiveBuy();
-        broadcastFx({ kind: 'fiveBuy' });
-      }
+      if (result?.fiveBuy) presentFiveBuyFx(result);
       if (result?.monopolyBreak) presentMonopolyBreakFx(result);
       if (result?.monopoly) presentMonopolyFx(result);
       if (result?.scratched) {
@@ -3470,7 +3496,13 @@ function bannerFromLog(g, l) {
     detail = l.text;
   } else if (kind === 'shop') {
     kicker = mine ? 'お店' : `${player?.name || ''} のお店`;
-    title = /購入/.test(l.text) ? '購入！' : (/増資/.test(l.text) ? '増資！' : (/5倍/.test(l.text) ? '5倍買い！' : 'お店'));
+    title = /購入/.test(l.text)
+      ? '購入！'
+      : (/増資/.test(l.text)
+        ? '増資！'
+        : (/[0-9]+倍買い|奪取/.test(l.text) ? '5倍買い！' : 'お店'));
+    // 専用 fiveBuy FX と二重になるログ告知は抑止
+    if (/[0-9]+倍買いで/.test(l.text) && /奪取/.test(l.text)) return null;
     detail = l.text;
   } else if (kind === 'stock') {
     if (/わけ前|配当/.test(l.text)) {

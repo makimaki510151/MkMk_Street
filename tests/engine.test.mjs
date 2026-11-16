@@ -1386,7 +1386,42 @@ describe('MkMk Street engine', () => {
     const done = applyChoice(g, { action: 'continue', execute: true });
     assert.equal(done.ok, true);
     assert.equal(done.fiveBuy, true);
+    assert.equal(done.fiveBuyShop, shop.label);
+    assert.equal(done.fiveBuyMulti, 5);
+    assert.equal(done.fiveBuyPlayerId, 0);
     assert.equal(shop.owner, 0);
+  });
+
+  it('five_buy success returns FX metadata for client sync', () => {
+    const g = createGame({
+      players: [{ name: 'A', cash: 5000 }, { name: 'B', cash: 5000 }],
+      seed: 93,
+      cash: 5000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    shop.price = 150;
+    shop.basePrice = 150;
+    shop.extraInvest = 0;
+    g.players[0].cash = 5000;
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'five_buy',
+      playerId: 0,
+      shopId: shop.id,
+      price: shop.price * 5,
+      multi: 5,
+      toll: 30,
+    };
+    const done = applyChoice(g, { action: 'buy' });
+    assert.equal(done.ok, true);
+    assert.equal(done.fiveBuy, true);
+    assert.equal(done.fiveBuyShop, shop.label);
+    assert.equal(done.fiveBuyMulti, 5);
+    assert.equal(done.fiveBuyPlayerId, 0);
+    assert.equal(shop.owner, 0);
+    assert.ok(g.logs.some((l) => /5倍買いで/.test(l.text) && /奪取/.test(l.text)));
   });
 
   it('all_cash event gives money to every living player', () => {

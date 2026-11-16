@@ -1991,6 +1991,10 @@ export function applyChoice(g, choice) {
         return {
           ok: true,
           fiveBuy: true,
+          fiveBuyShop: sq.label,
+          fiveBuyMulti: multi,
+          fiveBuyPlayerId: p.id,
+          fiveBuyCoupon: usedCoupon,
           ...(monopolyBreak ? { monopolyBreak } : {}),
           ...(mono || {}),
           state: serializeState(g),
