@@ -123,10 +123,17 @@ export function createAudio() {
       tone(780, 0.35, 'sine', 0.06, 0.38);
       tone(240, 0.2, 'triangle', 0.05, 0.7);
     },
+    /** 自分の手番 — はっきり分かる上昇ファンファーレ */
     yourTurn() {
-      tone(523, 0.12, 'sine', 0.1);
-      tone(659, 0.14, 'sine', 0.1, 0.1);
-      tone(784, 0.22, 'sine', 0.12, 0.22);
+      noiseBurst(0.05, 0.07);
+      tone(294, 0.1, 'square', 0.08);
+      tone(392, 0.11, 'square', 0.09, 0.07);
+      tone(523, 0.13, 'triangle', 0.11, 0.15);
+      tone(659, 0.15, 'triangle', 0.12, 0.26);
+      tone(784, 0.28, 'sine', 0.14, 0.38);
+      tone(1046, 0.36, 'sine', 0.11, 0.52);
+      tone(784, 0.18, 'triangle', 0.07, 0.72);
+      tone(523, 0.22, 'sine', 0.06, 0.82);
     },
     buy() {
       tone(523, 0.08, 'triangle', 0.08);

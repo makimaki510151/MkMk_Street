@@ -1165,7 +1165,10 @@ export function chooseFork(g, nextId) {
   if (!allowed.includes(nextId)) return { ok: false, error: 'bad_fork' };
 
   const from = applyStep(g, p, nextId);
-  addLog(g, `${p.name} は「${getNode(g, nextId)?.label || nextId}」方面へ`, 'dice');
+  const dest = getNode(g, nextId);
+  // forkAs（例: 北埠頭へ）を優先。label「もう一回」だと通過時に再挑戦と誤解される
+  const way = dest?.forkAs || dest?.label || nextId;
+  addLog(g, `${p.name} は「${way}」方面へ`, 'dice');
   g.pending = null;
   if (g.phase !== 'gameover') g.phase = 'moving';
 
@@ -1988,6 +1991,10 @@ export function applyChoice(g, choice) {
         return {
           ok: true,
           fiveBuy: true,
+          fiveBuyShop: sq.label,
+          fiveBuyMulti: multi,
+          fiveBuyPlayerId: p.id,
+          fiveBuyCoupon: usedCoupon,
           ...(monopolyBreak ? { monopolyBreak } : {}),
           ...(mono || {}),
           state: serializeState(g),
@@ -2019,15 +2026,15 @@ export function applyChoice(g, choice) {
     }
     if (choice.action === 'cancel') {
       // 売却済みの現金は残し、元の購入/5倍買いは取りやめてターン終了
-      // 料金不足（after_toll）だけは負債解消を優先して続きへ
+      // 料金不足（after_toll）は負債解消まで閉じられない（pending を消さない）
       const resume = pending.resume;
+      if (resume?.type === 'after_toll' && p.cash < target) {
+        return { ok: false, error: 'still_short', state: serializeState(g) };
+      }
       g.pending = null;
       if (resume?.type === 'after_toll' && p.cash >= target) {
         resumeAfterRaiseFunds(g, p, resume);
         return { ok: true, state: serializeState(g) };
-      }
-      if (resume?.type === 'after_toll' && p.cash < target) {
-        return { ok: false, error: 'still_short' };
       }
       endTurn(g);
       return { ok: true, cancelled: true, state: serializeState(g) };

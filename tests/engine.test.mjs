@@ -228,6 +228,50 @@ describe('MkMk Street engine', () => {
     assert.ok(labels.includes('航路へ'), labels.join(','));
   });
 
+  it('rollon pier: pass-through fork logs label but does not grant retry until land', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 4,
+      mapId: 'shell_harbor',
+    });
+    const swN = g.map.find((n) => n.type === 'switch' && n.row === 1);
+    const pierScratch = g.map.find((n) => n.type === 'scratch' && n.col === 3 && n.row === 1);
+    const pierN2 = g.map.find((n) => n.type === 'rollon' && n.col === 5 && n.row === 1);
+    assert.ok(swN && pierScratch && pierN2);
+    assert.equal(pierN2.label, 'もう一回');
+
+    // 歩数残りありで rollon へ分岐 → 通過のみ（再挑戦ログなし）
+    g.players[0].pos = swN.id;
+    g.players[0].prevPos = pierScratch.id;
+    g.move = { stepsLeft: 3, path: [swN.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    assert.equal(advanceMove(g).forked, true);
+    const pass = chooseFork(g, pierN2.id);
+    assert.equal(pass.ok, true);
+    assert.equal(pass.done, false);
+    assert.equal(g.players[0].pos, pierN2.id);
+    assert.ok(g.move?.stepsLeft > 0);
+    assert.equal(g.phase, 'moving');
+    assert.ok(
+      g.logs.some((l) => /「北埠頭へ」方面へ/.test(l.text)),
+      'fork log prefers forkAs over rollon label',
+    );
+    assert.equal(g.logs.some((l) => /「もう一回」方面へ/.test(l.text)), false);
+    assert.equal(g.logs.some((l) => /もう一回サイコロ/.test(l.text)), false);
+
+    // ぴったり着地なら再挑戦
+    g.players[0].pos = pierN2.id;
+    g.players[0].prevPos = swN.id;
+    g.move = { stepsLeft: 0, path: [pierN2.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    g.pending = null;
+    const land = advanceMove(g);
+    assert.equal(land.ok, true);
+    assert.equal(land.done, true);
+    assert.equal(g.phase, 'await_roll');
+    assert.ok(g.logs.some((l) => /もう一回サイコロ/.test(l.text)));
+  });
+
   it('shell harbor packs rim; pier hubs switches; areas regrouped', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
@@ -1299,6 +1343,34 @@ describe('MkMk Street engine', () => {
     assert.equal(cont.ok, true);
   });
 
+  it('raise_funds cancel while still short after toll keeps pending open', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 94,
+      cash: 2000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    g.players[0].cash = -120;
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'raise_funds',
+      playerId: 0,
+      targetCash: 0,
+      reason: 'toll',
+      resume: { type: 'after_toll', shopId: shop.id, toll: 200 },
+    };
+    const bad = applyChoice(g, { action: 'cancel' });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.error, 'still_short');
+    assert.equal(g.pending?.type, 'raise_funds');
+    assert.equal(g.phase, 'await_choice');
+    assert.ok(bad.state);
+    const again = restoreState(bad.state);
+    assert.equal(again.pending?.type, 'raise_funds');
+  });
+
   it('five_buy shortfall opens raise_funds then executes after selling stock', () => {
     const g = createGame({
       players: [{ name: 'A', cash: 500 }, { name: 'B', cash: 5000 }],
@@ -1342,7 +1414,42 @@ describe('MkMk Street engine', () => {
     const done = applyChoice(g, { action: 'continue', execute: true });
     assert.equal(done.ok, true);
     assert.equal(done.fiveBuy, true);
+    assert.equal(done.fiveBuyShop, shop.label);
+    assert.equal(done.fiveBuyMulti, 5);
+    assert.equal(done.fiveBuyPlayerId, 0);
     assert.equal(shop.owner, 0);
+  });
+
+  it('five_buy success returns FX metadata for client sync', () => {
+    const g = createGame({
+      players: [{ name: 'A', cash: 5000 }, { name: 'B', cash: 5000 }],
+      seed: 93,
+      cash: 5000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    shop.price = 150;
+    shop.basePrice = 150;
+    shop.extraInvest = 0;
+    g.players[0].cash = 5000;
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'five_buy',
+      playerId: 0,
+      shopId: shop.id,
+      price: shop.price * 5,
+      multi: 5,
+      toll: 30,
+    };
+    const done = applyChoice(g, { action: 'buy' });
+    assert.equal(done.ok, true);
+    assert.equal(done.fiveBuy, true);
+    assert.equal(done.fiveBuyShop, shop.label);
+    assert.equal(done.fiveBuyMulti, 5);
+    assert.equal(done.fiveBuyPlayerId, 0);
+    assert.equal(shop.owner, 0);
+    assert.ok(g.logs.some((l) => /5倍買いで/.test(l.text) && /奪取/.test(l.text)));
   });
 
   it('all_cash event gives money to every living player', () => {
