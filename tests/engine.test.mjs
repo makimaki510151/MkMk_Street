@@ -106,7 +106,7 @@ describe('MkMk Street engine', () => {
       const board = buildBoard(def.id);
       assert.equal(board.mapId, def.id);
       assert.ok(board.nodes.length > 10);
-      assert.ok(board.cols >= 9 && board.rows >= 8);
+      assert.ok(board.cols >= 9 && board.rows >= 7);
       for (const n of board.nodes) {
         for (const nid of n.nexts) {
           const other = board.nodes.find((x) => x.id === nid);
@@ -124,16 +124,17 @@ describe('MkMk Street engine', () => {
     }
 
     const isle = buildBoard('cliff_isle');
-    assert.ok(isle.areas[11], 'cliff isle should have detached area 11');
-    assert.ok(isle.areas[12], 'cliff isle should have second island area 12');
-    assert.equal(isle.areas[11].name, 'がけしたどおり');
-    assert.equal(isle.areas[12].name, '潮風どおり');
+    assert.ok(isle.areas[7], 'cliff isle should have detached area 7');
+    assert.ok(isle.areas[8], 'cliff isle should have second island area 8');
+    assert.equal(isle.areas[7].name, 'がけしたどおり');
+    assert.equal(isle.areas[8].name, '潮風どおり');
     assert.ok(isle.nodes.some((n) => n.type === 'warp'));
-    // 小島中央に株マスはない（証券は本島側）
+    assert.ok(isle.nodes.some((n) => n.type === 'suit_fill'), 'island has suit_fill square');
+    // 小島に株マスはない（証券は本島側）
     const isleNodeIds = new Set();
     {
       const warps = isle.nodes.filter((n) => n.type === 'warp');
-      const isleWarp = warps.find((n) => n.label.includes('本島')) || warps.find((n) => n.col >= 10);
+      const isleWarp = warps.find((n) => n.label.includes('本島')) || warps.find((n) => n.col >= 8);
       assert.ok(isleWarp);
       const q = [isleWarp.id];
       isleNodeIds.add(isleWarp.id);
@@ -152,14 +153,14 @@ describe('MkMk Street engine', () => {
         assert.notEqual(n.type, 'stockbroker', 'island must not have center stockbroker');
       }
     }
-    assert.ok(isle.nodes.some((n) => n.type === 'stockbroker' && n.col < 10), 'main island keeps a stockbroker');
+    assert.ok(isle.nodes.some((n) => n.type === 'stockbroker' && n.col < 8), 'main island keeps a stockbroker');
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 2,
       mapId: 'cliff_isle',
     });
     assert.equal(g.mapId, 'cliff_isle');
-    assert.ok(g.cols >= 16);
+    assert.ok(g.cols >= 13);
 
     // 島は徒歩では到達できない
     const bank = getNode(g, g.startId);
@@ -174,10 +175,10 @@ describe('MkMk Street engine', () => {
         }
       }
     }
-    const isleShop = g.map.find((n) => n.type === 'shop' && n.area === 11);
+    const isleShop = g.map.find((n) => n.type === 'shop' && n.area === 7);
     assert.ok(isleShop);
     assert.equal(seen.has(isleShop.id), false);
-    assert.equal(seen.has(g.map.find((n) => n.type === 'shop' && n.area === 12).id), false);
+    assert.equal(seen.has(g.map.find((n) => n.type === 'shop' && n.area === 8).id), false);
 
     // ワープ着地で島へ
     const mainWarp = g.map.find((n) => n.type === 'warp' && n.label.includes('島'));
@@ -189,6 +190,19 @@ describe('MkMk Street engine', () => {
     assert.equal(landed.ok, true);
     assert.ok(landed.warps?.length >= 1);
     assert.equal(g.players[0].pos, mainWarp.warpTo);
+
+    // マーク補充マス：足りないマークを1つ付与
+    const fill = g.map.find((n) => n.type === 'suit_fill');
+    assert.ok(fill);
+    g.currentPlayerIdx = 0;
+    g.players[0].marks = [true, false, true, false];
+    g.players[0].pos = fill.id;
+    g.players[0].flags.bankVisitDone = false;
+    g.move = { stepsLeft: 0, path: [fill.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    g.pending = null;
+    advanceMove(g);
+    assert.deepEqual(g.players[0].marks, [true, true, true, false]);
   });
 
   it('shell harbor forks at inward switch between pier and sea route', () => {

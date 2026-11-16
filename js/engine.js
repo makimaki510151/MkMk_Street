@@ -1331,6 +1331,18 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
     return;
   }
 
+  if (sq.type === 'suit_fill') {
+    const missing = p.marks.findIndex((m) => !m);
+    if (missing >= 0) {
+      p.marks[missing] = true;
+      addLog(g, `${p.name} が足りないマーク ${SUIT_LABELS[missing]} を入手！`, 'mark');
+    } else {
+      addLog(g, `${p.name} はすでに全マーク所持`, 'mark');
+    }
+    finishLanding(g, p);
+    return;
+  }
+
   if (sq.type === 'chance') {
     const ev = CHANCE_EVENTS[Math.floor(rngNext(g) * CHANCE_EVENTS.length)];
     const detail = ev.apply(g, p);
@@ -2780,7 +2792,7 @@ function scoreNodeForCpu(g, p, node, traits) {
       if (toll >= p.cash) s -= 8 * pressure;
     }
   } else if (node.type === 'bank') s += traits.bank;
-  else if (node.type === 'mark') s += traits.mark;
+  else if (node.type === 'mark' || node.type === 'suit_fill') s += traits.mark;
   else if (node.type === 'stockbroker') s += traits.stockbroker;
   else if (node.type === 'scratch' || node.type === 'event') s += traits.scratch;
   else if (node.type === 'minigame') s += traits.minigame;
