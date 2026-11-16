@@ -1106,11 +1106,25 @@ function checkColorMatches(g, table, cellId, messages) {
   lines.push({ key: `r${row}`, cells: Array.from({ length: size }, (_, c) => row * size + c) });
   lines.push({ key: `c${col}`, cells: Array.from({ length: size }, (_, r) => r * size + col) });
 
-  if (row === col) {
-    lines.push({ key: 'd0', cells: Array.from({ length: size }, (_, i) => i * size + i) });
+  // ↘ 斜め（row-col 一定）。本対角だけでなく平行な斜め列もすべて対象
+  {
+    const diff = row - col;
+    const cells = [];
+    for (let r = 0; r < size; r++) {
+      const c = r - diff;
+      if (c >= 0 && c < size) cells.push(r * size + c);
+    }
+    if (cells.length >= 3) lines.push({ key: `d0_${diff}`, cells });
   }
-  if (row + col === size - 1) {
-    lines.push({ key: 'd1', cells: Array.from({ length: size }, (_, i) => i * size + (size - 1 - i)) });
+  // ↙ 斜め（row+col 一定）
+  {
+    const sum = row + col;
+    const cells = [];
+    for (let r = 0; r < size; r++) {
+      const c = sum - r;
+      if (c >= 0 && c < size) cells.push(r * size + c);
+    }
+    if (cells.length >= 3) lines.push({ key: `d1_${sum}`, cells });
   }
 
   let total = 0;

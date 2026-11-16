@@ -1809,6 +1809,91 @@ describe('MkMk Street engine', () => {
     assert.ok(!m.cellIds.includes(5), 'spaced cell excluded');
   });
 
+  it('scratch main diagonal match still works', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 23,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    const ids = [0, size + 1, 2 * size + 2]; // (0,0)(1,1)(2,2)
+    for (const i of ids.slice(0, 2)) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[ids[2]].eventId = rollAgainId;
+    const r = scratchCell(g, who, ids[2]);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => x.lineKey === 'd0_0');
+    assert.ok(m, 'main diagonal match');
+    assert.equal(m.count, 3);
+  });
+
+  it('scratch diagonal match works off the main board diagonal', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 17,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 本対角から外れた ↘ (0,1)(1,2)(2,3)
+    const a = 0 * size + 1;
+    const b = 1 * size + 2;
+    const c = 2 * size + 3;
+    for (const i of [a, b]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[c].eventId = rollAgainId;
+    const before = who.cash;
+    const r = scratchCell(g, who, c);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => String(x.lineKey).startsWith('d0_'));
+    assert.ok(m, 'off-main diagonal ↘ match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((x, y) => x - y), [a, b, c]);
+    assert.ok(who.cash >= before + 3 * MATCH_BONUS_PER);
+  });
+
+  it('scratch anti-diagonal match works off the main anti-diagonal', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 19,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 本逆対角から外れた ↙ (0,2)(1,1)(2,0)
+    const a = 0 * size + 2;
+    const b = 1 * size + 1;
+    const c = 2 * size + 0;
+    for (const i of [a, b]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[c].eventId = rollAgainId;
+    const r = scratchCell(g, who, c);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => String(x.lineKey).startsWith('d1_'));
+    assert.ok(m, 'off-main anti-diagonal ↙ match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((x, y) => x - y), [a, b, c].sort((x, y) => x - y));
+  });
+
   it('assigns distinct CPU personalities by seat', () => {
     const g = createGame({
       players: [
