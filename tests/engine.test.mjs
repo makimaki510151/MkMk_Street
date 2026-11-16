@@ -194,6 +194,7 @@ describe('MkMk Street engine', () => {
     // マーク補充マス：足りないマークを1つ付与
     const fill = g.map.find((n) => n.type === 'suit_fill');
     assert.ok(fill);
+    g.currentPlayerIdx = 0;
     g.players[0].marks = [true, false, true, false];
     g.players[0].pos = fill.id;
     g.players[0].flags.bankVisitDone = false;
