@@ -105,7 +105,14 @@ const app = {
   disconnectTimers: {},
   /** 切断後に自動でCPU化するまでの猶予（ms） */
   disconnectGraceMs: 20000,
+  /** 催促ボタンのクールダウン終了時刻 */
+  nudgeCooldownUntil: 0,
+  /** ホスト側: 座席ごとの最終催促時刻 */
+  nudgeLastBySeat: {},
+  nudgeUiTimer: null,
 };
+
+const NUDGE_COOLDOWN_MS = 12000;
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
 
@@ -929,6 +936,10 @@ function handleNetEvent({ from, data }) {
       scheduleCpu();
       return;
     }
+    if (data.type === 'nudge') {
+      handleHostNudge(from, data);
+      return;
+    }
     if (data.type === 'action') {
       handleHostAction(from, data);
       return;
@@ -1098,6 +1109,11 @@ function playRemoteFx(data) {
     if (app.lastTurnKey === key) return;
     app.lastTurnKey = key;
     audio.sfx.yourTurn();
+  }
+  if (data.kind === 'nudge') {
+    if (data.targetSeat === app.localSeat) {
+      playNudgeReceived(data.fromName);
+    }
   }
 }
 
@@ -1591,6 +1607,10 @@ function enterGame() {
     flash.dataset.npc = '0';
   }
   app.feedPinnedBottom = true;
+  app.nudgeCooldownUntil = 0;
+  app.nudgeLastBySeat = {};
+  clearTimeout(app.nudgeUiTimer);
+  app.nudgeUiTimer = null;
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
   const canvas = $('#board');
@@ -1699,6 +1719,144 @@ function isMyTurn() {
   return false;
 }
 
+/** 操作待ちで止まっている人間プレイヤー（自分以外）。P2P専用 */
+function getNudgeTarget() {
+  if (!app.game || app.game.phase === 'gameover') return null;
+  // 同一端末のローカル対戦では相手端末が無いので不要
+  if (app.mode !== 'host' && app.mode !== 'guest') return null;
+
+  let targetId = null;
+  if (isEventUiBlocking() && app.eventFlashReaderId != null) {
+    targetId = app.eventFlashReaderId;
+  } else if (
+    (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
+    && app.game.pending
+    && !app.busy
+  ) {
+    targetId = app.game.pending.playerId;
+  } else if (app.game.phase === 'await_roll' && !app.busy && !app.hideDiceResult) {
+    targetId = app.game.currentPlayerIdx;
+  } else {
+    return null;
+  }
+
+  const p = app.game.players[targetId];
+  if (!p || p.isCPU || p.offline || p.bankrupt) return null;
+  if (p.id === app.localSeat) return null;
+  return p;
+}
+
+function nudgeCooldownLeftMs() {
+  return Math.max(0, (app.nudgeCooldownUntil || 0) - Date.now());
+}
+
+function scheduleNudgeButtonTick() {
+  clearTimeout(app.nudgeUiTimer);
+  app.nudgeUiTimer = null;
+  if (nudgeCooldownLeftMs() <= 0) return;
+  app.nudgeUiTimer = setTimeout(() => {
+    updateNudgeButton();
+  }, 400);
+}
+
+function updateNudgeButton() {
+  const btn = $('#btn-nudge');
+  if (!btn) return;
+  const target = getNudgeTarget();
+  if (!target) {
+    btn.hidden = true;
+    btn.disabled = true;
+    clearTimeout(app.nudgeUiTimer);
+    app.nudgeUiTimer = null;
+    return;
+  }
+  btn.hidden = false;
+  const left = nudgeCooldownLeftMs();
+  if (left > 0) {
+    btn.disabled = true;
+    btn.textContent = `催促冷却中（${Math.ceil(left / 1000)}）`;
+    scheduleNudgeButtonTick();
+  } else {
+    btn.disabled = false;
+    btn.textContent = `${target.name}に催促`;
+    clearTimeout(app.nudgeUiTimer);
+    app.nudgeUiTimer = null;
+  }
+}
+
+function playNudgeReceived(fromName) {
+  audio.resume();
+  audio.sfx.nudge();
+  toast(`${fromName || '相手'}から催促！`);
+}
+
+function deliverNudge({ fromSeat, targetSeat, fromName }) {
+  const target = app.game?.players?.[targetSeat];
+  if (!target || target.isCPU) return;
+  broadcastFx({
+    kind: 'nudge',
+    fromSeat,
+    targetSeat,
+    fromName: fromName || app.game.players[fromSeat]?.name || '相手',
+    targetName: target.name,
+  });
+  // ホスト自身が対象ならローカル再生（broadcast はゲスト向け）
+  if (app.mode === 'host' && targetSeat === app.localSeat) {
+    playNudgeReceived(fromName || app.game.players[fromSeat]?.name);
+  }
+}
+
+function sendNudge() {
+  const target = getNudgeTarget();
+  if (!target) return toast('いま催促できる相手がいません');
+  if (nudgeCooldownLeftMs() > 0) return toast('もう少し待ってから催促してください');
+
+  audio.resume();
+  audio.sfx.click();
+  app.nudgeCooldownUntil = Date.now() + NUDGE_COOLDOWN_MS;
+  updateNudgeButton();
+
+  const fromName = app.game.players[app.localSeat]?.name || '相手';
+  if (app.mode === 'guest' && app.net) {
+    app.net.sendToHost({
+      type: 'nudge',
+      seat: app.localSeat,
+      targetSeat: target.id,
+    });
+    toast(`${target.name}に催促した`);
+    return;
+  }
+  if (app.mode === 'host') {
+    const last = app.nudgeLastBySeat[app.localSeat] || 0;
+    if (Date.now() - last < NUDGE_COOLDOWN_MS - 500) {
+      toast('もう少し待ってから催促してください');
+      return;
+    }
+    app.nudgeLastBySeat[app.localSeat] = Date.now();
+    deliverNudge({ fromSeat: app.localSeat, targetSeat: target.id, fromName });
+    toast(`${target.name}に催促した`);
+  }
+}
+
+function handleHostNudge(fromPeer, data) {
+  if (!app.game || app.mode !== 'host') return;
+  const fromSeat = app.game.players.findIndex((p) => p.peerId === fromPeer);
+  if (fromSeat < 0) return;
+  const last = app.nudgeLastBySeat[fromSeat] || 0;
+  if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
+  const target = getNudgeTarget();
+  if (!target) return;
+  // 送信時点の対象と一致するものだけ（古い催促の誤爆防止）
+  if (data.targetSeat != null && Number(data.targetSeat) !== target.id) return;
+  if (target.id === fromSeat) return;
+  app.nudgeLastBySeat[fromSeat] = Date.now();
+  deliverNudge({
+    fromSeat,
+    targetSeat: target.id,
+    fromName: app.game.players[fromSeat]?.name || '相手',
+  });
+}
+
 function bindGameControls() {
   $('#btn-roll').onclick = () => {
     if (app.busy) return;
@@ -1714,6 +1872,9 @@ function bindGameControls() {
     hideModal();
     sendAction({ type: 'choice', choice: { action: 'skip' } });
   };
+  $('#btn-nudge')?.addEventListener('click', () => {
+    sendNudge();
+  });
 }
 
 function bindModalTools() {
@@ -3378,6 +3539,7 @@ function refreshGameUI() {
   updateInspectPanel();
   maybeYourTurnChime();
   announceNewLogs(g);
+  updateNudgeButton();
   // ログ再フラッシュでホスト／次手番が止まるのを防ぐ
   if (reconcileStaleEventFlash(g)) {
     const canRollNow = !app.busy && !isEventUiBlocking()
