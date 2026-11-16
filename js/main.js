@@ -543,7 +543,8 @@ function bindSideChrome() {
       audio.sfx.click();
     };
   });
-  $('#btn-feed-toggle')?.addEventListener('click', () => {
+  $('#btn-feed-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     $('#event-feed-wrap')?.classList.toggle('feed-collapsed');
     audio.sfx.click();
   });
