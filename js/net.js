@@ -41,10 +41,44 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
   const clients = new Map(); // peerId → DataConnection (host)
   let ready = false;
   let myId = null;
+  let destroyed = false;
+  let reconnecting = false;
 
   const status = (msg, kind = 'info') => onStatus?.({ msg, kind });
 
+  function bindGuestConn(conn) {
+    hostConn = conn;
+    conn.on('data', (data) => onEvent?.({ from: 'host', data }));
+    conn.on('close', () => {
+      if (destroyed || reconnecting) return;
+      status('ホストとの接続が切れました', 'error');
+      onEvent?.({ from: 'host', data: { type: 'host_left' } });
+    });
+    conn.on('error', (e) => {
+      status(`接続エラー: ${e?.type || e?.message || e}`, 'error');
+    });
+  }
+
+  async function openGuestConn() {
+    if (!peer || peer.destroyed) throw new Error('Peerが利用できません');
+    const conn = peer.connect(`mkmk-${code}`, { reliable: true });
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('ホストへの接続がタイムアウトしました')), 15000);
+      conn.on('open', () => {
+        clearTimeout(t);
+        status('ホストに接続しました', 'ok');
+        resolve();
+      });
+      conn.on('error', (e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+    });
+    bindGuestConn(conn);
+  }
+
   async function start() {
+    destroyed = false;
     await ensurePeerJS();
     peer = new PeerCtor(peerId, {
       debug: 1,
@@ -64,7 +98,16 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
         if (!ready) {
           clearTimeout(t);
           reject(err);
+        } else if (role === 'guest' && !destroyed) {
+          onEvent?.({ from: 'host', data: { type: 'host_left', reason: err.type || 'peer_error' } });
         }
+      });
+      peer.on('disconnected', () => {
+        if (destroyed) return;
+        status('シグナリングから切断 — 再接続を試行中…', 'warn');
+        try {
+          peer.reconnect();
+        } catch (_) { /* ignore */ }
       });
     });
 
@@ -73,24 +116,7 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
         setupClient(conn);
       });
     } else {
-      hostConn = peer.connect(`mkmk-${code}`, { reliable: true });
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('ホストへの接続がタイムアウトしました')), 15000);
-        hostConn.on('open', () => {
-          clearTimeout(t);
-          status('ホストに接続しました', 'ok');
-          resolve();
-        });
-        hostConn.on('error', (e) => {
-          clearTimeout(t);
-          reject(e);
-        });
-      });
-      hostConn.on('data', (data) => onEvent?.({ from: 'host', data }));
-      hostConn.on('close', () => {
-        status('ホストとの接続が切れました', 'error');
-        onEvent?.({ from: 'host', data: { type: 'host_left' } });
-      });
+      await openGuestConn();
     }
 
     return { roomCode: code, peerId: myId };
@@ -110,9 +136,72 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
     });
   }
 
+  /**
+   * ゲストがホストへ再接続する。
+   * Peer が生きていれば DataConnection だけ張り直し、死んでいれば Peer ごと作り直す。
+   */
+  async function reconnect() {
+    if (role !== 'guest') throw new Error('ゲストのみ再接続できます');
+    if (destroyed) throw new Error('ネットは破棄済みです');
+    reconnecting = true;
+    status('再接続中…', 'warn');
+    try {
+      try { hostConn?.close(); } catch (_) { /* ignore */ }
+      hostConn = null;
+
+      if (!peer || peer.destroyed) {
+        ready = false;
+        myId = null;
+        peer = null;
+        await ensurePeerJS();
+        peer = new PeerCtor(undefined, { debug: 1 });
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('Peer再接続がタイムアウトしました')), 15000);
+          peer.on('open', (id) => {
+            clearTimeout(t);
+            myId = id;
+            ready = true;
+            resolve(id);
+          });
+          peer.on('error', (err) => {
+            if (!ready) {
+              clearTimeout(t);
+              reject(err);
+            }
+          });
+          peer.on('disconnected', () => {
+            if (destroyed) return;
+            try { peer.reconnect(); } catch (_) { /* ignore */ }
+          });
+        });
+      } else if (peer.disconnected) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('シグナリング再接続がタイムアウトしました')), 10000);
+          peer.once('open', () => {
+            clearTimeout(t);
+            resolve();
+          });
+          try {
+            peer.reconnect();
+          } catch (e) {
+            clearTimeout(t);
+            reject(e);
+          }
+        });
+      }
+
+      await openGuestConn();
+      status('再接続しました', 'ok');
+      return { roomCode: code, peerId: myId };
+    } finally {
+      reconnecting = false;
+    }
+  }
+
   function sendToHost(data) {
-    if (role !== 'guest' || !hostConn) return;
+    if (role !== 'guest' || !hostConn?.open) return false;
     hostConn.send(data);
+    return true;
   }
 
   function broadcast(data) {
@@ -128,11 +217,16 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
   }
 
   function destroy() {
+    destroyed = true;
+    ready = false;
     try {
       hostConn?.close();
       for (const c of clients.values()) c.close();
       peer?.destroy();
     } catch (_) { /* ignore */ }
+    hostConn = null;
+    clients.clear();
+    peer = null;
   }
 
   return {
@@ -140,7 +234,13 @@ export function createNet({ role, roomCode, onEvent, onStatus }) {
     get roomCode() { return code },
     get peerId() { return myId },
     get clientCount() { return clients.size },
+    get connected() {
+      if (destroyed || !ready) return false;
+      if (role === 'host') return !!(peer && !peer.destroyed);
+      return !!(hostConn && hostConn.open);
+    },
     start,
+    reconnect,
     sendToHost,
     broadcast,
     sendTo,
