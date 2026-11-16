@@ -885,6 +885,24 @@ body.your-turn #btn-roll:not(:disabled) {
 .sell-label small { color: var(--muted); margin-left: 0.15rem; }
 .sell-row .field.tiny { flex: 0 0 auto; width: 4.2rem; }
 .sell-row .field.tiny input { padding: 0.28rem 0.35rem; font-size: 0.78rem; }
+.sell-preview {
+  flex: 1 1 100%;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.sell-preview.drop {
+  color: #ffb4a8;
+}
+.sell-preview strong { color: var(--ink); font-weight: 700; }
+.sell-preview.drop strong { color: #ff8a80; }
+.raise-row .sell-preview {
+  flex: 1 1 100%;
+  margin-top: 0.1rem;
+}
+.stock-buy-panel .sell-preview {
+  margin-top: 0.35rem;
+}
 
 #log {
   flex: 1;
