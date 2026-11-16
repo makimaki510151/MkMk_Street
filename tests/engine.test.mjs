@@ -191,25 +191,67 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].pos, mainWarp.warpTo);
   });
 
-  it('shell harbor forks offer pier vs coast route labels', () => {
+  it('shell harbor forks at inward switch between pier and sea route', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 4,
       mapId: 'shell_harbor',
     });
-    const pier = g.map.find((n) => n.forkAs === '北埠頭へ');
-    const coast = g.map.find((n) => n.label === '砂浜カフェ');
-    assert.ok(pier && coast);
-    // 砂浜カフェから前進すると埠頭／海岸のラベル付き分岐になる
-    g.players[0].pos = coast.id;
-    g.players[0].prevPos = g.map.find((n) => n.label === '珊瑚屋').id;
-    g.move = { stepsLeft: 3, path: [coast.id], passedBank: false, startPos: g.startId };
+    const swN = g.map.find((n) => n.type === 'switch' && n.row === 1);
+    const pierCafe = g.map.find((n) => n.label === '浜茶屋');
+    assert.ok(swN && pierCafe);
+    // 北スイッチは内側。浜茶屋から来ると埠頭継続／航路の分岐
+    g.players[0].pos = swN.id;
+    g.players[0].prevPos = pierCafe.id;
+    g.move = { stepsLeft: 3, path: [swN.id], passedBank: false, startPos: g.startId };
     g.phase = 'moving';
     const step = advanceMove(g);
     assert.equal(step.forked, true);
     const labels = (g.pending.options || []).map((o) => o.label);
-    assert.ok(labels.includes('北埠頭へ'), labels.join(','));
-    assert.ok(labels.includes('海岸どおり'), labels.join(','));
+    assert.ok(labels.includes('北埠頭へ') || labels.includes('もう一回'), labels.join(','));
+    assert.ok(labels.includes('航路へ'), labels.join(','));
+  });
+
+  it('shell harbor puts bank/broker/switches inward, swaps bank↔dice, leaves rim gaps empty', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 5,
+      mapId: 'shell_harbor',
+    });
+    const bank = g.map.find((n) => n.type === 'bank');
+    const broker = g.map.find((n) => n.type === 'stockbroker');
+    const dice = g.map.find((n) => n.type === 'minigame' && n.game === 'guess_dice');
+    const switches = g.map.filter((n) => n.type === 'switch');
+    assert.ok(bank);
+    assert.ok(broker);
+    assert.ok(dice);
+    assert.equal(switches.length, 2);
+    // 銀行は中央航路、サイコロ当ては西埠頭（入れ替え後）
+    assert.equal(bank.col, 4);
+    assert.equal(bank.row, 3);
+    assert.equal(dice.col, 1);
+    assert.equal(dice.row, 3);
+    assert.equal(broker.col, 8);
+    assert.equal(broker.row, 3);
+    const swPos = switches.map((n) => `${n.col},${n.row}`).sort();
+    assert.deepEqual(swPos, ['4,1', '4,6']);
+    const onRim = (n) => n.col === 0 || n.col === 9 || n.row === 0 || n.row === 7;
+    assert.equal(onRim(bank), false);
+    assert.equal(onRim(broker), false);
+    assert.equal(onRim(dice), false);
+    assert.ok(switches.every((n) => !onRim(n)));
+    // 寄せた跡の外周マスは埋めない
+    const occupied = new Set(g.map.map((n) => `${n.col},${n.row}`));
+    for (const gap of ['4,0', '9,3', '4,7', '0,3']) {
+      assert.equal(occupied.has(gap), false, `rim gap ${gap} should stay empty`);
+    }
+    // 外周だけで閉じた周回はできない（空白で分断→埠頭ハブ必須）
+    const rimOnly = g.map.filter(onRim);
+    const rimIds = new Set(rimOnly.map((n) => n.id));
+    const rimAdj = (n) => (n.nexts || []).filter((id) => rimIds.has(id));
+    // 外周グラフが単一サイクルでないこと（次数1相当の切れ目＝隣が1つ以下の外周点がある）
+    const rimEnds = rimOnly.filter((n) => rimAdj(n).length <= 1);
+    assert.ok(rimEnds.length >= 4, `expected rim gaps to break the outer loop, ends=${rimEnds.length}`);
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {
