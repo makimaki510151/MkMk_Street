@@ -318,6 +318,24 @@ body.goal-pressure .board-wrap {
   font-weight: 700;
   font-size: 0.92rem;
 }
+#current-name.your-turn {
+  font-size: 1.02rem;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 12px color-mix(in srgb, currentColor 35%, transparent);
+  animation: your-turn-pulse 1.2s ease-in-out infinite;
+}
+@keyframes your-turn-pulse {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.88; transform: translateY(-1px); }
+}
+body.your-turn #btn-roll:not(:disabled) {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: your-turn-cta 1.4s ease-in-out infinite;
+}
+@keyframes your-turn-cta {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.12); }
+}
 
 .board-wrap {
   position: relative;
@@ -511,8 +529,30 @@ body.goal-pressure .board-wrap {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc) 35%, transparent);
 }
 .player-card.me { outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.player-card.my-turn {
+  background: color-mix(in srgb, var(--pc) 18%, var(--surface));
+  outline: 2px solid color-mix(in srgb, var(--pc) 70%, var(--accent));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pc) 45%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pc) 25%, transparent);
+  animation: my-turn-card 1.35s ease-in-out infinite;
+}
+@keyframes my-turn-card {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.06); }
+}
 .pc-head { display: flex; align-items: center; gap: 0.35rem; }
 .pc-dot { width: 8px; height: 8px; border-radius: 1px; background: var(--pc); }
+.pc-turn-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--pc) 80%, #fff);
+  background: color-mix(in srgb, var(--pc) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc) 45%, transparent);
+  padding: 0.08rem 0.35rem;
+  border-radius: 2px;
+}
 .pc-lv { margin-left: auto; font-size: 0.72rem; color: var(--muted); }
 .pc-money {
   position: relative;

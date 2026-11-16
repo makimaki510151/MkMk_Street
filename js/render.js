@@ -711,10 +711,19 @@ export function createRenderer(canvas) {
       ctx.lineWidth = warping ? 2.5 : 2;
       ctx.stroke();
       if (g.currentPlayerIdx === p.id || warping) {
+        const pulse = rad + 4 + Math.sin(anim.pulse) * 2;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, rad + 4 + Math.sin(anim.pulse) * 2, 0, Math.PI * 2);
-        ctx.strokeStyle = warping ? p.color : 'rgba(255,224,120,0.85)';
+        ctx.arc(pos.x, pos.y, pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = warping ? p.color : 'rgba(255,224,120,0.95)';
+        ctx.lineWidth = warping ? 2.5 : 3;
         ctx.stroke();
+        if (!warping) {
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, pulse + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,224,120,0.35)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
       }
     }
 

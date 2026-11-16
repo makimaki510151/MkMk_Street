@@ -45,6 +45,8 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   PLAYER_COLORS,
+  normalizePlayerColor,
+  normalizeLobbyColors,
   getLevelBonus,
   toggleBoardSwitch,
   getNode,
@@ -1962,5 +1964,37 @@ describe('MkMk Street engine', () => {
     recordWorthSnapshot(g);
     assert.ok(g.worthHistory.length >= 2);
     assert.equal(g.worthHistory[g.worthHistory.length - 1].turn, 2);
+  });
+
+  it('normalizes missing or duplicate player colors onto the palette', () => {
+    assert.equal(normalizePlayerColor('#ff00ff', 0), PLAYER_COLORS[0]);
+    assert.equal(normalizePlayerColor(PLAYER_COLORS[1], 0, [PLAYER_COLORS[1]]), PLAYER_COLORS[0]);
+    const lobby = normalizeLobbyColors([
+      { name: 'A', color: '#deadbe' },
+      { name: 'B', color: '#deadbe' },
+      { name: 'C', color: PLAYER_COLORS[2] },
+    ]);
+    assert.deepEqual(lobby.map((p) => p.color), [
+      PLAYER_COLORS[0],
+      PLAYER_COLORS[1],
+      PLAYER_COLORS[2],
+    ]);
+
+    const g = createGame({
+      players: [
+        { name: 'A', color: '#not-a-color' },
+        { name: 'B', color: '#also-bad' },
+      ],
+      seed: 9,
+    });
+    assert.equal(g.players[0].color, PLAYER_COLORS[0]);
+    assert.equal(g.players[1].color, PLAYER_COLORS[1]);
+
+    g.players[0].color = '#00ff00';
+    g.players[1].color = '#00ff00';
+    const again = restoreState(serializeState(g));
+    assert.equal(again.players[0].color, PLAYER_COLORS[0]);
+    assert.equal(again.players[1].color, PLAYER_COLORS[1]);
+    assert.notEqual(again.players[0].color, again.players[1].color);
   });
 });
