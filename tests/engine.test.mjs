@@ -198,11 +198,11 @@ describe('MkMk Street engine', () => {
       mapId: 'shell_harbor',
     });
     const swN = g.map.find((n) => n.type === 'switch' && n.row === 1);
-    const pierCafe = g.map.find((n) => n.label === '浜茶屋');
-    assert.ok(swN && pierCafe);
-    // 北スイッチは内側。浜茶屋から来ると埠頭継続／航路の分岐
+    const pierScratch = g.map.find((n) => n.type === 'scratch' && n.col === 3 && n.row === 1);
+    assert.ok(swN && pierScratch);
+    // 北スイッチは内側。スクラッチ（旧浜茶屋）から来ると埠頭継続／航路の分岐
     g.players[0].pos = swN.id;
-    g.players[0].prevPos = pierCafe.id;
+    g.players[0].prevPos = pierScratch.id;
     g.move = { stepsLeft: 3, path: [swN.id], passedBank: false, startPos: g.startId };
     g.phase = 'moving';
     const step = advanceMove(g);
@@ -212,7 +212,7 @@ describe('MkMk Street engine', () => {
     assert.ok(labels.includes('航路へ'), labels.join(','));
   });
 
-  it('shell harbor packs rim after trimming event/chance; pier hubs are all switches', () => {
+  it('shell harbor packs rim; pier hubs switches; areas regrouped', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 5,
@@ -222,26 +222,53 @@ describe('MkMk Street engine', () => {
     const switches = g.map.filter((n) => n.type === 'switch');
     assert.ok(bank);
     assert.equal(switches.length, 4);
-    // 旧サイコロ／証券はスイッチ化。証券・サイコロ当てマスは置かない
-    assert.equal(g.map.some((n) => n.type === 'stockbroker'), false);
     assert.equal(g.map.some((n) => n.type === 'minigame' && n.game === 'guess_dice'), false);
-    assert.equal(g.map.some((n) => n.label === 'イベント' && n.row === 0), false);
-    assert.equal(
-      g.map.some((n) => n.label === 'チャンス' && n.row === 7 && n.col >= 6),
-      false,
-    );
-    // かき氷—ホテル、温泉宿—銭湯が直結
-    const kakigori = g.map.find((n) => n.label === 'かき氷');
-    const hotel = g.map.find((n) => n.label === 'ホテル');
-    const onsen = g.map.find((n) => n.label === '温泉宿');
-    const sento = g.map.find((n) => n.label === '銭湯');
-    assert.ok(kakigori && hotel && onsen && sento);
-    assert.ok(kakigori.nexts.includes(hotel.id));
-    assert.ok(onsen.nexts.includes(sento.id));
-    assert.equal(kakigori.col, 6);
-    assert.equal(hotel.col, 7);
-    assert.equal(sento.col, 6);
-    assert.equal(onsen.col, 7);
+    // 東埠頭のチャンスは証券へ。スクラッチは北埠頭（旧浜茶屋）
+    const broker = g.map.find((n) => n.type === 'stockbroker');
+    const scratch = g.map.find((n) => n.type === 'scratch');
+    assert.ok(broker);
+    assert.equal(broker.col, 7);
+    assert.equal(broker.row, 4);
+    assert.ok(scratch);
+    assert.equal(scratch.col, 3);
+    assert.equal(scratch.row, 1);
+    // かき小屋↔スロット入替、屋台横丁はラッキー
+    const kaki = g.map.find((n) => n.label === 'かき小屋');
+    const slot = g.map.find((n) => n.type === 'minigame' && n.game === 'slot');
+    const luckyS = g.map.find((n) => n.type === 'lucky' && n.col === 3 && n.row === 6);
+    assert.ok(kaki && slot && luckyS);
+    assert.equal(kaki.col, 5);
+    assert.equal(kaki.row, 7);
+    assert.equal(slot.col, 5);
+    assert.equal(slot.row, 6);
+    // エリア再編
+    const areaOf = (label) => g.map.find((n) => n.label === label)?.area;
+    assert.equal(areaOf('真珠店'), 1);
+    assert.equal(areaOf('貝細工'), 1);
+    assert.equal(areaOf('船着場'), 1);
+    assert.equal(areaOf('貝がら屋'), 1);
+    assert.equal(areaOf('珊瑚屋'), 2);
+    assert.equal(areaOf('砂浜カフェ'), 2);
+    assert.equal(areaOf('サーフ屋'), 2);
+    assert.equal(areaOf('かき氷'), 2);
+    assert.equal(areaOf('屋台船'), 2);
+    assert.equal(areaOf('ホテル'), 3);
+    assert.equal(areaOf('水族館'), 3);
+    assert.equal(areaOf('港食堂'), 3);
+    assert.equal(areaOf('埠頭食堂'), 3);
+    assert.equal(areaOf('ヨット屋'), 4);
+    assert.equal(areaOf('灯台茶屋'), 4);
+    assert.equal(areaOf('みやげ屋'), 4);
+    assert.equal(areaOf('温泉宿'), 4);
+    assert.equal(areaOf('かき小屋'), 5);
+    assert.equal(areaOf('銭湯'), 5);
+    assert.equal(areaOf('うどん'), 5);
+    assert.equal(areaOf('たこ焼き'), 5);
+    assert.equal(areaOf('渡し舟'), 5);
+    assert.equal(areaOf('鮮魚'), 6);
+    assert.equal(areaOf('海女小屋'), 6);
+    assert.equal(areaOf('網元'), 6);
+    assert.equal(areaOf('潮干狩'), 6);
     // 銀行は中央航路、東西南北の埠頭にスイッチ
     assert.equal(bank.col, 4);
     assert.equal(bank.row, 3);
@@ -250,12 +277,10 @@ describe('MkMk Street engine', () => {
     const onRim = (n) => n.col === 0 || n.col === 8 || n.row === 0 || n.row === 7;
     assert.equal(onRim(bank), false);
     assert.ok(switches.every((n) => !onRim(n)));
-    // 寄せた跡の外周マスは埋めない（幅9列なので東ギャップは 8,3）
     const occupied = new Set(g.map.map((n) => `${n.col},${n.row}`));
     for (const gap of ['4,0', '8,3', '4,7', '0,3']) {
       assert.equal(occupied.has(gap), false, `rim gap ${gap} should stay empty`);
     }
-    // 外周だけで閉じた周回はできない（空白で分断→埠頭ハブ必須）
     const rimOnly = g.map.filter(onRim);
     const rimIds = new Set(rimOnly.map((n) => n.id));
     const rimAdj = (n) => (n.nexts || []).filter((id) => rimIds.has(id));
@@ -1152,6 +1177,44 @@ describe('MkMk Street engine', () => {
     assert.equal(g.phase, 'gameover');
     assert.equal(g.winnerId, 0);
     assert.ok(g.logs.some((l) => /勝利/.test(l.text)));
+  });
+
+  it('level-up that newly reaches the goal requires leaving and re-passing the bank', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 48,
+      cash: 1000,
+    });
+    g.goal = 5000;
+    // 昇進賞金でちょうど目標超えになるよう現金を調整
+    const bonus = 200 + 250 * 2; // Lv1→2
+    g.players[0].cash = g.goal - bonus + 10;
+    g.players[0].level = 1;
+    g.players[0].marks = [true, true, true, true];
+    assert.ok(getPlayerAssets(g, g.players[0]).total < g.goal);
+    g.players[0].pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: true, startPos: g.startId };
+    advanceMove(g);
+    assert.notEqual(g.phase, 'gameover');
+    assert.equal(g.winnerId, null);
+    assert.ok(g.logs.some((l) => /昇進で目標資産に到達/.test(l.text)));
+    assert.ok(getPlayerAssets(g, g.players[0]).total >= g.goal);
+    // お祝い→株スキップでターン終了
+    if (g.pending?.type === 'level_up') applyChoice(g, { action: 'celebrate' });
+    if (g.pending?.type === 'stock') applyChoice(g, { action: 'skip' });
+    assert.equal(g.phase, 'await_roll');
+    assert.notEqual(g.winnerId, 0);
+    // 次に銀行へ停止すれば勝利
+    g.currentPlayerIdx = 0;
+    g.players[0].flags.bankVisitDone = false;
+    g.players[0].pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: true, startPos: g.startId };
+    g.pending = null;
+    advanceMove(g);
+    assert.equal(g.phase, 'gameover');
+    assert.equal(g.winnerId, 0);
   });
 
   it('auto-skips resting player without starting a move', () => {
