@@ -3427,10 +3427,11 @@ function bannerFromLog(g, l) {
   if (!l) return null;
   // 出目確定ログは runDiceAndMove 側のバナーで表示済み
   if (l.kind === 'dice' && (/サイコロ\s*→/.test(l.text) || /サイコロを振った/.test(l.text))) return null;
-  if (l.kind === 'dice' && !/もう一回|方面へ/.test(l.text)) return null;
+  // 着地ログ「もう一回サイコロ！」のみ。分岐の「『もう一回』方面へ」は誤マッチさせない
+  if (l.kind === 'dice' && !/もう一回サイコロ/.test(l.text)) return null;
 
   const kind = l.kind || 'info';
-  if (!BANNER_KINDS.has(kind) && !(kind === 'dice' && /もう一回/.test(l.text))) return null;
+  if (!BANNER_KINDS.has(kind) && !(kind === 'dice' && /もう一回サイコロ/.test(l.text))) return null;
 
   const player = g.players.find((p) => l.text.includes(p.name));
   const mine = player && (
@@ -3522,7 +3523,7 @@ function bannerFromLog(g, l) {
     kicker = 'ゲーム終了';
     title = '勝利！';
     detail = l.text;
-  } else if (kind === 'dice' && /もう一回/.test(l.text)) {
+  } else if (kind === 'dice' && /もう一回サイコロ/.test(l.text)) {
     kicker = mine ? 'もう一回！' : `${player?.name || ''} にもう一回`;
     title = 'サイコロ再挑戦';
     detail = l.text;

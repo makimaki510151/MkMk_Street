@@ -228,6 +228,49 @@ describe('MkMk Street engine', () => {
     assert.ok(labels.includes('航路へ'), labels.join(','));
   });
 
+  it('rollon pier: pass-through fork logs label but does not grant retry until land', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 4,
+      mapId: 'shell_harbor',
+    });
+    const swN = g.map.find((n) => n.type === 'switch' && n.row === 1);
+    const pierScratch = g.map.find((n) => n.type === 'scratch' && n.col === 3 && n.row === 1);
+    const pierN2 = g.map.find((n) => n.type === 'rollon' && n.col === 5 && n.row === 1);
+    assert.ok(swN && pierScratch && pierN2);
+    assert.equal(pierN2.label, 'もう一回');
+
+    // 歩数残りありで rollon へ分岐 → 通過のみ（再挑戦ログなし）
+    g.players[0].pos = swN.id;
+    g.players[0].prevPos = pierScratch.id;
+    g.move = { stepsLeft: 3, path: [swN.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    assert.equal(advanceMove(g).forked, true);
+    const pass = chooseFork(g, pierN2.id);
+    assert.equal(pass.ok, true);
+    assert.equal(pass.done, false);
+    assert.equal(g.players[0].pos, pierN2.id);
+    assert.ok(g.move?.stepsLeft > 0);
+    assert.equal(g.phase, 'moving');
+    assert.ok(
+      g.logs.some((l) => /「もう一回」方面へ/.test(l.text)),
+      'fork log uses destination label (banner must not treat this as retry)',
+    );
+    assert.equal(g.logs.some((l) => /もう一回サイコロ/.test(l.text)), false);
+
+    // ぴったり着地なら再挑戦
+    g.players[0].pos = pierN2.id;
+    g.players[0].prevPos = swN.id;
+    g.move = { stepsLeft: 0, path: [pierN2.id], passedBank: false, startPos: g.startId };
+    g.phase = 'moving';
+    g.pending = null;
+    const land = advanceMove(g);
+    assert.equal(land.ok, true);
+    assert.equal(land.done, true);
+    assert.equal(g.phase, 'await_roll');
+    assert.ok(g.logs.some((l) => /もう一回サイコロ/.test(l.text)));
+  });
+
   it('shell harbor packs rim; pier hubs switches; areas regrouped', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
