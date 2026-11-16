@@ -253,9 +253,10 @@ describe('MkMk Street engine', () => {
     assert.ok(g.move?.stepsLeft > 0);
     assert.equal(g.phase, 'moving');
     assert.ok(
-      g.logs.some((l) => /「もう一回」方面へ/.test(l.text)),
-      'fork log uses destination label (banner must not treat this as retry)',
+      g.logs.some((l) => /「北埠頭へ」方面へ/.test(l.text)),
+      'fork log prefers forkAs over rollon label',
     );
+    assert.equal(g.logs.some((l) => /「もう一回」方面へ/.test(l.text)), false);
     assert.equal(g.logs.some((l) => /もう一回サイコロ/.test(l.text)), false);
 
     // ぴったり着地なら再挑戦

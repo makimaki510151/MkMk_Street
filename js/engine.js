@@ -1165,7 +1165,10 @@ export function chooseFork(g, nextId) {
   if (!allowed.includes(nextId)) return { ok: false, error: 'bad_fork' };
 
   const from = applyStep(g, p, nextId);
-  addLog(g, `${p.name} は「${getNode(g, nextId)?.label || nextId}」方面へ`, 'dice');
+  const dest = getNode(g, nextId);
+  // forkAs（例: 北埠頭へ）を優先。label「もう一回」だと通過時に再挑戦と誤解される
+  const way = dest?.forkAs || dest?.label || nextId;
+  addLog(g, `${p.name} は「${way}」方面へ`, 'dice');
   g.pending = null;
   if (g.phase !== 'gameover') g.phase = 'moving';
 
