@@ -1086,7 +1086,12 @@ function playRemoteFx(data) {
     audio.sfx.toll();
     if (data.payload) enqueueBanner(data.payload);
   }
-  if (data.kind === 'yourTurn' && data.seat === app.localSeat) audio.sfx.yourTurn();
+  if (data.kind === 'yourTurn' && data.seat === app.localSeat) {
+    const key = data.key || `${app.game?.turn}-${data.seat}-await_roll`;
+    if (app.lastTurnKey === key) return;
+    app.lastTurnKey = key;
+    audio.sfx.yourTurn();
+  }
 }
 
 function presentMonopolyFx(result) {
@@ -2029,7 +2034,12 @@ async function applyLocalAction(action) {
     }
 
     const result = applyChoice(app.game, action.choice);
-    if (!result.ok) return toast(result.error || '失敗');
+    if (!result.ok) {
+      if (result.state) app.game = restoreState(result.state);
+      toast(choiceErrorMessage(result.error));
+      refreshGameUI();
+      return;
+    }
     if (result.state) app.game = restoreState(result.state);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (result.fiveBuy) {
@@ -2908,6 +2918,12 @@ async function handleHostAction(from, data) {
       return;
     }
     const result = applyChoice(app.game, action.choice);
+    if (!result.ok) {
+      if (result.state) app.game = restoreState(result.state);
+      app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
+      refreshGameUI();
+      return;
+    }
     if (result.state) app.game = restoreState(result.state);
     if (result.fiveBuy) {
       audio.sfx.fiveBuy();
@@ -3092,8 +3108,9 @@ function scheduleCpu() {
 function maybeYourTurnChime() {
   const g = app.game;
   if (!g || g.phase !== 'await_roll') return;
+  if (app.busy || isEventUiBlocking()) return;
   const cur = currentPlayer(g);
-  if (!cur || cur.isCPU) return;
+  if (!cur || cur.isCPU || cur.resting) return;
   const mine = app.mode === 'local' ? !cur.isCPU : (
     app.mode === 'guest' ? cur.peerId === app.net?.peerId : (cur.peerId === app.net?.peerId || cur.id === 0)
   );
@@ -3101,7 +3118,13 @@ function maybeYourTurnChime() {
   if (!mine || app.lastTurnKey === key) return;
   app.lastTurnKey = key;
   audio.sfx.yourTurn();
-  broadcastFx({ kind: 'yourTurn', seat: cur.id });
+  if (app.mode === 'host') broadcastFx({ kind: 'yourTurn', seat: cur.id, key });
+}
+
+function choiceErrorMessage(err) {
+  if (err === 'still_short') return 'まだ目標金額に足りません。売却か破産を選んでください';
+  if (err === 'insufficient') return '資金が足りません';
+  return err || '失敗';
 }
 
 function renderDisconnectPanel(g) {
@@ -4480,6 +4503,7 @@ function showChoiceModal(g) {
       </div>`;
     }).join('');
     const canContinue = (p?.cash || 0) >= target;
+    const mustPay = pend.resume?.type === 'after_toll' || pend.reason === 'toll';
     const canExec = canContinue && pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
     const execLabel = {
       five_buy: '調達完了 — 5倍買いする',
@@ -4491,14 +4515,18 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。</p>
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。${
+        mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
+      }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
       <div class="raise-section"><h4>物件（半額売却）</h4>${shopRows || '<p class="hint">売却できる物件がありません</p>'}</div>
       <div class="modal-actions">
         <button class="btn primary" id="m-raise-go" ${canContinue ? '' : 'disabled'}>
           ${canExec ? execLabel : '調達完了'}
         </button>
-        <button class="btn ghost" id="m-raise-cancel">やめる（ターン終了）</button>
+        ${mustPay && !canContinue
+          ? '<button class="btn ghost" id="m-raise-cancel" disabled title="負債を解消するまでやめられません">やめる（不可）</button>'
+          : '<button class="btn ghost" id="m-raise-cancel">やめる（ターン終了）</button>'}
         <button class="btn danger ghost" id="m-raise-bankrupt">破産を宣言</button>
       </div>`;
     $('#btn-skip-choice').hidden = true;
@@ -4518,16 +4546,18 @@ function showChoiceModal(g) {
     });
     $('#m-raise-go').onclick = () => {
       if (!canContinue) return;
-      hideModal();
       sendAction({ type: 'choice', choice: { action: 'continue', execute: !!canExec } });
     };
-    $('#m-raise-cancel').onclick = () => {
-      hideModal();
-      sendAction({ type: 'choice', choice: { action: 'cancel' } });
-    };
+    const cancelBtn = $('#m-raise-cancel');
+    if (cancelBtn && !cancelBtn.disabled) {
+      cancelBtn.onclick = () => {
+        audio.sfx.cancel();
+        // 失敗時（still_short）は pending が残るので、先に閉じない
+        sendAction({ type: 'choice', choice: { action: 'cancel' } });
+      };
+    }
     $('#m-raise-bankrupt').onclick = () => {
       if (!confirm('破産すると店も株も失います。よろしいですか？')) return;
-      hideModal();
       sendAction({ type: 'choice', choice: { action: 'bankrupt' } });
     };
     return;

@@ -2019,15 +2019,15 @@ export function applyChoice(g, choice) {
     }
     if (choice.action === 'cancel') {
       // 売却済みの現金は残し、元の購入/5倍買いは取りやめてターン終了
-      // 料金不足（after_toll）だけは負債解消を優先して続きへ
+      // 料金不足（after_toll）は負債解消まで閉じられない（pending を消さない）
       const resume = pending.resume;
+      if (resume?.type === 'after_toll' && p.cash < target) {
+        return { ok: false, error: 'still_short', state: serializeState(g) };
+      }
       g.pending = null;
       if (resume?.type === 'after_toll' && p.cash >= target) {
         resumeAfterRaiseFunds(g, p, resume);
         return { ok: true, state: serializeState(g) };
-      }
-      if (resume?.type === 'after_toll' && p.cash < target) {
-        return { ok: false, error: 'still_short' };
       }
       endTurn(g);
       return { ok: true, cancelled: true, state: serializeState(g) };
