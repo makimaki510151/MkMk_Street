@@ -59,7 +59,7 @@ const app = {
   net: null,
   game: null,
   localSeat: 0,
-  localName: 'プレイヤー',
+  localName: '',
   lobbyPlayers: [],
   renderer: null,
   cpuTimer: null,
@@ -120,6 +120,48 @@ const EVENT_VISUALS = {
   dice: { glyph: '出', chips: ['サイコロ'] },
   info: { glyph: 'i', chips: [] },
 };
+
+const PLAYER_NAME_KEY = 'mkmk_player_name';
+const LOCAL_SEAT_NAMES_KEY = 'mkmk_local_seat_names';
+const DEFAULT_SEAT_NAMES = ['あか', 'あお', 'きいろ', 'みどり'];
+
+function loadSavedPlayerName() {
+  try {
+    const n = String(localStorage.getItem(PLAYER_NAME_KEY) || '').trim();
+    if (n) return n.slice(0, 12);
+  } catch (_) { /* ignore */ }
+  return '';
+}
+
+function savePlayerName(name) {
+  const n = String(name || '').trim().slice(0, 12);
+  if (!n) return;
+  app.localName = n;
+  try {
+    localStorage.setItem(PLAYER_NAME_KEY, n);
+  } catch (_) { /* ignore */ }
+}
+
+function loadLocalSeatNames() {
+  try {
+    const raw = localStorage.getItem(LOCAL_SEAT_NAMES_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return null;
+    return arr.map((n, i) => String(n || '').trim().slice(0, 10) || DEFAULT_SEAT_NAMES[i] || `P${i + 1}`);
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+function saveLocalSeatNames(names) {
+  if (!Array.isArray(names) || !names.length) return;
+  try {
+    localStorage.setItem(
+      LOCAL_SEAT_NAMES_KEY,
+      JSON.stringify(names.slice(0, 4).map((n, i) => String(n || '').trim().slice(0, 10) || DEFAULT_SEAT_NAMES[i])),
+    );
+  } catch (_) { /* ignore */ }
+}
 
 function saveRejoinSession() {
   if (app.mode === 'local' || !app.net?.roomCode) return;
@@ -331,7 +373,7 @@ async function attemptGuestReconnect({ room, name } = {}) {
     toast('部屋コードがありません');
     return false;
   }
-  app.localName = nm;
+  savePlayerName(nm);
   app.mode = 'guest';
   try {
     let info;
@@ -536,6 +578,13 @@ function openSetupLocal() {
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
     if (seats.length < 2) return toast('2人以上必要です');
+    // 全席の名前を保持（未参加席も含む）
+    const allNames = [0, 1, 2, 3].map((i) => (
+      $(`input.seat-name[data-i="${i}"]`)?.value || DEFAULT_SEAT_NAMES[i]
+    ));
+    saveLocalSeatNames(allNames);
+    const human = seats.find((s) => !s.isCPU);
+    if (human?.name) savePlayerName(human.name);
     audio.sfx.click();
     startLocal(seats);
   };
@@ -545,17 +594,30 @@ function openSetupLocal() {
 function renderSeatEditors(count) {
   const box = $('#seat-editors');
   box.innerHTML = '';
+  const saved = loadLocalSeatNames();
+  const playerName = loadSavedPlayerName();
   for (let i = 0; i < 4; i++) {
+    let name = saved?.[i] || DEFAULT_SEAT_NAMES[i];
+    // 保存がなければ1人目に前回のニックネームを入れる
+    if (!saved && i === 0 && playerName) name = playerName;
     const row = document.createElement('div');
     row.className = 'seat-row';
     row.innerHTML = `
       <span class="seat-swatch" style="background:${PLAYER_COLORS[i]}"></span>
-      <input class="seat-name" data-i="${i}" value="${['あか','あお','きいろ','みどり'][i]}" maxlength="10" />
+      <input class="seat-name" data-i="${i}" value="${escapeHtml(name)}" maxlength="10" />
       <label class="seat-cpu"><input type="checkbox" data-cpu="${i}" ${i >= count ? 'checked' : ''}/> CPU</label>
       <label class="seat-on"><input type="checkbox" data-on="${i}" ${i < count ? 'checked' : ''}/> 参加</label>
     `;
     box.appendChild(row);
   }
+  box.querySelectorAll('input.seat-name').forEach((input) => {
+    input.addEventListener('change', () => {
+      const allNames = [0, 1, 2, 3].map((i) => (
+        $(`input.seat-name[data-i="${i}"]`)?.value || DEFAULT_SEAT_NAMES[i]
+      ));
+      saveLocalSeatNames(allNames);
+    });
+  });
 }
 
 function readSeatEditors() {
@@ -591,15 +653,28 @@ async function openLobby(role, prefill = {}) {
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
   if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal');
-  if (prefill.name) $('#lobby-name').value = prefill.name;
+  const nameInput = $('#lobby-name');
+  const savedName = loadSavedPlayerName();
+  const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || prefill.room || '').toUpperCase()) : null;
+  // 優先順: 明示プリフィル → 再接続セッション → 保存済みニックネーム → 既存入力
+  if (prefill.name) {
+    nameInput.value = prefill.name;
+  } else if (rejoin?.name) {
+    nameInput.value = rejoin.name;
+  } else if (savedName) {
+    nameInput.value = savedName;
+  } else if (!nameInput.value.trim()) {
+    nameInput.value = 'プレイヤー';
+  }
   if (prefill.room && role === 'guest') {
     const roomInput = $('#lobby-room');
     if (roomInput) roomInput.value = String(prefill.room).toUpperCase();
   }
-  const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || '').toUpperCase()) : null;
-  if (role === 'guest' && rejoin?.name && !$('#lobby-name').value.trim()) {
-    $('#lobby-name').value = rejoin.name;
-  }
+  nameInput.oninput = () => {
+    const n = nameInput.value.trim();
+    if (n) savePlayerName(n);
+  };
+  nameInput.onchange = () => savePlayerName(nameInput.value);
   setStatus(
     role === 'host'
       ? '「部屋作成」で部屋を開きます。建て直すときは先に「部屋を解体」してください'
@@ -632,6 +707,7 @@ async function openLobby(role, prefill = {}) {
     audio.sfx.click();
     if (role !== 'guest') return;
     const name = $('#lobby-name').value.trim() || 'プレイヤー';
+    savePlayerName(name);
     const roomInput = $('#lobby-room').value.trim().toUpperCase();
     if (roomInput.length < 4) return toast('部屋コードを入力してください');
     const ok = await attemptGuestReconnect({ room: roomInput, name });
@@ -645,7 +721,7 @@ async function openLobby(role, prefill = {}) {
         return;
       }
       const name = $('#lobby-name').value.trim() || 'プレイヤー';
-      app.localName = name;
+      savePlayerName(name);
       const roomInput = $('#lobby-room').value.trim().toUpperCase();
       if (role === 'guest' && roomInput.length < 4) return toast('部屋コードを入力してください');
 
@@ -4993,6 +5069,16 @@ function escapeHtml(s) {
 }
 
 // boot
+{
+  const saved = loadSavedPlayerName();
+  if (saved) {
+    app.localName = saved;
+    const lobbyName = $('#lobby-name');
+    if (lobbyName) lobbyName.value = saved;
+  } else {
+    app.localName = 'プレイヤー';
+  }
+}
 bindVolumeUI();
 bindSideChrome();
 bindTitle();
