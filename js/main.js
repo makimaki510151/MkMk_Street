@@ -77,6 +77,8 @@ const app = {
   /** @type {{x:number,y:number}|null} */
   modalDrag: null,
   feedPinnedBottom: true,
+  /** false になると出来事フィードを自動で開かない（ユーザーが一度隠したあと） */
+  feedAutoExpand: true,
   inspectedId: null,
   restSkipTimer: null,
   eventFlashTimer: null,
@@ -545,9 +547,17 @@ function bindSideChrome() {
   });
   $('#btn-feed-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    $('#event-feed-wrap')?.classList.toggle('feed-collapsed');
+    const wrap = $('#event-feed-wrap');
+    wrap?.classList.toggle('feed-collapsed');
+    // 一度隠したらイベント／所持金演出で勝手に開かない
+    if (wrap?.classList.contains('feed-collapsed')) app.feedAutoExpand = false;
     audio.sfx.click();
   });
+}
+
+function maybeExpandEventFeed() {
+  if (!app.feedAutoExpand) return;
+  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
 }
 
 function bindTitle() {
@@ -1594,6 +1604,8 @@ function enterGame() {
     flash.dataset.npc = '0';
   }
   app.feedPinnedBottom = true;
+  app.feedAutoExpand = true;
+  $('#event-feed-wrap')?.classList.add('feed-collapsed');
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
   const canvas = $('#board');
@@ -3850,6 +3862,10 @@ function classifyMoneyMood(g, p, amount) {
       if (/5倍/.test(t)) return amount < 0 ? 'five_buy' : 'gain';
       if (/購入|増資/.test(t) && amount <= 0) return 'invest';
     }
+    // 物件売却は system ログ（「店名」を売却）
+    if (l.kind === 'system' && t.includes(name) && /を売却/.test(t) && amount > 0) {
+      return 'shop_sell';
+    }
     if (l.kind === 'stock' && t.includes(name)) {
       if (/わけ前|配当/.test(t) && amount > 0) return 'dividend';
       if (/購入/.test(t) && amount < 0) return 'invest';
@@ -4032,6 +4048,19 @@ function resolveMoneyFxCopy(focus) {
       floatClass: 'gain',
     };
   }
+  if (mood === 'shop_sell') {
+    return {
+      mood: 'shop_sell',
+      color: '#e6c57a',
+      face: '売',
+      title: 'お店を売却',
+      amount: signed,
+      who: who ? `${who} がお店を売却` : 'お店を売却',
+      coinMode: 'gain',
+      se: 'shopSell',
+      floatClass: 'gain',
+    };
+  }
   return {
     mood: 'gain',
     color: '#8fd4a8',
@@ -4085,13 +4114,15 @@ function showMoneyFxOverlay(deltas, { remote = false } = {}) {
   });
 
   // 5倍買い本体のファンファーレと二重にならないよう、金額演出は短めのSEに留める
-  if (copy.se === 'gain' || copy.se === 'invest' || copy.se === 'impact') {
+  if (copy.se === 'shopSell') {
+    audio.sfx.shopSell();
+  } else if (copy.se === 'gain' || copy.se === 'invest' || copy.se === 'impact') {
     audio.sfx.cashGain(copy.se === 'impact' ? Math.max(2, tier) : tier);
   } else {
     audio.sfx.cashLoss(tier);
   }
 
-  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+  maybeExpandEventFeed();
 
   app.moneyFxTimer = setTimeout(() => {
     if (app.moneyFxSeq !== seq) return;
@@ -4200,8 +4231,8 @@ function presentEventFlash(payload) {
     try { (btn && canDismiss ? btn : overlay).focus({ preventScroll: true }); } catch (_) { /* ignore */ }
   });
 
-  // フィードも開いて出来事を追えるようにする
-  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+  // ユーザーが一度隠していなければフィードも開く
+  maybeExpandEventFeed();
   $('#btn-roll').disabled = true;
   $('#btn-roll').textContent = npcReading
     ? `${readerName} が確認中…`
