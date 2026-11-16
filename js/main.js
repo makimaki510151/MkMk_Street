@@ -1965,7 +1965,16 @@ function requestHostEventFlashFlush() {
 function reconcileStaleEventFlash(g) {
   if (!g || !isEventUiBlocking()) return false;
   if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
-  // 未表示の deferred キューだけなら消さない（スイッチ告知などを移動後に出すため）
+  // HoldingBusy だけ残ってキューも表示もない＝スイッチ演出後などに起こる残留デッドロック
+  if (!app.eventFlashOpen && !(app.eventFlashQueue?.length > 0)) {
+    if (app.eventFlashHoldingBusy) {
+      app.eventFlashHoldingBusy = false;
+      app.busy = false;
+      return true;
+    }
+    return false;
+  }
+  // 未表示の deferred キューだけなら消さない（着地後に pump するため）
   if (!app.eventFlashOpen) return false;
   const readerId = app.eventFlashReaderId;
   const curId = g.currentPlayerIdx;
@@ -2244,6 +2253,17 @@ async function continueAdvancing() {
       if (result.switchMoves?.length) {
         // 据え置き解除＋スライド予約は presentSwitchFx 内で行う
         await presentSwitchFx(result.switchMoves);
+      } else if (landed != null && getNode(app.game, landed)?.type === 'switch') {
+        // switchMoves が空でも確認ダイアログは出さずトースト／スタンプのみ
+        pushEventStamp({
+          kicker: 'スイッチ',
+          title: '航路が切り替わった',
+          detail: '経路が切り替わった',
+          kind: 'system',
+          color: '#ffe08a',
+          silentStamp: true,
+        });
+        toast('航路が切り替わった');
       }
       if (result.warps?.length) await presentWarpFx(result.warps);
       // スイッチ時は演出後にまとめて同期（途中同期だとゲストが瞬時切替→巻き戻りする）
@@ -2475,6 +2495,8 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
   // ゲストはスライドSEのみ。ホストはフィードへ軽量スタンプのみ
   // （確認ダイアログにすると reader がゲストで閉じられず choice/roll 通信が止まる）
   if (!remote) {
+    // silentStamp / stampOnly: フィードのみ。queueEventFlash に載せると
+    // endTurn 後の reader=着地者のままホストが閉じられず 確認中で止まる。
     pushEventStamp({
       kicker: 'スイッチ',
       title: '航路が切り替わった',
@@ -2486,12 +2508,12 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
     toast('航路が切り替わった');
   }
   await wait(dur + 80);
-  if (!wasBusy) clearBusyUnlessEventUi();
-  else if (isEventUiBlocking()) {
-    app.eventFlashHoldingBusy = true;
-    app.busy = true;
+  // スイッチ演出自体は確認UIを持たない。ここで HoldingBusy を立てると
+  // deferEventFlash 中に pump できず、キューが空のまま 確認中 で残留する。
+  if (!wasBusy || !isEventUiBlocking()) {
+    app.busy = false;
   }
-  pumpEventFlash();
+  // 移動完了後の resumeAfterMovement が deferred 告知を pump する
 }
 
 function showWarpOverlay(who, fromLabel, toLabel) {
@@ -3542,8 +3564,9 @@ function bannerFromLog(g, l) {
     if (/イベント表をスクラッチ/.test(l.text)) return null;
     if (/スクラッチマスに停止/.test(l.text)) return null;
     if (/ミニゲームマス/.test(l.text) && /停止/.test(l.text)) return null;
-    // スイッチは presentSwitchFx 側の告知のみ（ゲストでログ再フラッシュがループしないように）
-    if (/スイッチを倒した|経路が切り替わった/.test(l.text)) return null;
+    // スイッチは presentSwitchFx 側のスタンプ／トーストのみ
+    // （経路=エンジンログ、航路=旧UI文言。どちらも確認ダイアログにしない）
+    if (/スイッチを倒した|経路が切り替わった|航路が切り替わった/.test(l.text)) return null;
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
       title = 'お店が休み';
@@ -3604,7 +3627,10 @@ function enqueueBanner(payload) {
   if (!payload?.title) return;
   const visual = resolveEventVisual(payload);
   const actorId = payload.actorId != null ? payload.actorId : app.actionActorId;
-  pushEventStamp({ ...payload, visual, actorId });
+  const stampPayload = { ...payload, visual, actorId };
+  pushEventStamp(stampPayload);
+  // silentStamp / stampOnly はフィードのみ（確認ダイアログで busy を掴まない）
+  if (payload.silentStamp || payload.stampOnly) return;
   queueEventFlash({ ...payload, visual, actorId });
 }
 
@@ -3674,6 +3700,9 @@ function resumeAfterMovement() {
       clearTimeout(app.cpuTimer);
     }
     pumpEventFlash();
+    // pump で開いたフラッシュは着地者 reader のまま手番が移っていることがある。
+    // 再 refresh で reconcileStaleEventFlash を走らせ、ホスト残留の確認中を解放する。
+    refreshGameUI();
   }
   if (clearBusyUnlessEventUi()) {
     refreshGameUI();
