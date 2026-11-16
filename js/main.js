@@ -17,6 +17,8 @@ import {
   createEmptyStats,
   ensureStats,
   updateAreaStockPrices,
+  previewStockSell,
+  STOCK_SELL_PRESSURE_MIN,
   getLiquidatableValue,
   calcToll,
   getRemainingInvest,
@@ -4520,12 +4522,14 @@ function showChoiceModal(g) {
       const have = p?.stocks[area] || 0;
       if (!have) return '';
       const price = g.areas[area].stockPrice;
-      return `<div class="raise-row" style="--ac:${g.areas[area].color}">
+      const initial = Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))));
+      return `<div class="raise-row" style="--ac:${g.areas[area].color}" data-raise-stock-row="${area}">
         <span>A${area} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
         <label class="field tiny">枚数
-          <input type="number" min="1" max="${have}" value="${Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))))}" data-sell-stock="${area}" />
+          <input type="number" min="1" max="${have}" value="${initial}" data-sell-stock="${area}" />
         </label>
         <button type="button" class="btn tiny" data-do-sell-stock="${area}">売る</button>
+        <div class="sell-preview" data-sell-preview="${area}">${formatStockSellPreview(g, area, initial)}</div>
       </div>`;
     }).join('');
     const shopRows = g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((sq) => {
@@ -4548,7 +4552,7 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。${
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。一度に${STOCK_SELL_PRESSURE_MIN}枚以上の株を売ると売却後の株価が下がります。${
         mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
       }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
@@ -4571,6 +4575,21 @@ function showChoiceModal(g) {
         const count = Math.max(1, Number(input?.value) || 1);
         sendAction({ type: 'choice', choice: { action: 'sell_stock', area, count } });
       };
+    });
+    body.querySelectorAll('input[data-sell-stock]').forEach((input) => {
+      const sync = () => {
+        const area = Number(input.dataset.sellStock);
+        const have = p?.stocks[area] || 0;
+        const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+        const el = body.querySelector(`[data-sell-preview="${area}"]`);
+        if (el) {
+          el.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+          el.innerHTML = formatStockSellPreview(g, area, count);
+        }
+      };
+      input.addEventListener('input', sync);
+      input.addEventListener('change', sync);
+      sync();
     });
     body.querySelectorAll('[data-do-sell-shop]').forEach((btn) => {
       btn.onclick = () => {
@@ -4665,6 +4684,7 @@ function showChoiceModal(g) {
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
         <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
         ${broker ? '<button class="btn ghost" id="m-stock-sell" hidden>この枚数で売る</button>' : ''}
+        <div id="stock-sell-preview" class="sell-preview" hidden></div>
       </div>`;
     $('#btn-end-choice').hidden = true;
     $('#btn-skip-choice').hidden = false;
@@ -4674,6 +4694,22 @@ function showChoiceModal(g) {
 
     let selected = null;
     bindAreaHighlight(body);
+    const syncStockSellPreview = () => {
+      const preview = $('#stock-sell-preview');
+      const sellBtn = $('#m-stock-sell');
+      if (!preview) return;
+      if (selected == null || sellBtn?.hidden) {
+        preview.hidden = true;
+        preview.textContent = '';
+        return;
+      }
+      const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+      const have = Number(card?.dataset.have) || 0;
+      const count = Math.max(1, Math.min(have, Number($('#m-stock-count')?.value) || 1));
+      preview.hidden = false;
+      preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
+      preview.innerHTML = formatStockSellPreview(g, selected, count);
+    };
     body.querySelectorAll('.stock-card').forEach((btn) => {
       btn.onclick = () => {
         body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
@@ -4703,13 +4739,18 @@ function showChoiceModal(g) {
               input.min = '1';
               input.max = String(have);
               input.value = String(Math.min(have, 10));
+            } else {
+              input.max = String(Math.max(maxBuy, have));
             }
           } else {
             sellBtn.hidden = true;
           }
         }
+        syncStockSellPreview();
       };
     });
+    $('#m-stock-count')?.addEventListener('input', syncStockSellPreview);
+    $('#m-stock-count')?.addEventListener('change', syncStockSellPreview);
     $('#m-stock-confirm').onclick = () => {
       if (selected == null) return;
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
@@ -5237,16 +5278,19 @@ function renderStockPanel(g) {
     ? `<div class="stocks-sell">
         <div class="sh-title">自分の株を売る</div>
         <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
+        <p class="hint">一度に${STOCK_SELL_PRESSURE_MIN}枚以上売ると売却後の株価が下がります（受取は今の株価）</p>
         ${held.map((area) => {
           const meta = g.areas[area];
           const have = me.stocks[area] || 0;
           const price = meta.stockPrice;
+          const initial = Math.min(have, 10);
           return `<div class="sell-row" style="--ac:${meta.color}" data-hold-area="${area}">
             <span class="sell-label">A${area} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
             <label class="field tiny">枚数
-              <input type="number" min="1" max="${have}" value="${Math.min(have, 10)}" data-sell-count="${area}" />
+              <input type="number" min="1" max="${have}" value="${initial}" data-sell-count="${area}" />
             </label>
             <button type="button" class="btn tiny" data-turn-sell="${area}">売る</button>
+            <div class="sell-preview" data-sell-preview="${area}">${formatStockSellPreview(g, area, initial)}</div>
           </div>`;
         }).join('')}
       </div>`
@@ -5297,6 +5341,37 @@ function renderStockPanel(g) {
       sendAction({ type: 'sell', playerId: seat, area, count });
     };
   });
+
+  el.querySelectorAll('input[data-sell-count]').forEach((input) => {
+    const sync = () => {
+      const area = Number(input.dataset.sellCount);
+      const have = me?.stocks[area] || 0;
+      const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+      const preview = el.querySelector(`[data-sell-preview="${area}"]`);
+      if (preview) {
+        preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+        preview.innerHTML = formatStockSellPreview(g, area, count);
+      }
+    };
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
+    sync();
+  });
+}
+
+/** 株売却の受取額と売却後株価の予測テキスト */
+function formatStockSellPreview(g, area, count) {
+  const prev = previewStockSell(g, area, count);
+  if (!prev || prev.count <= 0) return '';
+  const got = `受取 <strong>${prev.proceeds.toLocaleString()}G</strong>`;
+  if (!prev.drops) {
+    return `${got} · 株価変動なし（${prev.threshold}枚未満）`;
+  }
+  if (prev.diff === 0) {
+    return `${got} · 売却後も株価 ${prev.oldPrice}G`;
+  }
+  const arrow = `${prev.oldPrice}→${prev.newPrice}G（${prev.diff}G）`;
+  return `${got} · 売却後の株価 <strong>${arrow}</strong>`;
 }
 
 function escapeHtml(s) {

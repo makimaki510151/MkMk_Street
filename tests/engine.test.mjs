@@ -24,6 +24,9 @@ import {
   getLiquidatableValue,
   preTurnSell,
   canSellStockOnTurn,
+  previewStockSell,
+  STOCK_SELL_PRESSURE_MIN,
+  STOCK_SELL_B_RATE,
   rollDice,
   advanceMove,
   applyChoice,
@@ -1924,6 +1927,39 @@ describe('MkMk Street engine', () => {
     cpuAct(g);
     assert.ok(g.players[1].cash >= reserve - 1, `cash ${g.players[1].cash} reserve ${reserve}`);
     assert.equal(cpuCanAffordSpend(g, g.players[1], 0), true);
+  });
+
+  it('previews stock price drop when selling 10+ shares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 111,
+      cash: 3000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 40;
+    updateAreaStockPrices(g);
+    const oldPrice = g.areas[area].stockPrice;
+    const oldB = g.areas[area].B;
+
+    const small = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN - 1);
+    assert.ok(small);
+    assert.equal(small.drops, false);
+    assert.equal(small.oldPrice, oldPrice);
+    assert.equal(small.newPrice, oldPrice);
+    assert.equal(small.proceeds, oldPrice * (STOCK_SELL_PRESSURE_MIN - 1));
+
+    const big = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN);
+    assert.ok(big);
+    assert.equal(big.drops, true);
+    assert.equal(big.oldPrice, oldPrice);
+    assert.equal(big.proceeds, oldPrice * STOCK_SELL_PRESSURE_MIN);
+    const expectedB = Math.max(100, Math.floor(oldB * STOCK_SELL_B_RATE));
+    assert.ok(big.newPrice <= oldPrice);
+    // 実売却後の株価と一致すること
+    const sold = preTurnSell(g, 0, area, STOCK_SELL_PRESSURE_MIN);
+    assert.equal(sold.ok, true);
+    assert.equal(g.areas[area].B, expectedB);
+    assert.equal(g.areas[area].stockPrice, big.newPrice);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {

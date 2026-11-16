@@ -677,14 +677,28 @@ export function refreshGoalPressure(g) {
   return on;
 }
 
+/** 一度にこの枚数以上売ると相場係数 B が下がる */
+export const STOCK_SELL_PRESSURE_MIN = 10;
+/** 大口売却時の B 乗率 */
+export const STOCK_SELL_B_RATE = 0.93;
+
+function areaShopAvgPrice(g, area) {
+  const shops = getAreaShops(g, area);
+  if (!shops.length) return 0;
+  return shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
+}
+
+function stockPriceFromB(avg, B) {
+  return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
+}
+
 export function updateAreaStockPrices(g) {
   const changes = [];
   for (const a of Object.keys(g.areas).map(Number)) {
-    const shops = getAreaShops(g, a);
-    if (!shops.length) continue;
-    const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
+    const avg = areaShopAvgPrice(g, a);
+    if (!avg) continue;
     const oldPrice = g.areas[a].stockPrice || 0;
-    const newPrice = Math.max(1, Math.floor((avg / 65536) * g.areas[a].B));
+    const newPrice = stockPriceFromB(avg, g.areas[a].B);
     if (oldPrice !== newPrice) {
       changes.push({ area: a, oldPrice, newPrice, diff: newPrice - oldPrice });
     }
@@ -695,6 +709,35 @@ export function updateAreaStockPrices(g) {
     for (const p of g.players || []) syncStockValueSnap(g, p);
   }
   return changes;
+}
+
+/**
+ * 株売却後の株価を予測（実際の売却は現行価格で受取→その後 B 低下）。
+ * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, threshold:number }|null}
+ */
+export function previewStockSell(g, area, count) {
+  const a = Number(area);
+  const meta = g.areas?.[a];
+  if (!meta) return null;
+  const avg = areaShopAvgPrice(g, a);
+  if (!avg) return null;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
+  const drops = n >= STOCK_SELL_PRESSURE_MIN;
+  const nextB = drops
+    ? Math.max(100, Math.floor((meta.B || 100) * STOCK_SELL_B_RATE))
+    : (meta.B || 100);
+  const newPrice = stockPriceFromB(avg, nextB);
+  return {
+    area: a,
+    count: n,
+    proceeds: oldPrice * n,
+    oldPrice,
+    newPrice,
+    diff: newPrice - oldPrice,
+    drops,
+    threshold: STOCK_SELL_PRESSURE_MIN,
+  };
 }
 
 export function getPlayerAssets(g, p) {
@@ -1738,7 +1781,9 @@ function sellStockForCash(g, p, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
+  if (n >= STOCK_SELL_PRESSURE_MIN) {
+    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
+  }
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
@@ -2156,8 +2201,8 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
       syncStockValueSnap(g, p);
-      if (count >= 10) {
-        g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * 0.93));
+      if (count >= STOCK_SELL_PRESSURE_MIN) {
+        g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * STOCK_SELL_B_RATE));
       }
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
@@ -2741,7 +2786,9 @@ export function preTurnSell(g, playerId, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= 10) g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * 0.93));
+  if (n >= STOCK_SELL_PRESSURE_MIN) {
+    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
+  }
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
