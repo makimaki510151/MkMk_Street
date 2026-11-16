@@ -887,7 +887,7 @@ function handleNetEvent({ from, data }) {
       // クライアントが残留の料金確認などを捨てた → ホストも含め全員解放
       const seat = app.game?.players?.findIndex((p) => p.peerId === from);
       if (seat < 0) return;
-      if (data.throughLogKey) app.lastSeenLogKey = data.throughLogKey;
+      if (data.throughLogKey) advanceLastSeenLogKey(data.throughLogKey, app.game);
       flushEventFlashImmediate();
       app.busy = false;
       refreshGameUI();
@@ -1019,6 +1019,8 @@ function playRemoteFx(data) {
       applySwitchState(app.game);
     }
     app.busy = true;
+    // ゲストはスライド＋SEのみ。告知UIを出すと endTurn 後の reconcile で
+    // flush↔再告知ループになり音とログが鳴り続ける
     presentSwitchFx(data.moves, { remote: true, alreadyArmed: true }).finally(() => {
       clearBusyUnlessEventUi();
       refreshGameUI();
@@ -1029,8 +1031,8 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'eventFlashFlush') {
     flushEventFlashImmediate({ remote: true });
-    // 同一ログからの再フラッシュで次手番が塞がらないよう既読にする
-    if (data.throughLogKey) app.lastSeenLogKey = data.throughLogKey;
+    // 既読キーは前進のみ（古い throughLogKey で巻き戻すとログ再告知がループする）
+    if (data.throughLogKey) advanceLastSeenLogKey(data.throughLogKey, app.game);
     app.busy = false;
     refreshGameUI();
   }
@@ -1879,6 +1881,8 @@ function requestHostEventFlashFlush() {
 function reconcileStaleEventFlash(g) {
   if (!g || !isEventUiBlocking()) return false;
   if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
+  // 未表示の deferred キューだけなら消さない（スイッチ告知などを移動後に出すため）
+  if (!app.eventFlashOpen) return false;
   const readerId = app.eventFlashReaderId;
   const curId = g.currentPlayerIdx;
   // 確認担当の手番がもう終わっている残留告知
@@ -1921,7 +1925,7 @@ function flushEventFlashImmediate({ remote = false } = {}) {
   // 5倍買いキャンセル等: ホスト側は既に閉じていても、他端末の取り残し告知を必ず解放する
   if (!remote && app.mode === 'host') {
     const throughLogKey = app.game?.logs?.[0] ? logKey(app.game.logs[0]) : null;
-    if (throughLogKey) app.lastSeenLogKey = throughLogKey;
+    if (throughLogKey) advanceLastSeenLogKey(throughLogKey, app.game);
     broadcastFx({ kind: 'eventFlashFlush', throughLogKey });
   }
 }
@@ -2391,13 +2395,18 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
   }
   if (typeof audio.sfx.fork === 'function') audio.sfx.fork();
   else audio.sfx.step();
-  enqueueBanner({
-    kicker: 'スイッチ',
-    title: '航路が切り替わった',
-    detail: `動くマス ×${moves.length}`,
-    kind: 'event',
-    color: '#ffe08a',
-  });
+  // ゲストはスライドSEのみ。告知はホスト／ローカルで1回（ログ告知とも二重にしない）
+  if (!remote) {
+    enqueueBanner({
+      kicker: 'スイッチ',
+      title: '航路が切り替わった',
+      detail: `動くマス ×${moves.length}`,
+      kind: 'system',
+      color: '#ffe08a',
+      actorId: app.actionActorId,
+      silentStamp: true,
+    });
+  }
   await wait(dur + 80);
   if (!wasBusy) clearBusyUnlessEventUi();
   else if (isEventUiBlocking()) {
@@ -3317,6 +3326,30 @@ function logKey(l) {
   return `${l.t || ''}|${l.kind || ''}|${l.text}`;
 }
 
+/**
+ * ログ既読カーソルを新しい方へだけ進める。
+ * 古い throughLogKey で巻き戻すと、クライアントが同じログを再告知し続けて SE が鳴り続ける。
+ */
+function advanceLastSeenLogKey(nextKey, g = app.game) {
+  if (!nextKey) return;
+  if (app.lastSeenLogKey == null) {
+    app.lastSeenLogKey = nextKey;
+    return;
+  }
+  if (app.lastSeenLogKey === nextKey) return;
+  const logs = g?.logs;
+  if (!logs?.length) {
+    app.lastSeenLogKey = nextKey;
+    return;
+  }
+  const keys = logs.map(logKey);
+  const curIdx = keys.indexOf(app.lastSeenLogKey);
+  const nextIdx = keys.indexOf(nextKey);
+  // newest-first: 小さい index ほど新しい。不明・より新しいときだけ更新
+  if (nextIdx < 0) return;
+  if (curIdx < 0 || nextIdx < curIdx) app.lastSeenLogKey = nextKey;
+}
+
 function announceNewLogs(g) {
   if (!g?.logs?.length) return;
   // 初回は既存ログを既読扱いにしてスパムしない
@@ -3330,7 +3363,7 @@ function announceNewLogs(g) {
     fresh.push(l);
   }
   if (!fresh.length) return;
-  app.lastSeenLogKey = logKey(g.logs[0]);
+  advanceLastSeenLogKey(logKey(g.logs[0]), g);
 
   // 新しいものから時系列順へ
   for (const l of fresh.reverse()) {
@@ -3403,6 +3436,8 @@ function bannerFromLog(g, l) {
     if (/イベント表をスクラッチ/.test(l.text)) return null;
     if (/スクラッチマスに停止/.test(l.text)) return null;
     if (/ミニゲームマス/.test(l.text) && /停止/.test(l.text)) return null;
+    // スイッチは presentSwitchFx 側の告知のみ（ゲストでログ再フラッシュがループしないように）
+    if (/スイッチを倒した|経路が切り替わった/.test(l.text)) return null;
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
       title = 'お店が休み';
@@ -4120,7 +4155,7 @@ function bindEventFlashControls() {
 }
 
 /** 左上フィードへ即時スタンプ追加（上→下・さかのぼり可） */
-function pushEventStamp({ kicker, title, detail, kind, color, mine, visual }) {
+function pushEventStamp({ kicker, title, detail, kind, color, mine, visual, silentStamp }) {
   const feed = $('#event-feed');
   if (!feed) return;
 
@@ -4151,6 +4186,7 @@ function pushEventStamp({ kicker, title, detail, kind, color, mine, visual }) {
     feed.scrollTop = feed.scrollHeight;
   }
 
+  if (silentStamp) return;
   if (kind === 'shop' || kind === 'level' || kind === 'mark' || kind === 'event') audio.sfx.buy();
 }
 
