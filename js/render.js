@@ -16,6 +16,7 @@ const TYPE_ICON = {
   stockbroker: '株',
   lucky: '★',
   rollon: '再',
+  suit_fill: '全',
   junction: '岐',
   warp: '転',
   switch: '切',
@@ -529,6 +530,7 @@ export function createRenderer(canvas) {
       else if (n.type === 'rest') fill = '#4a6a7a';
       else if (n.type === 'lucky') fill = '#b8860b';
       else if (n.type === 'rollon') fill = '#2d6a4f';
+      else if (n.type === 'suit_fill') fill = '#6b3d6a';
       else if (n.type === 'junction') fill = '#5a4a3a';
       else if (n.type === 'warp') fill = '#5b4a8c';
       else if (n.type === 'switch') fill = '#8a6b2a';
@@ -882,6 +884,10 @@ export function shopTooltip(g, sq) {
   }
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
+  if (sq.type === 'suit_fill') return `${sq.label} — 止まると足りないマークを1つ入手`;
+  if (sq.type === 'lucky') return `${sq.label} — ラッキーステータス獲得`;
+  if (sq.type === 'rollon') return `${sq.label} — もう一度サイコロ`;
+  if (sq.type === 'stockbroker') return `${sq.label} — 株を1種類購入`;
   if (sq.type === 'warp') {
     const dest = g.map.find((n) => n.id === sq.warpTo);
     return `${sq.label} — 止まると${dest ? `「${dest.label}」へ` : ''}ワープ`;
