@@ -905,12 +905,14 @@ body.your-turn #btn-roll:not(:disabled) {
 .log-line.mark, .log-line.event { color: #b7a8c4; }
 #wait-hint { font-size: 0.8rem; color: var(--accent-strong); }
 
-/* event feed — collapsed by default */
+/* event feed — collapsed by default.
+   z-index は中央フラッシュ(12)・所持金FX(13)より上。
+   フラッシュ表示中にフィードが開いても「出来事」トグル／スクロールが押せるようにする。 */
 #event-feed-wrap {
   position: absolute;
   left: 0.55rem;
   top: 0.55rem;
-  z-index: 8;
+  z-index: 14;
   width: min(260px, 46%);
   display: flex;
   flex-direction: column;
@@ -1019,15 +1021,17 @@ body.your-turn #btn-roll:not(:disabled) {
   to { opacity: 1; transform: none; }
 }
 
-/* board-center event flash */
+/* board-center event flash
+   背面は pointer-events: none（左上フィードやズームを塞がない）。
+   カード本体だけ受けてクリックで閉じる（バブルで #event-flash の listener へ）。 */
 #event-flash {
   position: absolute;
   inset: 0;
   z-index: 12;
   display: grid;
   place-items: center;
-  pointer-events: auto;
-  cursor: pointer;
+  pointer-events: none;
+  cursor: default;
   background:
     radial-gradient(ellipse at 50% 42%, color-mix(in srgb, var(--efc, var(--accent)) 22%, transparent), transparent 58%),
     rgba(12, 14, 16, 0.28);
@@ -1048,6 +1052,8 @@ body.your-turn #btn-roll:not(:disabled) {
   transform: scale(0.86) translateY(10px);
   opacity: 0;
   transition: transform .28s cubic-bezier(.2,.85,.2,1), opacity .22s ease;
+  pointer-events: auto;
+  cursor: pointer;
 }
 #event-flash.show .ef-stage {
   transform: scale(1) translateY(0);
@@ -1709,6 +1715,8 @@ body.your-turn #btn-roll:not(:disabled) {
   place-items: center;
   padding: 1rem;
   background: rgba(12, 14, 16, 0.45);
+  /* 背面クリックが下のフラッシュに抜けて誤閉じしないよう全面で受ける */
+  pointer-events: auto;
 }
 #modal.centered .modal-card.scratch-modal {
   width: min(640px, 96vw);
@@ -1755,12 +1763,13 @@ body.your-turn #btn-roll:not(:disabled) {
 .modal-card.fork-hint-only {
   width: min(300px, 92vw);
 }
-/* 分岐ボタンは盤面ウィンドウ（.board-wrap）基準で配置 */
+/* 分岐ボタンは盤面ウィンドウ（.board-wrap）基準で配置。
+   フラッシュ(12)より下にして、左上フィード／確認カードを塞がない */
 #fork-rails {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 12;
+  z-index: 11;
 }
 #fork-rails[hidden] { display: none !important; }
 .fork-rail {
