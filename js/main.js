@@ -36,7 +36,7 @@ import {
   kickDisconnectedPlayer,
   getGoalPressurePlayers,
 } from './engine.js';
-import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID } from './board.js';
+import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
 import {
   GROUP_COLORS,
   TABLE_SIZE,
@@ -1007,6 +1007,17 @@ function playRemoteFx(data) {
   if (data.kind === 'warp' && data.warp) {
     app.busy = true;
     presentWarpFx([data.warp], { remote: true }).finally(() => {
+      clearBusyUnlessEventUi();
+      refreshGameUI();
+    });
+  }
+  if (data.kind === 'switchSlide' && data.moves?.length) {
+    if (app.game && (data.switchState === 0 || data.switchState === 1)) {
+      app.game.switchState = data.switchState ? 1 : 0;
+      applySwitchState(app.game);
+    }
+    app.busy = true;
+    presentSwitchFx(data.moves, { remote: true }).finally(() => {
       clearBusyUnlessEventUi();
       refreshGameUI();
     });
@@ -2122,6 +2133,7 @@ async function continueAdvancing() {
       onLandingSfx();
       const landed = app.game.players[pid]?.pos;
       if (landed != null) app.inspectedId = landed;
+      if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
       if (result.warps?.length) await presentWarpFx(result.warps);
       syncState();
       refreshGameUI();
@@ -2313,6 +2325,47 @@ async function presentWarpFx(warps, { remote = false } = {}) {
     await wait(1280);
     hideWarpOverlay();
   }
+  if (!wasBusy) clearBusyUnlessEventUi();
+  else if (isEventUiBlocking()) {
+    app.eventFlashHoldingBusy = true;
+    app.busy = true;
+  }
+  pumpEventFlash();
+}
+
+/** スイッチで動くマスのスライド演出 */
+async function presentSwitchFx(moves, { remote = false } = {}) {
+  if (!moves?.length || !app.game) return;
+  const wasBusy = app.busy;
+  app.busy = true;
+  if (!remote) {
+    broadcastFx({
+      kind: 'switchSlide',
+      moves,
+      switchState: app.game.switchState ? 1 : 0,
+    });
+  }
+  const dur = 780;
+  for (const m of moves) {
+    if (!m || m.id == null || !m.from || !m.to) continue;
+    // 論理座標は先に到着へ合わせ、見た目だけ from→to で補間（ゲストの巻き戻り防止）
+    const node = app.game.map.find((n) => n.id === m.id);
+    if (node) {
+      node.col = m.to.col;
+      node.row = m.to.row;
+    }
+    app.renderer?.animateTileSlide(m.id, m.from, m.to, dur);
+  }
+  if (typeof audio.sfx.fork === 'function') audio.sfx.fork();
+  else audio.sfx.step();
+  enqueueBanner({
+    kicker: 'スイッチ',
+    title: '航路が切り替わった',
+    detail: `動くマス ×${moves.length}`,
+    kind: 'event',
+    color: '#ffe08a',
+  });
+  await wait(dur + 80);
   if (!wasBusy) clearBusyUnlessEventUi();
   else if (isEventUiBlocking()) {
     app.eventFlashHoldingBusy = true;

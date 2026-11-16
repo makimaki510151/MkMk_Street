@@ -119,6 +119,19 @@ export function applySwitchState(g) {
   }
 }
 
+/** スイッチで動くマスのスライド演出用（serialize には含めない） */
+export function recordSwitchSlide(g, move) {
+  if (!move || move.id == null) return;
+  if (!g.switchFx) g.switchFx = [];
+  g.switchFx.push(move);
+}
+
+export function takeSwitchFx(g) {
+  const slides = g.switchFx ? [...g.switchFx] : [];
+  g.switchFx = null;
+  return slides;
+}
+
 function packBoard(nodes, bank, cols, rows, extra = {}) {
   finalizeShops(nodes);
   freezeBaseNexts(nodes);

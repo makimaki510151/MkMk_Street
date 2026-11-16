@@ -3,6 +3,8 @@
 import {
   buildBoard,
   applySwitchState,
+  recordSwitchSlide,
+  takeSwitchFx,
   SUIT_LABELS,
   DEFAULT_GOAL,
   DEFAULT_CASH,
@@ -436,9 +438,22 @@ export function createGame({
   return g;
 }
 
-/** スイッチマス：経路と動くマスを切り替える */
+/** スイッチマス：経路と動くマスを切り替える（動くマスは switchFx にスライド情報を積む） */
 export function toggleBoardSwitch(g) {
-  g.switchState = g.switchState ? 0 : 1;
+  const prev = g.switchState ? 1 : 0;
+  const next = prev ? 0 : 1;
+  for (const mv of g.switchMoves || []) {
+    const from = mv.pos?.[prev];
+    const to = mv.pos?.[next];
+    if (!from || !to) continue;
+    if (from.col === to.col && from.row === to.row) continue;
+    recordSwitchSlide(g, {
+      id: mv.id,
+      from: { col: from.col, row: from.row },
+      to: { col: to.col, row: to.row },
+    });
+  }
+  g.switchState = next;
   applySwitchState(g);
   return g.switchState;
 }
@@ -1014,7 +1029,8 @@ function finishMove(g, p) {
   g.move = null;
   resolveLanding(g, p, { passedBank });
   const warps = takeWarpFx(g);
-  return { ok: true, done: true, forked: false, path, warps, state: serializeState(g) };
+  const switchMoves = takeSwitchFx(g);
+  return { ok: true, done: true, forked: false, path, warps, switchMoves, state: serializeState(g) };
 }
 
 function applyStep(g, p, nextId) {

@@ -42,6 +42,8 @@ export function createRenderer(canvas) {
     moves: {},
     /** @type {Record<number, {fromId:number,toId:number,start:number,dur:number,color?:string}>} */
     warps: {},
+    /** @type {Record<number, {fromCol:number,fromRow:number,toCol:number,toRow:number,start:number,dur:number}>} */
+    tileSlides: {},
     diceSpin: 0,
   };
   let raf = 0;
@@ -200,12 +202,40 @@ export function createRenderer(canvas) {
     return { ...layout, insets: { ...UI_INSETS } };
   }
 
+  function easeInOut(t) {
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  }
+
+  /** スイッチで動くマスの見た目座標（アニメ中は補間）。完了分の掃除は draw 末尾で行う */
+  function visualGridPos(n) {
+    const slide = anim.tileSlides[n.id];
+    if (!slide) return { col: n.col, row: n.row, hop: 0 };
+    const t = Math.min(1, (performance.now() - slide.start) / slide.dur);
+    const ease = easeInOut(t);
+    const hop = t >= 1 ? 0 : Math.sin(Math.PI * ease) * 0.18;
+    if (t >= 1) return { col: n.col, row: n.row, hop: 0 };
+    return {
+      col: slide.fromCol + (slide.toCol - slide.fromCol) * ease,
+      row: slide.fromRow + (slide.toRow - slide.fromRow) * ease,
+      hop,
+    };
+  }
+
+  function pruneFinishedTileSlides() {
+    const now = performance.now();
+    for (const id of Object.keys(anim.tileSlides)) {
+      const s = anim.tileSlides[id];
+      if (!s || now - s.start >= s.dur) delete anim.tileSlides[id];
+    }
+  }
+
   function nodeCenter(g, nodeId) {
     const n = g.map.find((x) => x.id === nodeId);
     if (!n) return null;
+    const vg = visualGridPos(n);
     return {
-      x: layout.ox + n.col * layout.size + layout.size / 2,
-      y: layout.oy + n.row * layout.size + layout.size / 2,
+      x: layout.ox + vg.col * layout.size + layout.size / 2,
+      y: layout.oy + vg.row * layout.size + layout.size / 2 - vg.hop * layout.size,
     };
   }
 
@@ -214,6 +244,19 @@ export function createRenderer(canvas) {
     anim.moves[playerId] = {
       fromId,
       toId,
+      start: performance.now(),
+      dur,
+    };
+  }
+
+  /** スイッチで動くマスのスライド（from/to はグリッド座標） */
+  function animateTileSlide(nodeId, from, to, dur = 780) {
+    if (!from || !to || nodeId == null) return;
+    anim.tileSlides[nodeId] = {
+      fromCol: from.col,
+      fromRow: from.row,
+      toCol: to.col,
+      toRow: to.row,
       start: performance.now(),
       dur,
     };
@@ -396,13 +439,15 @@ export function createRenderer(canvas) {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     for (const n of g.map) {
-      const x = ox + n.col * size + size / 2;
-      const y = oy + n.row * size + size / 2;
+      const va = visualGridPos(n);
+      const x = ox + va.col * size + size / 2;
+      const y = oy + va.row * size + size / 2 - va.hop * size;
       for (const nid of n.nexts) {
         const m = g.map.find((x) => x.id === nid);
         if (!m) continue;
+        const vb = visualGridPos(m);
         ctx.moveTo(x, y);
-        ctx.lineTo(ox + m.col * size + size / 2, oy + m.row * size + size / 2);
+        ctx.lineTo(ox + vb.col * size + size / 2, oy + vb.row * size + size / 2 - vb.hop * size);
       }
     }
     ctx.stroke();
@@ -420,8 +465,10 @@ export function createRenderer(canvas) {
         const a = g.map.find((n) => n.id === gate.a);
         const b = g.map.find((n) => n.id === gate.b);
         if (!a || !b) continue;
-        ctx.moveTo(ox + a.col * size + size / 2, oy + a.row * size + size / 2);
-        ctx.lineTo(ox + b.col * size + size / 2, oy + b.row * size + size / 2);
+        const va = visualGridPos(a);
+        const vb = visualGridPos(b);
+        ctx.moveTo(ox + va.col * size + size / 2, oy + va.row * size + size / 2 - va.hop * size);
+        ctx.lineTo(ox + vb.col * size + size / 2, oy + vb.row * size + size / 2 - vb.hop * size);
       }
       ctx.stroke();
       ctx.restore();
@@ -452,10 +499,17 @@ export function createRenderer(canvas) {
 
     // マス
     for (const n of g.map) {
-      const x = ox + n.col * size;
-      const y = oy + n.row * size;
+      const vg = visualGridPos(n);
+      const x = ox + vg.col * size;
+      const y = oy + vg.row * size - vg.hop * size;
       const pad = size * 0.07;
       const r = size * 0.04;
+      const sliding = !!anim.tileSlides[n.id];
+      if (sliding) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(255, 224, 138, 0.55)';
+        ctx.shadowBlur = size * 0.22;
+      }
       roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
 
       let fill = '#2a4050';
@@ -621,8 +675,10 @@ export function createRenderer(canvas) {
         ctx.font = `800 ${Math.max(11, size * 0.28)}px "Zen Maru Gothic", sans-serif`;
         ctx.fillText(TYPE_ICON[n.type] || n.label.slice(0, 2), x + size / 2, y + size / 2);
       }
+      if (sliding) ctx.restore();
     }
 
+    pruneFinishedTileSlides();
     drawWarpEffects(g);
 
     // コマ
@@ -711,6 +767,7 @@ export function createRenderer(canvas) {
     hitTest,
     animateToken,
     animateWarp,
+    animateTileSlide,
     setStockHighlight,
     clearStockHighlight,
     getZoom,

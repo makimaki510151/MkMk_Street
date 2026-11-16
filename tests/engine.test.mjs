@@ -300,13 +300,19 @@ describe('MkMk Street engine', () => {
     const moved = getNode(g, float.id);
     assert.ok(moved.col !== col0 || moved.row !== row0, 'movable shop should slide');
 
-    // スイッチマス着地でも切り替わる
+    // スイッチマス着地でも切り替わり、スライド情報が返る
     g.players[0].pos = hub.id;
     g.move = { stepsLeft: 0, path: [hub.id], passedBank: false, startPos: g.startId };
     g.phase = 'moving';
     const before = g.switchState;
-    advanceMove(g);
+    const landed = advanceMove(g);
     assert.equal(g.switchState, before ? 0 : 1);
+    assert.ok(Array.isArray(landed.switchMoves));
+    assert.ok(landed.switchMoves.length >= 1, 'switch landing should report sliding tiles');
+    for (const m of landed.switchMoves) {
+      assert.ok(m.from && m.to);
+      assert.ok(m.from.col !== m.to.col || m.from.row !== m.to.row);
+    }
 
     const again = restoreState(serializeState(g));
     assert.equal(again.switchState, g.switchState);
