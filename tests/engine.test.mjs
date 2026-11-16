@@ -212,44 +212,53 @@ describe('MkMk Street engine', () => {
     assert.ok(labels.includes('航路へ'), labels.join(','));
   });
 
-  it('shell harbor puts bank/broker/switches inward, swaps bank↔dice, leaves rim gaps empty', () => {
+  it('shell harbor packs rim after trimming event/chance; pier hubs are all switches', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 5,
       mapId: 'shell_harbor',
     });
     const bank = g.map.find((n) => n.type === 'bank');
-    const broker = g.map.find((n) => n.type === 'stockbroker');
-    const dice = g.map.find((n) => n.type === 'minigame' && n.game === 'guess_dice');
     const switches = g.map.filter((n) => n.type === 'switch');
     assert.ok(bank);
-    assert.ok(broker);
-    assert.ok(dice);
-    assert.equal(switches.length, 2);
-    // 銀行は中央航路、サイコロ当ては西埠頭（入れ替え後）
+    assert.equal(switches.length, 4);
+    // 旧サイコロ／証券はスイッチ化。証券・サイコロ当てマスは置かない
+    assert.equal(g.map.some((n) => n.type === 'stockbroker'), false);
+    assert.equal(g.map.some((n) => n.type === 'minigame' && n.game === 'guess_dice'), false);
+    assert.equal(g.map.some((n) => n.label === 'イベント' && n.row === 0), false);
+    assert.equal(
+      g.map.some((n) => n.label === 'チャンス' && n.row === 7 && n.col >= 6),
+      false,
+    );
+    // かき氷—ホテル、温泉宿—銭湯が直結
+    const kakigori = g.map.find((n) => n.label === 'かき氷');
+    const hotel = g.map.find((n) => n.label === 'ホテル');
+    const onsen = g.map.find((n) => n.label === '温泉宿');
+    const sento = g.map.find((n) => n.label === '銭湯');
+    assert.ok(kakigori && hotel && onsen && sento);
+    assert.ok(kakigori.nexts.includes(hotel.id));
+    assert.ok(onsen.nexts.includes(sento.id));
+    assert.equal(kakigori.col, 6);
+    assert.equal(hotel.col, 7);
+    assert.equal(sento.col, 6);
+    assert.equal(onsen.col, 7);
+    // 銀行は中央航路、東西南北の埠頭にスイッチ
     assert.equal(bank.col, 4);
     assert.equal(bank.row, 3);
-    assert.equal(dice.col, 1);
-    assert.equal(dice.row, 3);
-    assert.equal(broker.col, 8);
-    assert.equal(broker.row, 3);
     const swPos = switches.map((n) => `${n.col},${n.row}`).sort();
-    assert.deepEqual(swPos, ['4,1', '4,6']);
-    const onRim = (n) => n.col === 0 || n.col === 9 || n.row === 0 || n.row === 7;
+    assert.deepEqual(swPos, ['1,3', '4,1', '4,6', '7,3']);
+    const onRim = (n) => n.col === 0 || n.col === 8 || n.row === 0 || n.row === 7;
     assert.equal(onRim(bank), false);
-    assert.equal(onRim(broker), false);
-    assert.equal(onRim(dice), false);
     assert.ok(switches.every((n) => !onRim(n)));
-    // 寄せた跡の外周マスは埋めない
+    // 寄せた跡の外周マスは埋めない（幅9列なので東ギャップは 8,3）
     const occupied = new Set(g.map.map((n) => `${n.col},${n.row}`));
-    for (const gap of ['4,0', '9,3', '4,7', '0,3']) {
+    for (const gap of ['4,0', '8,3', '4,7', '0,3']) {
       assert.equal(occupied.has(gap), false, `rim gap ${gap} should stay empty`);
     }
     // 外周だけで閉じた周回はできない（空白で分断→埠頭ハブ必須）
     const rimOnly = g.map.filter(onRim);
     const rimIds = new Set(rimOnly.map((n) => n.id));
     const rimAdj = (n) => (n.nexts || []).filter((id) => rimIds.has(id));
-    // 外周グラフが単一サイクルでないこと（次数1相当の切れ目＝隣が1つ以下の外周点がある）
     const rimEnds = rimOnly.filter((n) => rimAdj(n).length <= 1);
     assert.ok(rimEnds.length >= 4, `expected rim gaps to break the outer loop, ends=${rimEnds.length}`);
   });
