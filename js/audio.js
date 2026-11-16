@@ -140,6 +140,16 @@ export function createAudio() {
       tone(659, 0.1, 'triangle', 0.08, 0.08);
       tone(784, 0.16, 'triangle', 0.1, 0.16);
     },
+    /** 店売却 — チャリンチャリンとコインが連続で鳴る */
+    shopSell() {
+      const clinks = [988, 1175, 1046, 1318, 1175, 1568];
+      clinks.forEach((f, i) => {
+        tone(f, 0.1, i % 2 ? 'triangle' : 'sine', 0.085, i * 0.085);
+        if (i % 2 === 0) noiseBurst(0.02, 0.03);
+      });
+      tone(1760, 0.22, 'sine', 0.06, 0.55);
+      tone(1318, 0.18, 'triangle', 0.05, 0.62);
+    },
     /** エリア独占 — 盛大なファンファーレ */
     monopoly() {
       noiseBurst(0.18, 0.16);
