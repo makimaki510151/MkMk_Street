@@ -922,6 +922,23 @@ body.your-turn #btn-roll:not(:disabled) {
 .log-line.level, .log-line.win { color: var(--accent-strong); font-weight: 700; }
 .log-line.mark, .log-line.event { color: #b7a8c4; }
 #wait-hint { font-size: 0.8rem; color: var(--accent-strong); }
+#btn-nudge {
+  width: 100%;
+  margin-top: 0.35rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-color: color-mix(in srgb, #c48a6a 55%, var(--line));
+  color: #1a1510;
+  background: linear-gradient(180deg, #f0c9a0, #d4a06e);
+}
+#btn-nudge:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+#btn-nudge:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+#btn-nudge[hidden] { display: none !important; }
 
 /* event feed — collapsed by default.
    z-index は中央フラッシュ(12)・所持金FX(13)より上。
