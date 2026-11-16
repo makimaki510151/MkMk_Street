@@ -1012,12 +1012,14 @@ function playRemoteFx(data) {
     });
   }
   if (data.kind === 'switchSlide' && data.moves?.length) {
+    // 先にスライド予約 → その後に論理座標を更新（一瞬の新位置フラッシュを防ぐ）
+    armSwitchSlides(data.moves);
     if (app.game && (data.switchState === 0 || data.switchState === 1)) {
       app.game.switchState = data.switchState ? 1 : 0;
       applySwitchState(app.game);
     }
     app.busy = true;
-    presentSwitchFx(data.moves, { remote: true }).finally(() => {
+    presentSwitchFx(data.moves, { remote: true, alreadyArmed: true }).finally(() => {
       clearBusyUnlessEventUi();
       refreshGameUI();
     });
@@ -2098,6 +2100,15 @@ async function runDiceAndMove(face) {
   resumeAfterMovement();
 }
 
+/** スイッチ・スライドを描画ループより先に予約（瞬時切替フラッシュ防止） */
+function armSwitchSlides(moves, dur = 780) {
+  if (!moves?.length || !app.renderer) return;
+  for (const m of moves) {
+    if (!m || m.id == null || !m.from || !m.to) continue;
+    app.renderer.animateTileSlide(m.id, m.from, m.to, dur);
+  }
+}
+
 async function continueAdvancing() {
   app.deferEventFlash = true;
   while (app.game?.move && app.game.phase === 'moving') {
@@ -2106,6 +2117,18 @@ async function continueAdvancing() {
     const result = advanceMove(app.game);
     if (!result.ok) break;
     if (result.state) app.game = restoreState(result.state);
+    // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く。
+    // presentSwitchFx が to へ戻してからスライドを開始する（瞬時切替→巻き戻り防止）。
+    if (result.switchMoves?.length) {
+      for (const m of result.switchMoves) {
+        if (!m || m.id == null || !m.from) continue;
+        const node = app.game.map.find((n) => n.id === m.id);
+        if (node) {
+          node.col = m.from.col;
+          node.row = m.from.row;
+        }
+      }
+    }
 
     if (result.forked) {
       audio.sfx.fork();
@@ -2117,7 +2140,11 @@ async function continueAdvancing() {
     if (result.stepped) {
       app.renderer?.animateToken(pid, result.from ?? from, result.to, 400);
       audio.sfx.step();
-      syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
+      // 最終歩でスイッチ切替がある場合、新座標の state 同期を演出後に回す
+      // （ゲストが一瞬新位置→スライド開始の巻き戻りフラッシュを見ないように）
+      if (!(result.done && result.switchMoves?.length)) {
+        syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
+      }
       refreshGameUI();
       await wait(420);
     }
@@ -2133,8 +2160,12 @@ async function continueAdvancing() {
       onLandingSfx();
       const landed = app.game.players[pid]?.pos;
       if (landed != null) app.inspectedId = landed;
-      if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
+      if (result.switchMoves?.length) {
+        // 据え置き解除＋スライド予約は presentSwitchFx 内で行う
+        await presentSwitchFx(result.switchMoves);
+      }
       if (result.warps?.length) await presentWarpFx(result.warps);
+      // スイッチ時は演出後にまとめて同期（途中同期だとゲストが瞬時切替→巻き戻りする）
       syncState();
       refreshGameUI();
       return;
@@ -2334,27 +2365,29 @@ async function presentWarpFx(warps, { remote = false } = {}) {
 }
 
 /** スイッチで動くマスのスライド演出 */
-async function presentSwitchFx(moves, { remote = false } = {}) {
+async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } = {}) {
   if (!moves?.length || !app.game) return;
   const wasBusy = app.busy;
   app.busy = true;
+  const dur = 780;
+  if (!alreadyArmed) {
+    // 予約→論理座標更新の順を同一同期ブロックで行う
+    armSwitchSlides(moves, dur);
+    for (const m of moves) {
+      if (!m || m.id == null || !m.to) continue;
+      const node = app.game.map.find((n) => n.id === m.id);
+      if (node) {
+        node.col = m.to.col;
+        node.row = m.to.row;
+      }
+    }
+  }
   if (!remote) {
     broadcastFx({
       kind: 'switchSlide',
       moves,
       switchState: app.game.switchState ? 1 : 0,
     });
-  }
-  const dur = 780;
-  for (const m of moves) {
-    if (!m || m.id == null || !m.from || !m.to) continue;
-    // 論理座標は先に到着へ合わせ、見た目だけ from→to で補間（ゲストの巻き戻り防止）
-    const node = app.game.map.find((n) => n.id === m.id);
-    if (node) {
-      node.col = m.to.col;
-      node.row = m.to.row;
-    }
-    app.renderer?.animateTileSlide(m.id, m.from, m.to, dur);
   }
   if (typeof audio.sfx.fork === 'function') audio.sfx.fork();
   else audio.sfx.step();

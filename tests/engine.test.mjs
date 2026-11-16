@@ -299,6 +299,10 @@ describe('MkMk Street engine', () => {
     assert.notDeepEqual(nexts0, nexts1);
     const moved = getNode(g, float.id);
     assert.ok(moved.col !== col0 || moved.row !== row0, 'movable shop should slide');
+    const ferry = g.map.find((n) => n.label === '渡し舟');
+    assert.ok(ferry);
+    assert.equal(ferry.col, 6);
+    assert.equal(ferry.row, 3);
 
     // スイッチマス着地でも切り替わり、スライド情報が返る
     g.players[0].pos = hub.id;

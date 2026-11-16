@@ -353,7 +353,7 @@ export function buildShellHarbor() {
       id: boatS.id,
       pos: [
         { col: 4, row: 4 },
-        { col: 7, row: 3 }, // 証券(8,3)の隣
+        { col: 6, row: 3 }, // 横向き：証券側を1マス左へ
       ],
     },
   ];
