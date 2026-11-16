@@ -3333,10 +3333,16 @@ function refreshGameUI() {
         : (canRoll ? 'あなたの番！サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
   }
 
-  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
+  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
     const actor = g.players[g.pending.playerId];
-    if (mine) {
+    // 選択UIを優先。マーク確認などの残留フラッシュが busy のままだとモーダルが出ず通信停止する
+    if (mine && isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+      app.busy = false;
+    }
+    if (mine && !app.busy) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
         $('#modal').hidden = true;
@@ -3346,7 +3352,7 @@ function refreshGameUI() {
       }
       $('#wait-hint').hidden = true;
       setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
-    } else {
+    } else if (!mine && !app.busy) {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
@@ -3499,7 +3505,17 @@ function bannerFromLog(g, l) {
     kicker = mine ? 'マーク' : `${player?.name || ''} のマーク`;
     const m = l.text.match(/[♠♥♦♣]/);
     title = m ? m[0] : 'マークマス';
-    detail = /入手/.test(l.text) ? `${player?.name || ''} がマークを入手 → イベント表` : l.text;
+    // 通過／補充はイベント表を開かない。着地入手は openScratch モーダルが本体。
+    // 確認ダイアログ（busy）にするとスクラッチ／分岐UIが塞がり P2P が止まる。
+    if (/通過で/.test(l.text)) {
+      detail = `${player?.name || ''} が通過でマークを入手`;
+    } else if (/足りないマーク|全マーク所持/.test(l.text)) {
+      detail = l.text;
+    } else if (/入手/.test(l.text)) {
+      detail = `${player?.name || ''} がマークを入手`;
+    } else {
+      detail = l.text;
+    }
   } else if (kind === 'toll') {
     const amt = (l.text.match(/([\d,]+)\s*G/) || [])[1];
     const m = l.text.match(/^(.+?)\s*→\s*(.+?)[「\s]/);
@@ -3589,6 +3605,10 @@ function bannerFromLog(g, l) {
   // ログ本文の当事者を優先（ゲストで actionActorId が古いと確認担当がズレて詰まる）
   const actorId = player?.id ?? app.actionActorId ?? null;
 
+  // マーク系はフィードのみ。中央確認はスクラッチ等の選択UIと衝突して通信停止の原因になる
+  // （航路スイッチ告知と同じクラス: busy のまま guest reader 待ちで choice/roll 拒否）
+  const stampOnly = kind === 'mark';
+
   return {
     kicker,
     title,
@@ -3597,6 +3617,7 @@ function bannerFromLog(g, l) {
     color: player?.color || '#ffe08a',
     mine: !!mine,
     actorId,
+    stampOnly,
   };
 }
 
@@ -3605,6 +3626,7 @@ function enqueueBanner(payload) {
   const visual = resolveEventVisual(payload);
   const actorId = payload.actorId != null ? payload.actorId : app.actionActorId;
   pushEventStamp({ ...payload, visual, actorId });
+  if (payload.stampOnly) return;
   queueEventFlash({ ...payload, visual, actorId });
 }
 
@@ -3692,6 +3714,13 @@ function canDismissEventFlash() {
   if (!app.game || !app.eventFlashOpen) return false;
   // 手番が移ったあとに残った告知は、いまサイコロを振る側も閉じられる
   if (app.game.phase === 'await_roll' && isMyTurn()) return true;
+  // 選択待ちの本人も閉じられる（マーク確認などがスクラッチ／分岐モーダルを塞いだとき）
+  const pend = app.game.pending;
+  if ((app.game.phase === 'await_choice' || app.game.phase === 'await_fork') && pend) {
+    const pendingPl = app.game.players[pend.playerId];
+    if (app.mode === 'local' && pendingPl && !pendingPl.isCPU) return true;
+    if (pend.playerId === app.localSeat) return true;
+  }
   const reader = app.game.players[app.eventFlashReaderId];
   if (!reader) {
     if (app.mode === 'local' || app.mode === 'host') return true;
