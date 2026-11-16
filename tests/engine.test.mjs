@@ -1343,6 +1343,34 @@ describe('MkMk Street engine', () => {
     assert.equal(cont.ok, true);
   });
 
+  it('raise_funds cancel while still short after toll keeps pending open', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 94,
+      cash: 2000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    g.players[0].cash = -120;
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'raise_funds',
+      playerId: 0,
+      targetCash: 0,
+      reason: 'toll',
+      resume: { type: 'after_toll', shopId: shop.id, toll: 200 },
+    };
+    const bad = applyChoice(g, { action: 'cancel' });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.error, 'still_short');
+    assert.equal(g.pending?.type, 'raise_funds');
+    assert.equal(g.phase, 'await_choice');
+    assert.ok(bad.state);
+    const again = restoreState(bad.state);
+    assert.equal(again.pending?.type, 'raise_funds');
+  });
+
   it('five_buy shortfall opens raise_funds then executes after selling stock', () => {
     const g = createGame({
       players: [{ name: 'A', cash: 500 }, { name: 'B', cash: 5000 }],
