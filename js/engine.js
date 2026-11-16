@@ -924,6 +924,191 @@ export function buildGameResults(g) {
   };
 }
 
+/**
+ * 終了結果をエクスポート用のプレーンオブジェクトへ整形。
+ * @param {ReturnType<typeof buildGameResults>} results
+ * @param {{ exportedAt?: string, mapId?: string|null, mapName?: string|null, mode?: string|null }} [meta]
+ */
+export function formatGameResultsExport(results, meta = {}) {
+  const ranking = (results?.ranking || []).map((r) => ({
+    rank: r.rank,
+    id: r.id,
+    name: r.name,
+    color: r.color,
+    bankrupt: !!r.bankrupt,
+    level: r.level,
+    shopCount: r.shopCount,
+    monopolyAreas: r.monopolyAreas,
+    isWinner: !!r.isWinner,
+    assets: {
+      cash: r.assets?.cash ?? 0,
+      shopAsset: r.assets?.shopAsset ?? 0,
+      stockAsset: r.assets?.stockAsset ?? 0,
+      total: r.assets?.total ?? 0,
+    },
+    sales: { ...r.sales },
+    payments: { ...r.payments },
+    stockReturn: r.stockReturn ?? 0,
+    nextSalary: r.nextSalary ?? 0,
+    stats: { ...createEmptyStats(), ...(r.stats || {}) },
+  }));
+  const winner = ranking.find((r) => r.isWinner) || ranking[0] || null;
+  return {
+    schema: 'mkmk-street-results/v1',
+    exportedAt: meta.exportedAt || new Date().toISOString(),
+    game: 'MkMk Street',
+    mapId: meta.mapId ?? null,
+    mapName: meta.mapName ?? null,
+    mode: meta.mode ?? null,
+    goal: results?.goal ?? 0,
+    turn: results?.turn ?? 1,
+    startCash: results?.startCash ?? 0,
+    winnerId: results?.winnerId ?? winner?.id ?? null,
+    winnerName: winner?.name ?? null,
+    ranking,
+    awards: (results?.awards || []).map((a) => ({
+      id: a.id,
+      title: a.title,
+      desc: a.desc,
+      playerId: a.playerId,
+      playerName: a.playerName,
+      playerColor: a.playerColor,
+      value: a.value,
+      valueLabel: a.valueLabel,
+    })),
+    worthHistory: (results?.worthHistory || []).map((h) => ({
+      turn: h.turn,
+      values: { ...(h.values || {}) },
+    })),
+  };
+}
+
+function fmtExportG(n) {
+  return `${Number(n || 0).toLocaleString('ja-JP')}G`;
+}
+
+function fmtExportSignedG(n) {
+  const v = Number(n) || 0;
+  const abs = Math.abs(v).toLocaleString('ja-JP');
+  if (v > 0) return `+${abs}G`;
+  if (v < 0) return `−${abs}G`;
+  return '0G';
+}
+
+function csvEscape(v) {
+  const s = String(v ?? '');
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+/** 人が読めるテキスト（コピー／.txt 用） */
+export function gameResultsExportToText(payload) {
+  const lines = [];
+  lines.push('MkMk Street 試合結果');
+  lines.push(`出力: ${payload.exportedAt || ''}`);
+  if (payload.mapName || payload.mapId) {
+    lines.push(`マップ: ${payload.mapName || payload.mapId}`);
+  }
+  if (payload.mode) lines.push(`モード: ${payload.mode}`);
+  lines.push(`目標: ${fmtExportG(payload.goal)} ／ ターン: ${payload.turn} ／ 開始現金: ${fmtExportG(payload.startCash)}`);
+  lines.push(`勝者: ${payload.winnerName || '（なし）'}`);
+  lines.push('');
+  lines.push('[順位]');
+  for (const r of payload.ranking || []) {
+    const a = r.assets || {};
+    lines.push(
+      `${r.rank}. ${r.name}${r.isWinner ? ' ★' : ''}${r.bankrupt ? '（破産）' : ''}`
+      + ` — 総資産 ${fmtExportG(a.total)}`
+      + `（現金 ${fmtExportG(a.cash)} / 店 ${fmtExportG(a.shopAsset)} / 株 ${fmtExportG(a.stockAsset)}）`
+      + ` Lv.${r.level} 店${r.shopCount} 独占${r.monopolyAreas}`,
+    );
+  }
+  lines.push('');
+  lines.push('[売上と支払い]');
+  for (const r of payload.ranking || []) {
+    const s = r.sales || {};
+    const p = r.payments || {};
+    lines.push(
+      `${r.name}: 売上 ${s.count}回 ${fmtExportG(s.total)}（平均 ${fmtExportG(s.average)} / 最大 ${fmtExportG(s.greatest)}）`
+      + ` ／ 支払 ${p.count}回 ${fmtExportG(p.total)}（平均 ${fmtExportG(p.average)} / 最大 ${fmtExportG(p.greatest)}）`
+      + ` ／ 株リターン ${fmtExportSignedG(r.stockReturn)}`,
+    );
+  }
+  lines.push('');
+  lines.push('[特賞]');
+  if (!(payload.awards || []).length) {
+    lines.push('（なし）');
+  } else {
+    for (const a of payload.awards) {
+      lines.push(`${a.title}: ${a.playerName} — ${a.desc} · ${a.valueLabel}`);
+    }
+  }
+  lines.push('');
+  lines.push('[総資産推移]');
+  const hist = payload.worthHistory || [];
+  if (!hist.length) {
+    lines.push('（なし）');
+  } else {
+    const names = Object.fromEntries((payload.ranking || []).map((r) => [r.id, r.name]));
+    for (const h of hist) {
+      const parts = Object.entries(h.values || {})
+        .map(([id, v]) => `${names[id] || `P${id}`} ${fmtExportG(v)}`)
+        .join(' / ');
+      lines.push(`T${h.turn}: ${parts}`);
+    }
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+/** 順位サマリの CSV（表計算向け） */
+export function gameResultsExportToCsv(payload) {
+  const header = [
+    'rank', 'name', 'winner', 'bankrupt', 'level', 'shops', 'monopolyAreas',
+    'total', 'cash', 'shopAsset', 'stockAsset',
+    'salesCount', 'salesTotal', 'salesAverage', 'salesMax',
+    'payCount', 'payTotal', 'payAverage', 'payMax',
+    'stockReturn', 'nextSalary',
+  ];
+  const rows = (payload.ranking || []).map((r) => {
+    const a = r.assets || {};
+    const s = r.sales || {};
+    const p = r.payments || {};
+    return [
+      r.rank,
+      r.name,
+      r.isWinner ? 1 : 0,
+      r.bankrupt ? 1 : 0,
+      r.level,
+      r.shopCount,
+      r.monopolyAreas,
+      a.total ?? 0,
+      a.cash ?? 0,
+      a.shopAsset ?? 0,
+      a.stockAsset ?? 0,
+      s.count ?? 0,
+      s.total ?? 0,
+      s.average ?? 0,
+      s.greatest ?? 0,
+      p.count ?? 0,
+      p.total ?? 0,
+      p.average ?? 0,
+      p.greatest ?? 0,
+      r.stockReturn ?? 0,
+      r.nextSalary ?? 0,
+    ].map(csvEscape).join(',');
+  });
+  return `${header.join(',')}\n${rows.join('\n')}\n`;
+}
+
+export function gameResultsExportFilename(payload, ext = 'json') {
+  const stamp = String(payload?.exportedAt || new Date().toISOString())
+    .replace(/[:.]/g, '-')
+    .replace(/Z$/, '');
+  const map = String(payload?.mapId || 'map').replace(/[^\w-]+/g, '_');
+  return `mkmk-street-${map}-T${payload?.turn || 0}-${stamp}.${ext}`;
+}
+
 /** 店を半分価格で売却したときの合計 */
 export function getShopFireSaleValue(g, p) {
   return g.map

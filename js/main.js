@@ -14,6 +14,10 @@ import {
   currentPlayer,
   getPlayerAssets,
   buildGameResults,
+  formatGameResultsExport,
+  gameResultsExportToText,
+  gameResultsExportToCsv,
+  gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
   updateAreaStockPrices,
@@ -105,6 +109,8 @@ const app = {
   disconnectTimers: {},
   /** 切断後に自動でCPU化するまでの猶予（ms） */
   disconnectGraceMs: 20000,
+  /** @type {ReturnType<typeof formatGameResultsExport>|null} */
+  lastResultsExport: null,
 };
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
@@ -4930,6 +4936,95 @@ function hideModal() {
   app.renderer?.clearStockHighlight();
 }
 
+function buildResultsExportPayload(g, results) {
+  return formatGameResultsExport(results, {
+    mapId: g.mapId || null,
+    mapName: g.mapName || getMapDefName(g.mapId),
+    mode: app.mode || null,
+  });
+}
+
+function downloadTextFile(filename, text, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+function bindResultsExportActions(payload) {
+  app.lastResultsExport = payload;
+  const jsonBtn = $('#btn-export-json');
+  const csvBtn = $('#btn-export-csv');
+  const textBtn = $('#btn-export-text');
+  const copyBtn = $('#btn-export-copy');
+
+  if (jsonBtn) {
+    jsonBtn.onclick = () => {
+      audio.sfx.click();
+      const body = `${JSON.stringify(payload, null, 2)}\n`;
+      downloadTextFile(gameResultsExportFilename(payload, 'json'), body, 'application/json;charset=utf-8');
+      toast('JSONを保存しました');
+    };
+  }
+  if (csvBtn) {
+    csvBtn.onclick = () => {
+      audio.sfx.click();
+      downloadTextFile(
+        gameResultsExportFilename(payload, 'csv'),
+        gameResultsExportToCsv(payload),
+        'text/csv;charset=utf-8',
+      );
+      toast('CSVを保存しました');
+    };
+  }
+  if (textBtn) {
+    textBtn.onclick = () => {
+      audio.sfx.click();
+      downloadTextFile(
+        gameResultsExportFilename(payload, 'txt'),
+        gameResultsExportToText(payload),
+        'text/plain;charset=utf-8',
+      );
+      toast('テキストを保存しました');
+    };
+  }
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      audio.sfx.click();
+      const ok = await copyTextToClipboard(gameResultsExportToText(payload));
+      toast(ok ? '結果をコピーしました' : 'コピーに失敗しました');
+    };
+  }
+}
+
 function showWinner(g) {
   const results = buildGameResults(g);
   const w = results.winnerId != null ? g.players[results.winnerId] : null;
@@ -4942,6 +5037,7 @@ function showWinner(g) {
     ? `総資産 ${winAssets.total.toLocaleString()}G ／ 目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`
     : `目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`;
   renderResultsBody(results);
+  bindResultsExportActions(buildResultsExportPayload(g, results));
   $('#btn-again').onclick = () => location.reload();
   audio.sfx.win();
 }

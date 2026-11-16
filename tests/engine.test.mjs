@@ -32,6 +32,10 @@ import {
   continueMove,
   updateAreaStockPrices,
   buildGameResults,
+  formatGameResultsExport,
+  gameResultsExportToText,
+  gameResultsExportToCsv,
+  gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
   recordWorthSnapshot,
@@ -2045,6 +2049,33 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[1].stats.rolls, 0);
     const again = buildGameResults(g);
     assert.equal(again.ranking.length, 3);
+
+    const exported = formatGameResultsExport(results, {
+      exportedAt: '2026-11-16T12:00:00.000Z',
+      mapId: 'central_cross',
+      mapName: '中央クロス',
+      mode: 'local',
+    });
+    assert.equal(exported.schema, 'mkmk-street-results/v1');
+    assert.equal(exported.winnerName, g.players[0].name);
+    assert.equal(exported.mapId, 'central_cross');
+    assert.equal(exported.ranking.length, 3);
+    assert.ok(exported.awards.length >= 1);
+    assert.ok(exported.worthHistory.length >= 1);
+
+    const text = gameResultsExportToText(exported);
+    assert.match(text, /MkMk Street 試合結果/);
+    assert.match(text, /\[順位\]/);
+    assert.match(text, /\[特賞\]/);
+    assert.match(text, new RegExp(g.players[0].name));
+
+    const csv = gameResultsExportToCsv(exported);
+    assert.match(csv, /^rank,name,winner,/);
+    assert.ok(csv.split('\n').length >= 4);
+
+    const fname = gameResultsExportFilename(exported, 'json');
+    assert.match(fname, /^mkmk-street-central_cross-T12-/);
+    assert.match(fname, /\.json$/);
   });
 
   it('tracks stock return from price changes and worth history snapshots', () => {
