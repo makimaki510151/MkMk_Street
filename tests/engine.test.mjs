@@ -24,6 +24,9 @@ import {
   getLiquidatableValue,
   preTurnSell,
   canSellStockOnTurn,
+  previewStockSell,
+  STOCK_SELL_PRESSURE_MIN,
+  STOCK_SELL_B_RATE,
   rollDice,
   advanceMove,
   applyChoice,
@@ -32,6 +35,10 @@ import {
   continueMove,
   updateAreaStockPrices,
   buildGameResults,
+  formatGameResultsExport,
+  gameResultsExportToText,
+  gameResultsExportToCsv,
+  gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
   recordWorthSnapshot,
@@ -415,6 +422,44 @@ describe('MkMk Street engine', () => {
     const again = restoreState(serializeState(g));
     assert.equal(again.switchState, g.switchState);
     assert.ok(Array.isArray(again.switchGates));
+
+    // 着地ログは UI の bannerFromLog が抑止する文言（確認ダイアログにしない）
+    const switchLog = g.logs.find((l) => /スイッチを倒した/.test(l.text));
+    assert.ok(switchLog, 'switch land should log toggle');
+    assert.equal(switchLog.kind, 'event');
+    assert.match(switchLog.text, /経路が切り替わった/);
+    assert.match(
+      switchLog.text,
+      /スイッチを倒した|経路が切り替わった|航路が切り替わった/,
+      'log must stay in bannerFromLog suppress list',
+    );
+  });
+
+  it('shell harbor switch land without switchMoves still toggles and logs', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+      mapId: 'shell_harbor',
+    });
+    g.switchMoves = [];
+    const hub = g.map.find((n) => n.type === 'switch');
+    assert.ok(hub);
+    const before = g.switchState;
+    g.players[0].pos = hub.id;
+    g.players[0].prevPos = hub.nexts[0];
+    g.currentPlayerIdx = 0;
+    g.move = { stepsLeft: 0, path: [hub.id], passedBank: false, startPos: hub.nexts[0] };
+    g.phase = 'moving';
+    const landed = advanceMove(g);
+    assert.equal(g.switchState, before ? 0 : 1);
+    assert.ok(Array.isArray(landed.switchMoves));
+    assert.equal(landed.switchMoves.length, 0, 'no sliding tiles when switchMoves stripped');
+    assert.equal(g.phase, 'await_roll', 'switch land ends turn');
+    const switchLog = g.logs.find((l) => /スイッチを倒した/.test(l.text));
+    assert.ok(switchLog);
+    assert.equal(switchLog.kind, 'event');
+    // presentSwitchFx は動かないが、ログ抑止で確認ダイアログは出さない契約
+    assert.match(switchLog.text, /スイッチを倒した|経路が切り替わった/);
   });
 
   it('creates a board with shops and areas', () => {
@@ -1809,6 +1854,91 @@ describe('MkMk Street engine', () => {
     assert.ok(!m.cellIds.includes(5), 'spaced cell excluded');
   });
 
+  it('scratch main diagonal match still works', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 23,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    const ids = [0, size + 1, 2 * size + 2]; // (0,0)(1,1)(2,2)
+    for (const i of ids.slice(0, 2)) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[ids[2]].eventId = rollAgainId;
+    const r = scratchCell(g, who, ids[2]);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => x.lineKey === 'd0_0');
+    assert.ok(m, 'main diagonal match');
+    assert.equal(m.count, 3);
+  });
+
+  it('scratch diagonal match works off the main board diagonal', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 17,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 本対角から外れた ↘ (0,1)(1,2)(2,3)
+    const a = 0 * size + 1;
+    const b = 1 * size + 2;
+    const c = 2 * size + 3;
+    for (const i of [a, b]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[c].eventId = rollAgainId;
+    const before = who.cash;
+    const r = scratchCell(g, who, c);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => String(x.lineKey).startsWith('d0_'));
+    assert.ok(m, 'off-main diagonal ↘ match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((x, y) => x - y), [a, b, c]);
+    assert.ok(who.cash >= before + 3 * MATCH_BONUS_PER);
+  });
+
+  it('scratch anti-diagonal match works off the main anti-diagonal', () => {
+    const g = createGame({
+      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      seed: 19,
+      cash: 2000,
+    });
+    const table = g.sharedEventTable;
+    const size = table.size;
+    const who = g.players[0];
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    // 本逆対角から外れた ↙ (0,2)(1,1)(2,0)
+    const a = 0 * size + 2;
+    const b = 1 * size + 1;
+    const c = 2 * size + 0;
+    for (const i of [a, b]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = who.id;
+      table.cells[i].color = 0;
+      table.cells[i].group = 0;
+    }
+    table.cells[c].eventId = rollAgainId;
+    const r = scratchCell(g, who, c);
+    assert.equal(r.ok, true);
+    const m = r.matches.find((x) => String(x.lineKey).startsWith('d1_'));
+    assert.ok(m, 'off-main anti-diagonal ↙ match');
+    assert.equal(m.count, 3);
+    assert.deepEqual(m.cellIds.slice().sort((x, y) => x - y), [a, b, c].sort((x, y) => x - y));
+  });
+
   it('assigns distinct CPU personalities by seat', () => {
     const g = createGame({
       players: [
@@ -1924,6 +2054,39 @@ describe('MkMk Street engine', () => {
     cpuAct(g);
     assert.ok(g.players[1].cash >= reserve - 1, `cash ${g.players[1].cash} reserve ${reserve}`);
     assert.equal(cpuCanAffordSpend(g, g.players[1], 0), true);
+  });
+
+  it('previews stock price drop when selling 10+ shares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 111,
+      cash: 3000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 40;
+    updateAreaStockPrices(g);
+    const oldPrice = g.areas[area].stockPrice;
+    const oldB = g.areas[area].B;
+
+    const small = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN - 1);
+    assert.ok(small);
+    assert.equal(small.drops, false);
+    assert.equal(small.oldPrice, oldPrice);
+    assert.equal(small.newPrice, oldPrice);
+    assert.equal(small.proceeds, oldPrice * (STOCK_SELL_PRESSURE_MIN - 1));
+
+    const big = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN);
+    assert.ok(big);
+    assert.equal(big.drops, true);
+    assert.equal(big.oldPrice, oldPrice);
+    assert.equal(big.proceeds, oldPrice * STOCK_SELL_PRESSURE_MIN);
+    const expectedB = Math.max(100, Math.floor(oldB * STOCK_SELL_B_RATE));
+    assert.ok(big.newPrice <= oldPrice);
+    // 実売却後の株価と一致すること
+    const sold = preTurnSell(g, 0, area, STOCK_SELL_PRESSURE_MIN);
+    assert.equal(sold.ok, true);
+    assert.equal(g.areas[area].B, expectedB);
+    assert.equal(g.areas[area].stockPrice, big.newPrice);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
@@ -2045,6 +2208,33 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[1].stats.rolls, 0);
     const again = buildGameResults(g);
     assert.equal(again.ranking.length, 3);
+
+    const exported = formatGameResultsExport(results, {
+      exportedAt: '2026-11-16T12:00:00.000Z',
+      mapId: 'central_cross',
+      mapName: '中央クロス',
+      mode: 'local',
+    });
+    assert.equal(exported.schema, 'mkmk-street-results/v1');
+    assert.equal(exported.winnerName, g.players[0].name);
+    assert.equal(exported.mapId, 'central_cross');
+    assert.equal(exported.ranking.length, 3);
+    assert.ok(exported.awards.length >= 1);
+    assert.ok(exported.worthHistory.length >= 1);
+
+    const text = gameResultsExportToText(exported);
+    assert.match(text, /MkMk Street 試合結果/);
+    assert.match(text, /\[順位\]/);
+    assert.match(text, /\[特賞\]/);
+    assert.match(text, new RegExp(g.players[0].name));
+
+    const csv = gameResultsExportToCsv(exported);
+    assert.match(csv, /^rank,name,winner,/);
+    assert.ok(csv.split('\n').length >= 4);
+
+    const fname = gameResultsExportFilename(exported, 'json');
+    assert.match(fname, /^mkmk-street-central_cross-T12-/);
+    assert.match(fname, /\.json$/);
   });
 
   it('tracks stock return from price changes and worth history snapshots', () => {

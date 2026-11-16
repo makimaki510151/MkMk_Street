@@ -135,10 +135,31 @@ export function createAudio() {
       tone(784, 0.18, 'triangle', 0.07, 0.72);
       tone(523, 0.22, 'sine', 0.06, 0.82);
     },
+    /** 他者からの催促 — トントン＋短いアラーム */
+    nudge() {
+      noiseBurst(0.04, 0.08);
+      tone(740, 0.07, 'square', 0.1);
+      tone(740, 0.07, 'square', 0.09, 0.12);
+      tone(880, 0.08, 'square', 0.1, 0.24);
+      tone(988, 0.1, 'triangle', 0.11, 0.34);
+      tone(1175, 0.16, 'triangle', 0.1, 0.46);
+      tone(880, 0.2, 'sine', 0.07, 0.6);
+      noiseBurst(0.05, 0.06);
+    },
     buy() {
       tone(523, 0.08, 'triangle', 0.08);
       tone(659, 0.1, 'triangle', 0.08, 0.08);
       tone(784, 0.16, 'triangle', 0.1, 0.16);
+    },
+    /** 店売却 — チャリンチャリンとコインが連続で鳴る */
+    shopSell() {
+      const clinks = [988, 1175, 1046, 1318, 1175, 1568];
+      clinks.forEach((f, i) => {
+        tone(f, 0.1, i % 2 ? 'triangle' : 'sine', 0.085, i * 0.085);
+        if (i % 2 === 0) noiseBurst(0.02, 0.03);
+      });
+      tone(1760, 0.22, 'sine', 0.06, 0.55);
+      tone(1318, 0.18, 'triangle', 0.05, 0.62);
     },
     /** エリア独占 — 盛大なファンファーレ */
     monopoly() {

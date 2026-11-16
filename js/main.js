@@ -14,9 +14,15 @@ import {
   currentPlayer,
   getPlayerAssets,
   buildGameResults,
+  formatGameResultsExport,
+  gameResultsExportToText,
+  gameResultsExportToCsv,
+  gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
   updateAreaStockPrices,
+  previewStockSell,
+  STOCK_SELL_PRESSURE_MIN,
   getLiquidatableValue,
   calcToll,
   getRemainingInvest,
@@ -75,6 +81,8 @@ const app = {
   /** @type {{x:number,y:number}|null} */
   modalDrag: null,
   feedPinnedBottom: true,
+  /** false になると出来事フィードを自動で開かない（ユーザーが一度隠したあと） */
+  feedAutoExpand: true,
   inspectedId: null,
   restSkipTimer: null,
   eventFlashTimer: null,
@@ -105,7 +113,16 @@ const app = {
   disconnectTimers: {},
   /** 切断後に自動でCPU化するまでの猶予（ms） */
   disconnectGraceMs: 20000,
+  /** 催促ボタンのクールダウン終了時刻 */
+  nudgeCooldownUntil: 0,
+  /** ホスト側: 座席ごとの最終催促時刻 */
+  nudgeLastBySeat: {},
+  nudgeUiTimer: null,
+  /** @type {ReturnType<typeof formatGameResultsExport>|null} */
+  lastResultsExport: null,
 };
+
+const NUDGE_COOLDOWN_MS = 12000;
 
 const BANNER_KINDS = new Set(['event', 'mark', 'toll', 'level', 'shop', 'win', 'system', 'stock', 'dice']);
 
@@ -541,10 +558,19 @@ function bindSideChrome() {
       audio.sfx.click();
     };
   });
-  $('#btn-feed-toggle')?.addEventListener('click', () => {
-    $('#event-feed-wrap')?.classList.toggle('feed-collapsed');
+  $('#btn-feed-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wrap = $('#event-feed-wrap');
+    wrap?.classList.toggle('feed-collapsed');
+    // 一度隠したらイベント／所持金演出で勝手に開かない
+    if (wrap?.classList.contains('feed-collapsed')) app.feedAutoExpand = false;
     audio.sfx.click();
   });
+}
+
+function maybeExpandEventFeed() {
+  if (!app.feedAutoExpand) return;
+  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
 }
 
 function bindTitle() {
@@ -929,6 +955,10 @@ function handleNetEvent({ from, data }) {
       scheduleCpu();
       return;
     }
+    if (data.type === 'nudge') {
+      handleHostNudge(from, data);
+      return;
+    }
     if (data.type === 'action') {
       handleHostAction(from, data);
       return;
@@ -1098,6 +1128,11 @@ function playRemoteFx(data) {
     if (app.lastTurnKey === key) return;
     app.lastTurnKey = key;
     audio.sfx.yourTurn();
+  }
+  if (data.kind === 'nudge') {
+    if (data.targetSeat === app.localSeat) {
+      playNudgeReceived(data.fromName);
+    }
   }
 }
 
@@ -1591,6 +1626,12 @@ function enterGame() {
     flash.dataset.npc = '0';
   }
   app.feedPinnedBottom = true;
+  app.feedAutoExpand = true;
+  $('#event-feed-wrap')?.classList.add('feed-collapsed');
+  app.nudgeCooldownUntil = 0;
+  app.nudgeLastBySeat = {};
+  clearTimeout(app.nudgeUiTimer);
+  app.nudgeUiTimer = null;
   const feed = $('#event-feed');
   if (feed) feed.innerHTML = '';
   const canvas = $('#board');
@@ -1699,6 +1740,144 @@ function isMyTurn() {
   return false;
 }
 
+/** 操作待ちで止まっている人間プレイヤー（自分以外）。P2P専用 */
+function getNudgeTarget() {
+  if (!app.game || app.game.phase === 'gameover') return null;
+  // 同一端末のローカル対戦では相手端末が無いので不要
+  if (app.mode !== 'host' && app.mode !== 'guest') return null;
+
+  let targetId = null;
+  if (isEventUiBlocking() && app.eventFlashReaderId != null) {
+    targetId = app.eventFlashReaderId;
+  } else if (
+    (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
+    && app.game.pending
+    && !app.busy
+  ) {
+    targetId = app.game.pending.playerId;
+  } else if (app.game.phase === 'await_roll' && !app.busy && !app.hideDiceResult) {
+    targetId = app.game.currentPlayerIdx;
+  } else {
+    return null;
+  }
+
+  const p = app.game.players[targetId];
+  if (!p || p.isCPU || p.offline || p.bankrupt) return null;
+  if (p.id === app.localSeat) return null;
+  return p;
+}
+
+function nudgeCooldownLeftMs() {
+  return Math.max(0, (app.nudgeCooldownUntil || 0) - Date.now());
+}
+
+function scheduleNudgeButtonTick() {
+  clearTimeout(app.nudgeUiTimer);
+  app.nudgeUiTimer = null;
+  if (nudgeCooldownLeftMs() <= 0) return;
+  app.nudgeUiTimer = setTimeout(() => {
+    updateNudgeButton();
+  }, 400);
+}
+
+function updateNudgeButton() {
+  const btn = $('#btn-nudge');
+  if (!btn) return;
+  const target = getNudgeTarget();
+  if (!target) {
+    btn.hidden = true;
+    btn.disabled = true;
+    clearTimeout(app.nudgeUiTimer);
+    app.nudgeUiTimer = null;
+    return;
+  }
+  btn.hidden = false;
+  const left = nudgeCooldownLeftMs();
+  if (left > 0) {
+    btn.disabled = true;
+    btn.textContent = `催促冷却中（${Math.ceil(left / 1000)}）`;
+    scheduleNudgeButtonTick();
+  } else {
+    btn.disabled = false;
+    btn.textContent = `${target.name}に催促`;
+    clearTimeout(app.nudgeUiTimer);
+    app.nudgeUiTimer = null;
+  }
+}
+
+function playNudgeReceived(fromName) {
+  audio.resume();
+  audio.sfx.nudge();
+  toast(`${fromName || '相手'}から催促！`);
+}
+
+function deliverNudge({ fromSeat, targetSeat, fromName }) {
+  const target = app.game?.players?.[targetSeat];
+  if (!target || target.isCPU) return;
+  broadcastFx({
+    kind: 'nudge',
+    fromSeat,
+    targetSeat,
+    fromName: fromName || app.game.players[fromSeat]?.name || '相手',
+    targetName: target.name,
+  });
+  // ホスト自身が対象ならローカル再生（broadcast はゲスト向け）
+  if (app.mode === 'host' && targetSeat === app.localSeat) {
+    playNudgeReceived(fromName || app.game.players[fromSeat]?.name);
+  }
+}
+
+function sendNudge() {
+  const target = getNudgeTarget();
+  if (!target) return toast('いま催促できる相手がいません');
+  if (nudgeCooldownLeftMs() > 0) return toast('もう少し待ってから催促してください');
+
+  audio.resume();
+  audio.sfx.click();
+  app.nudgeCooldownUntil = Date.now() + NUDGE_COOLDOWN_MS;
+  updateNudgeButton();
+
+  const fromName = app.game.players[app.localSeat]?.name || '相手';
+  if (app.mode === 'guest' && app.net) {
+    app.net.sendToHost({
+      type: 'nudge',
+      seat: app.localSeat,
+      targetSeat: target.id,
+    });
+    toast(`${target.name}に催促した`);
+    return;
+  }
+  if (app.mode === 'host') {
+    const last = app.nudgeLastBySeat[app.localSeat] || 0;
+    if (Date.now() - last < NUDGE_COOLDOWN_MS - 500) {
+      toast('もう少し待ってから催促してください');
+      return;
+    }
+    app.nudgeLastBySeat[app.localSeat] = Date.now();
+    deliverNudge({ fromSeat: app.localSeat, targetSeat: target.id, fromName });
+    toast(`${target.name}に催促した`);
+  }
+}
+
+function handleHostNudge(fromPeer, data) {
+  if (!app.game || app.mode !== 'host') return;
+  const fromSeat = app.game.players.findIndex((p) => p.peerId === fromPeer);
+  if (fromSeat < 0) return;
+  const last = app.nudgeLastBySeat[fromSeat] || 0;
+  if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
+  const target = getNudgeTarget();
+  if (!target) return;
+  // 送信時点の対象と一致するものだけ（古い催促の誤爆防止）
+  if (data.targetSeat != null && Number(data.targetSeat) !== target.id) return;
+  if (target.id === fromSeat) return;
+  app.nudgeLastBySeat[fromSeat] = Date.now();
+  deliverNudge({
+    fromSeat,
+    targetSeat: target.id,
+    fromName: app.game.players[fromSeat]?.name || '相手',
+  });
+}
+
 function bindGameControls() {
   $('#btn-roll').onclick = () => {
     if (app.busy) return;
@@ -1714,6 +1893,9 @@ function bindGameControls() {
     hideModal();
     sendAction({ type: 'choice', choice: { action: 'skip' } });
   };
+  $('#btn-nudge')?.addEventListener('click', () => {
+    sendNudge();
+  });
 }
 
 function bindModalTools() {
@@ -1965,7 +2147,16 @@ function requestHostEventFlashFlush() {
 function reconcileStaleEventFlash(g) {
   if (!g || !isEventUiBlocking()) return false;
   if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
-  // 未表示の deferred キューだけなら消さない（スイッチ告知などを移動後に出すため）
+  // HoldingBusy だけ残ってキューも表示もない＝スイッチ演出後などに起こる残留デッドロック
+  if (!app.eventFlashOpen && !(app.eventFlashQueue?.length > 0)) {
+    if (app.eventFlashHoldingBusy) {
+      app.eventFlashHoldingBusy = false;
+      app.busy = false;
+      return true;
+    }
+    return false;
+  }
+  // 未表示の deferred キューだけなら消さない（着地後に pump するため）
   if (!app.eventFlashOpen) return false;
   const readerId = app.eventFlashReaderId;
   const curId = g.currentPlayerIdx;
@@ -2244,6 +2435,17 @@ async function continueAdvancing() {
       if (result.switchMoves?.length) {
         // 据え置き解除＋スライド予約は presentSwitchFx 内で行う
         await presentSwitchFx(result.switchMoves);
+      } else if (landed != null && getNode(app.game, landed)?.type === 'switch') {
+        // switchMoves が空でも確認ダイアログは出さずトースト／スタンプのみ
+        pushEventStamp({
+          kicker: 'スイッチ',
+          title: '航路が切り替わった',
+          detail: '経路が切り替わった',
+          kind: 'system',
+          color: '#ffe08a',
+          silentStamp: true,
+        });
+        toast('航路が切り替わった');
       }
       if (result.warps?.length) await presentWarpFx(result.warps);
       // スイッチ時は演出後にまとめて同期（途中同期だとゲストが瞬時切替→巻き戻りする）
@@ -2475,6 +2677,8 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
   // ゲストはスライドSEのみ。ホストはフィードへ軽量スタンプのみ
   // （確認ダイアログにすると reader がゲストで閉じられず choice/roll 通信が止まる）
   if (!remote) {
+    // silentStamp / stampOnly: フィードのみ。queueEventFlash に載せると
+    // endTurn 後の reader=着地者のままホストが閉じられず 確認中で止まる。
     pushEventStamp({
       kicker: 'スイッチ',
       title: '航路が切り替わった',
@@ -2486,12 +2690,12 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
     toast('航路が切り替わった');
   }
   await wait(dur + 80);
-  if (!wasBusy) clearBusyUnlessEventUi();
-  else if (isEventUiBlocking()) {
-    app.eventFlashHoldingBusy = true;
-    app.busy = true;
+  // スイッチ演出自体は確認UIを持たない。ここで HoldingBusy を立てると
+  // deferEventFlash 中に pump できず、キューが空のまま 確認中 で残留する。
+  if (!wasBusy || !isEventUiBlocking()) {
+    app.busy = false;
   }
-  pumpEventFlash();
+  // 移動完了後の resumeAfterMovement が deferred 告知を pump する
 }
 
 function showWarpOverlay(who, fromLabel, toLabel) {
@@ -3333,10 +3537,16 @@ function refreshGameUI() {
         : (canRoll ? 'あなたの番！サイコロを振る' : (cur?.isCPU ? 'CPUの手番…' : '待機中…')));
   }
 
-  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending && !app.busy) {
+  if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
     const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
     const actor = g.players[g.pending.playerId];
-    if (mine) {
+    // 選択UIを優先。マーク確認などの残留フラッシュが busy のままだとモーダルが出ず通信停止する
+    if (mine && isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+      app.busy = false;
+    }
+    if (mine && !app.busy) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
         $('#modal').hidden = true;
@@ -3346,7 +3556,7 @@ function refreshGameUI() {
       }
       $('#wait-hint').hidden = true;
       setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
-    } else {
+    } else if (!mine && !app.busy) {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
@@ -3378,6 +3588,7 @@ function refreshGameUI() {
   updateInspectPanel();
   maybeYourTurnChime();
   announceNewLogs(g);
+  updateNudgeButton();
   // ログ再フラッシュでホスト／次手番が止まるのを防ぐ
   if (reconcileStaleEventFlash(g)) {
     const canRollNow = !app.busy && !isEventUiBlocking()
@@ -3499,7 +3710,17 @@ function bannerFromLog(g, l) {
     kicker = mine ? 'マーク' : `${player?.name || ''} のマーク`;
     const m = l.text.match(/[♠♥♦♣]/);
     title = m ? m[0] : 'マークマス';
-    detail = /入手/.test(l.text) ? `${player?.name || ''} がマークを入手 → イベント表` : l.text;
+    // 通過／補充はイベント表を開かない。着地入手は openScratch モーダルが本体。
+    // 確認ダイアログ（busy）にするとスクラッチ／分岐UIが塞がり P2P が止まる。
+    if (/通過で/.test(l.text)) {
+      detail = `${player?.name || ''} が通過でマークを入手`;
+    } else if (/足りないマーク|全マーク所持/.test(l.text)) {
+      detail = l.text;
+    } else if (/入手/.test(l.text)) {
+      detail = `${player?.name || ''} がマークを入手`;
+    } else {
+      detail = l.text;
+    }
   } else if (kind === 'toll') {
     const amt = (l.text.match(/([\d,]+)\s*G/) || [])[1];
     const m = l.text.match(/^(.+?)\s*→\s*(.+?)[「\s]/);
@@ -3542,8 +3763,9 @@ function bannerFromLog(g, l) {
     if (/イベント表をスクラッチ/.test(l.text)) return null;
     if (/スクラッチマスに停止/.test(l.text)) return null;
     if (/ミニゲームマス/.test(l.text) && /停止/.test(l.text)) return null;
-    // スイッチは presentSwitchFx 側の告知のみ（ゲストでログ再フラッシュがループしないように）
-    if (/スイッチを倒した|経路が切り替わった/.test(l.text)) return null;
+    // スイッチは presentSwitchFx 側のスタンプ／トーストのみ
+    // （経路=エンジンログ、航路=旧UI文言。どちらも確認ダイアログにしない）
+    if (/スイッチを倒した|経路が切り替わった|航路が切り替わった/.test(l.text)) return null;
     if (/店休/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
       title = 'お店が休み';
@@ -3589,6 +3811,10 @@ function bannerFromLog(g, l) {
   // ログ本文の当事者を優先（ゲストで actionActorId が古いと確認担当がズレて詰まる）
   const actorId = player?.id ?? app.actionActorId ?? null;
 
+  // マーク系はフィードのみ。中央確認はスクラッチ等の選択UIと衝突して通信停止の原因になる
+  // （航路スイッチ告知と同じクラス: busy のまま guest reader 待ちで choice/roll 拒否）
+  const stampOnly = kind === 'mark';
+
   return {
     kicker,
     title,
@@ -3597,6 +3823,7 @@ function bannerFromLog(g, l) {
     color: player?.color || '#ffe08a',
     mine: !!mine,
     actorId,
+    stampOnly,
   };
 }
 
@@ -3604,7 +3831,10 @@ function enqueueBanner(payload) {
   if (!payload?.title) return;
   const visual = resolveEventVisual(payload);
   const actorId = payload.actorId != null ? payload.actorId : app.actionActorId;
-  pushEventStamp({ ...payload, visual, actorId });
+  const stampPayload = { ...payload, visual, actorId };
+  pushEventStamp(stampPayload);
+  // silentStamp / stampOnly はフィードのみ（確認ダイアログで busy を掴まない）
+  if (payload.silentStamp || payload.stampOnly) return;
   queueEventFlash({ ...payload, visual, actorId });
 }
 
@@ -3674,6 +3904,9 @@ function resumeAfterMovement() {
       clearTimeout(app.cpuTimer);
     }
     pumpEventFlash();
+    // pump で開いたフラッシュは着地者 reader のまま手番が移っていることがある。
+    // 再 refresh で reconcileStaleEventFlash を走らせ、ホスト残留の確認中を解放する。
+    refreshGameUI();
   }
   if (clearBusyUnlessEventUi()) {
     refreshGameUI();
@@ -3692,6 +3925,13 @@ function canDismissEventFlash() {
   if (!app.game || !app.eventFlashOpen) return false;
   // 手番が移ったあとに残った告知は、いまサイコロを振る側も閉じられる
   if (app.game.phase === 'await_roll' && isMyTurn()) return true;
+  // 選択待ちの本人も閉じられる（マーク確認などがスクラッチ／分岐モーダルを塞いだとき）
+  const pend = app.game.pending;
+  if ((app.game.phase === 'await_choice' || app.game.phase === 'await_fork') && pend) {
+    const pendingPl = app.game.players[pend.playerId];
+    if (app.mode === 'local' && pendingPl && !pendingPl.isCPU) return true;
+    if (pend.playerId === app.localSeat) return true;
+  }
   const reader = app.game.players[app.eventFlashReaderId];
   if (!reader) {
     if (app.mode === 'local' || app.mode === 'host') return true;
@@ -3817,6 +4057,10 @@ function classifyMoneyMood(g, p, amount) {
     if (l.kind === 'shop' && t.includes(name)) {
       if (/5倍/.test(t)) return amount < 0 ? 'five_buy' : 'gain';
       if (/購入|増資/.test(t) && amount <= 0) return 'invest';
+    }
+    // 物件売却は system ログ（「店名」を売却）
+    if (l.kind === 'system' && t.includes(name) && /を売却/.test(t) && amount > 0) {
+      return 'shop_sell';
     }
     if (l.kind === 'stock' && t.includes(name)) {
       if (/わけ前|配当/.test(t) && amount > 0) return 'dividend';
@@ -4000,6 +4244,19 @@ function resolveMoneyFxCopy(focus) {
       floatClass: 'gain',
     };
   }
+  if (mood === 'shop_sell') {
+    return {
+      mood: 'shop_sell',
+      color: '#e6c57a',
+      face: '売',
+      title: 'お店を売却',
+      amount: signed,
+      who: who ? `${who} がお店を売却` : 'お店を売却',
+      coinMode: 'gain',
+      se: 'shopSell',
+      floatClass: 'gain',
+    };
+  }
   return {
     mood: 'gain',
     color: '#8fd4a8',
@@ -4053,13 +4310,15 @@ function showMoneyFxOverlay(deltas, { remote = false } = {}) {
   });
 
   // 5倍買い本体のファンファーレと二重にならないよう、金額演出は短めのSEに留める
-  if (copy.se === 'gain' || copy.se === 'invest' || copy.se === 'impact') {
+  if (copy.se === 'shopSell') {
+    audio.sfx.shopSell();
+  } else if (copy.se === 'gain' || copy.se === 'invest' || copy.se === 'impact') {
     audio.sfx.cashGain(copy.se === 'impact' ? Math.max(2, tier) : tier);
   } else {
     audio.sfx.cashLoss(tier);
   }
 
-  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+  maybeExpandEventFeed();
 
   app.moneyFxTimer = setTimeout(() => {
     if (app.moneyFxSeq !== seq) return;
@@ -4168,8 +4427,8 @@ function presentEventFlash(payload) {
     try { (btn && canDismiss ? btn : overlay).focus({ preventScroll: true }); } catch (_) { /* ignore */ }
   });
 
-  // フィードも開いて出来事を追えるようにする
-  $('#event-feed-wrap')?.classList.remove('feed-collapsed');
+  // ユーザーが一度隠していなければフィードも開く
+  maybeExpandEventFeed();
   $('#btn-roll').disabled = true;
   $('#btn-roll').textContent = npcReading
     ? `${readerName} が確認中…`
@@ -4520,12 +4779,14 @@ function showChoiceModal(g) {
       const have = p?.stocks[area] || 0;
       if (!have) return '';
       const price = g.areas[area].stockPrice;
-      return `<div class="raise-row" style="--ac:${g.areas[area].color}">
+      const initial = Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))));
+      return `<div class="raise-row" style="--ac:${g.areas[area].color}" data-raise-stock-row="${area}">
         <span>A${area} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
         <label class="field tiny">枚数
-          <input type="number" min="1" max="${have}" value="${Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))))}" data-sell-stock="${area}" />
+          <input type="number" min="1" max="${have}" value="${initial}" data-sell-stock="${area}" />
         </label>
         <button type="button" class="btn tiny" data-do-sell-stock="${area}">売る</button>
+        <div class="sell-preview" data-sell-preview="${area}">${formatStockSellPreview(g, area, initial)}</div>
       </div>`;
     }).join('');
     const shopRows = g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((sq) => {
@@ -4548,7 +4809,7 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。${
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。一度に${STOCK_SELL_PRESSURE_MIN}枚以上の株を売ると売却後の株価が下がります。${
         mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
       }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
@@ -4571,6 +4832,21 @@ function showChoiceModal(g) {
         const count = Math.max(1, Number(input?.value) || 1);
         sendAction({ type: 'choice', choice: { action: 'sell_stock', area, count } });
       };
+    });
+    body.querySelectorAll('input[data-sell-stock]').forEach((input) => {
+      const sync = () => {
+        const area = Number(input.dataset.sellStock);
+        const have = p?.stocks[area] || 0;
+        const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+        const el = body.querySelector(`[data-sell-preview="${area}"]`);
+        if (el) {
+          el.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+          el.innerHTML = formatStockSellPreview(g, area, count);
+        }
+      };
+      input.addEventListener('input', sync);
+      input.addEventListener('change', sync);
+      sync();
     });
     body.querySelectorAll('[data-do-sell-shop]').forEach((btn) => {
       btn.onclick = () => {
@@ -4665,6 +4941,7 @@ function showChoiceModal(g) {
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
         <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
         ${broker ? '<button class="btn ghost" id="m-stock-sell" hidden>この枚数で売る</button>' : ''}
+        <div id="stock-sell-preview" class="sell-preview" hidden></div>
       </div>`;
     $('#btn-end-choice').hidden = true;
     $('#btn-skip-choice').hidden = false;
@@ -4674,6 +4951,22 @@ function showChoiceModal(g) {
 
     let selected = null;
     bindAreaHighlight(body);
+    const syncStockSellPreview = () => {
+      const preview = $('#stock-sell-preview');
+      const sellBtn = $('#m-stock-sell');
+      if (!preview) return;
+      if (selected == null || sellBtn?.hidden) {
+        preview.hidden = true;
+        preview.textContent = '';
+        return;
+      }
+      const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+      const have = Number(card?.dataset.have) || 0;
+      const count = Math.max(1, Math.min(have, Number($('#m-stock-count')?.value) || 1));
+      preview.hidden = false;
+      preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
+      preview.innerHTML = formatStockSellPreview(g, selected, count);
+    };
     body.querySelectorAll('.stock-card').forEach((btn) => {
       btn.onclick = () => {
         body.querySelectorAll('.stock-card').forEach((b) => b.classList.remove('selected'));
@@ -4703,13 +4996,18 @@ function showChoiceModal(g) {
               input.min = '1';
               input.max = String(have);
               input.value = String(Math.min(have, 10));
+            } else {
+              input.max = String(Math.max(maxBuy, have));
             }
           } else {
             sellBtn.hidden = true;
           }
         }
+        syncStockSellPreview();
       };
     });
+    $('#m-stock-count')?.addEventListener('input', syncStockSellPreview);
+    $('#m-stock-count')?.addEventListener('change', syncStockSellPreview);
     $('#m-stock-confirm').onclick = () => {
       if (selected == null) return;
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
@@ -4930,6 +5228,95 @@ function hideModal() {
   app.renderer?.clearStockHighlight();
 }
 
+function buildResultsExportPayload(g, results) {
+  return formatGameResultsExport(results, {
+    mapId: g.mapId || null,
+    mapName: g.mapName || getMapDefName(g.mapId),
+    mode: app.mode || null,
+  });
+}
+
+function downloadTextFile(filename, text, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+function bindResultsExportActions(payload) {
+  app.lastResultsExport = payload;
+  const jsonBtn = $('#btn-export-json');
+  const csvBtn = $('#btn-export-csv');
+  const textBtn = $('#btn-export-text');
+  const copyBtn = $('#btn-export-copy');
+
+  if (jsonBtn) {
+    jsonBtn.onclick = () => {
+      audio.sfx.click();
+      const body = `${JSON.stringify(payload, null, 2)}\n`;
+      downloadTextFile(gameResultsExportFilename(payload, 'json'), body, 'application/json;charset=utf-8');
+      toast('JSONを保存しました');
+    };
+  }
+  if (csvBtn) {
+    csvBtn.onclick = () => {
+      audio.sfx.click();
+      downloadTextFile(
+        gameResultsExportFilename(payload, 'csv'),
+        gameResultsExportToCsv(payload),
+        'text/csv;charset=utf-8',
+      );
+      toast('CSVを保存しました');
+    };
+  }
+  if (textBtn) {
+    textBtn.onclick = () => {
+      audio.sfx.click();
+      downloadTextFile(
+        gameResultsExportFilename(payload, 'txt'),
+        gameResultsExportToText(payload),
+        'text/plain;charset=utf-8',
+      );
+      toast('テキストを保存しました');
+    };
+  }
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      audio.sfx.click();
+      const ok = await copyTextToClipboard(gameResultsExportToText(payload));
+      toast(ok ? '結果をコピーしました' : 'コピーに失敗しました');
+    };
+  }
+}
+
 function showWinner(g) {
   const results = buildGameResults(g);
   const w = results.winnerId != null ? g.players[results.winnerId] : null;
@@ -4942,6 +5329,7 @@ function showWinner(g) {
     ? `総資産 ${winAssets.total.toLocaleString()}G ／ 目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`
     : `目標 ${Number(results.goal).toLocaleString()}G ／ ${results.turn}ターン`;
   renderResultsBody(results);
+  bindResultsExportActions(buildResultsExportPayload(g, results));
   $('#btn-again').onclick = () => location.reload();
   audio.sfx.win();
 }
@@ -5237,16 +5625,19 @@ function renderStockPanel(g) {
     ? `<div class="stocks-sell">
         <div class="sh-title">自分の株を売る</div>
         <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
+        <p class="hint">一度に${STOCK_SELL_PRESSURE_MIN}枚以上売ると売却後の株価が下がります（受取は今の株価）</p>
         ${held.map((area) => {
           const meta = g.areas[area];
           const have = me.stocks[area] || 0;
           const price = meta.stockPrice;
+          const initial = Math.min(have, 10);
           return `<div class="sell-row" style="--ac:${meta.color}" data-hold-area="${area}">
             <span class="sell-label">A${area} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
             <label class="field tiny">枚数
-              <input type="number" min="1" max="${have}" value="${Math.min(have, 10)}" data-sell-count="${area}" />
+              <input type="number" min="1" max="${have}" value="${initial}" data-sell-count="${area}" />
             </label>
             <button type="button" class="btn tiny" data-turn-sell="${area}">売る</button>
+            <div class="sell-preview" data-sell-preview="${area}">${formatStockSellPreview(g, area, initial)}</div>
           </div>`;
         }).join('')}
       </div>`
@@ -5297,6 +5688,37 @@ function renderStockPanel(g) {
       sendAction({ type: 'sell', playerId: seat, area, count });
     };
   });
+
+  el.querySelectorAll('input[data-sell-count]').forEach((input) => {
+    const sync = () => {
+      const area = Number(input.dataset.sellCount);
+      const have = me?.stocks[area] || 0;
+      const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+      const preview = el.querySelector(`[data-sell-preview="${area}"]`);
+      if (preview) {
+        preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+        preview.innerHTML = formatStockSellPreview(g, area, count);
+      }
+    };
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
+    sync();
+  });
+}
+
+/** 株売却の受取額と売却後株価の予測テキスト */
+function formatStockSellPreview(g, area, count) {
+  const prev = previewStockSell(g, area, count);
+  if (!prev || prev.count <= 0) return '';
+  const got = `受取 <strong>${prev.proceeds.toLocaleString()}G</strong>`;
+  if (!prev.drops) {
+    return `${got} · 株価変動なし（${prev.threshold}枚未満）`;
+  }
+  if (prev.diff === 0) {
+    return `${got} · 売却後も株価 ${prev.oldPrice}G`;
+  }
+  const arrow = `${prev.oldPrice}→${prev.newPrice}G（${prev.diff}G）`;
+  return `${got} · 売却後の株価 <strong>${arrow}</strong>`;
 }
 
 function escapeHtml(s) {
