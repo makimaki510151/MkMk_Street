@@ -25,8 +25,12 @@ import {
   preTurnSell,
   canSellStockOnTurn,
   previewStockSell,
+  previewStockBuy,
+  resetTurnSellPressure,
   STOCK_SELL_PRESSURE_MIN,
   STOCK_SELL_B_RATE,
+  STOCK_BUY_BOOST_MIN,
+  STOCK_BUY_B_RATE,
   rollDice,
   advanceMove,
   applyChoice,
@@ -53,6 +57,11 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   scaleDiceSlotPrize,
+  MAX_WILDCARDS,
+  grantWildcard,
+  applyWildcardsToMarks,
+  getWildcardCount,
+  hasFullMarks,
   PLAYER_COLORS,
   normalizePlayerColor,
   normalizeLobbyColors,
@@ -78,6 +87,7 @@ import {
   EVENT_COUNT,
   applyAllCash,
   scratchCell,
+  collectWarpSquareRewards,
   playerColorIndex,
   MATCH_BONUS_PER,
 } from '../js/eventTable.js';
@@ -210,18 +220,109 @@ describe('MkMk Street engine', () => {
     assert.ok(landed.warps?.length >= 1);
     assert.equal(g.players[0].pos, mainWarp.warpTo);
 
-    // マーク補充マス：足りないマークを1つ付与
+    // ワイルドマス：通過／着地でワイルドカードを1枚付与（マークはそのまま）。着地時はスクラッチも開く
     const fill = g.map.find((n) => n.type === 'suit_fill');
     assert.ok(fill);
+    assert.match(fill.label, /ワイルド/);
     g.currentPlayerIdx = 0;
     g.players[0].marks = [true, false, true, false];
+    g.players[0].wildcards = 0;
     g.players[0].pos = fill.id;
     g.players[0].flags.bankVisitDone = false;
     g.move = { stepsLeft: 0, path: [fill.id], passedBank: false, startPos: g.startId };
     g.phase = 'moving';
     g.pending = null;
     advanceMove(g);
-    assert.deepEqual(g.players[0].marks, [true, true, true, false]);
+    assert.deepEqual(g.players[0].marks, [true, false, true, false]);
+    assert.equal(g.players[0].wildcards, 1);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'scratch');
+    assert.equal(g.pending?.playerId, 0);
+
+    // 上限4枚
+    assert.equal(MAX_WILDCARDS, 4);
+    g.players[0].wildcards = 4;
+    assert.equal(grantWildcard(g, g.players[0]), false);
+    assert.equal(getWildcardCount(g.players[0]), 4);
+
+    // 銀行で空きマークへ変化し、4つ揃えば昇進
+    const p = g.players[0];
+    p.marks = [true, false, true, false];
+    p.wildcards = 2;
+    p.level = 1;
+    p.cash = 1000;
+    const filled = applyWildcardsToMarks(p);
+    assert.equal(filled, 2);
+    assert.deepEqual(p.marks, [true, true, true, true]);
+    assert.equal(p.wildcards, 0);
+    assert.equal(hasFullMarks(p), true);
+
+    // 銀行訪問でワイルド→マーク→昇進
+    g.currentPlayerIdx = 0;
+    p.marks = [false, false, true, true];
+    p.wildcards = 3;
+    p.level = 2;
+    p.flags.bankVisitDone = false;
+    p.flags.pendingLevelUp = null;
+    p.pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    const cashBefore = p.cash;
+    advanceMove(g);
+    assert.equal(p.level, 3);
+    assert.deepEqual(p.marks, [false, false, false, false]);
+    assert.equal(p.wildcards, 1, '余剰ワイルドは持ち越し');
+    assert.ok(p.cash > cashBefore);
+  });
+
+  it('grants mark or wildcard when warping onto those squares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 55,
+      mapId: 'cliff_isle',
+    });
+    const mark = g.map.find((n) => n.type === 'mark' && n.mark === 1);
+    const fill = g.map.find((n) => n.type === 'suit_fill');
+    assert.ok(mark && fill);
+    const p = g.players[0];
+    p.marks = [false, false, false, false];
+    p.wildcards = 0;
+    p.pos = g.startId;
+
+    const msgs = [];
+    const gotMark = collectWarpSquareRewards(g, p, mark.id, msgs);
+    assert.equal(gotMark.kind, 'mark');
+    assert.equal(gotMark.gained, true);
+    assert.equal(p.marks[1], true);
+    assert.match(msgs.join(' '), /入手/);
+
+    // すでに所持なら増えない
+    const again = collectWarpSquareRewards(g, p, mark.id, []);
+    assert.equal(again.gained, false);
+
+    const gotWild = collectWarpSquareRewards(g, p, fill.id, []);
+    assert.equal(gotWild.kind, 'wildcard');
+    assert.equal(gotWild.gained, true);
+    assert.equal(p.wildcards, 1);
+
+    // スクラッチのマークワープでも入手する
+    const warpId = EVENT_CATALOG.findIndex((e) => e.effect === 'warp_mark');
+    assert.ok(warpId >= 0);
+    const table = getSharedEventTable(g);
+    const cell = table.cells.find((c) => !c.scratched) || table.cells[0];
+    cell.scratched = false;
+    cell.eventId = warpId + 1;
+    cell.label = EVENT_CATALOG[warpId].label;
+    p.marks = [false, false, false, false];
+    const beforePos = p.pos;
+    const r = scratchCell(g, p, cell.id);
+    assert.equal(r.ok, true);
+    assert.notEqual(p.pos, beforePos);
+    const dest = g.map.find((n) => n.id === p.pos);
+    assert.equal(dest?.type, 'mark');
+    assert.equal(p.marks[dest.mark], true);
+    assert.ok(r.messages.some((m) => /入手/.test(m)));
   });
 
   it('shell harbor forks at inward switch between pier and sea route', () => {
@@ -1951,20 +2052,23 @@ describe('MkMk Street engine', () => {
     assert.ok(g.players[0].cash >= cashBefore + Math.floor(shop.basePrice * 0.5) - 1);
   });
 
-  it('scratch paints cell with opener player color', () => {
+  it('scratch paints cell with opener player id (not group-color index)', () => {
     const g = createGame({
-      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      players: [
+        { name: 'A', color: PLAYER_COLORS[0] },
+        { name: 'B', color: PLAYER_COLORS[5] },
+      ],
       seed: 55,
       cash: 1500,
     });
     const cell = g.sharedEventTable.cells[3];
-    cell.color = 3; // 事前の表色とは違う色にしておく
+    cell.color = 3;
     cell.group = 3;
     cell.scratched = false;
     const r = scratchCell(g, g.players[1], 3);
     assert.equal(r.ok, true);
     assert.equal(cell.scratchedBy, 1);
-    assert.equal(cell.color, playerColorIndex(g.players[1]));
+    assert.equal(cell.color, g.players[1].id);
     assert.equal(cell.color, 1);
   });
 
@@ -1977,12 +2081,12 @@ describe('MkMk Street engine', () => {
     });
     const table = g.sharedEventTable;
     const who = g.players[0];
-    // 先頭行 0,1 をあか色で先に開ける（イベント効果は無視して状態だけ）
+    // 先頭行 0,1 を opener 色で先に開ける（イベント効果は無視して状態だけ）
     for (const i of [0, 1]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     // イベント効果を無効化してボーナスだけ検証
     table.cells[2].eventId = EVENT_CATALOG.findIndex((e) => e.effect === 'noop') + 1;
@@ -2001,7 +2105,38 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(m.cellIds.slice().sort((a, b) => a - b), [0, 1, 2]);
     assert.ok(r.matchBonus >= 150);
     assert.ok(who.cash >= before + 150);
+    assert.equal(m.beneficiaryId, who.id);
     assert.match(r.messages.join(' '), /そろい×3/);
+  });
+
+  it('scratch match pays the opener, not the group-color seat index', () => {
+    // 旧バグ: cell.color を 0〜3 のグループ色にし、p.id === color で受取先を決めていた
+    const g = createGame({
+      players: [
+        { name: 'Host', color: PLAYER_COLORS[4] },
+        { name: 'Guest', color: PLAYER_COLORS[5] },
+      ],
+      seed: 17,
+      cash: 1000,
+    });
+    const table = g.sharedEventTable;
+    const guest = g.players[1];
+    for (const i of [0, 1]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = guest.id;
+      table.cells[i].color = guest.id;
+      table.cells[i].group = guest.id;
+    }
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    table.cells[2].eventId = rollAgainId > 0 ? rollAgainId : 1;
+    const beforeHost = g.players[0].cash;
+    const beforeGuest = guest.cash;
+    const r = scratchCell(g, guest, 2);
+    assert.equal(r.ok, true);
+    assert.ok(r.matchBonus >= 150);
+    assert.equal(r.matches[0].beneficiaryId, guest.id);
+    assert.equal(guest.cash, beforeGuest + r.matchBonus);
+    assert.equal(g.players[0].cash, beforeHost);
   });
 
   it('scratch match requires contiguous cells (no spaced matches)', () => {
@@ -2017,8 +2152,8 @@ describe('MkMk Street engine', () => {
     for (const i of [0, 2]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[4].eventId = rollAgainId;
     const before = who.cash;
@@ -2042,8 +2177,8 @@ describe('MkMk Street engine', () => {
     for (const i of [0, 1, 5]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[2].eventId = rollAgainId;
     const r = scratchCell(g, who, 2);
@@ -2069,8 +2204,8 @@ describe('MkMk Street engine', () => {
     for (const i of ids.slice(0, 2)) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[ids[2]].eventId = rollAgainId;
     const r = scratchCell(g, who, ids[2]);
@@ -2097,8 +2232,8 @@ describe('MkMk Street engine', () => {
     for (const i of [a, b]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[c].eventId = rollAgainId;
     const before = who.cash;
@@ -2128,8 +2263,8 @@ describe('MkMk Street engine', () => {
     for (const i of [a, b]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[c].eventId = rollAgainId;
     const r = scratchCell(g, who, c);
@@ -2400,7 +2535,49 @@ describe('MkMk Street engine', () => {
     assert.equal(pick, c, 'should extend main diagonal');
   });
 
-  it('previews stock price drop when selling 10+ shares', () => {
+  it('previews stock price rise when buying 10+ shares (not sell drop)', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 112,
+      cash: 50000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    updateAreaStockPrices(g);
+    const oldPrice = g.areas[area].stockPrice;
+    const oldB = g.areas[area].B;
+
+    const small = previewStockBuy(g, area, STOCK_BUY_BOOST_MIN - 1);
+    assert.ok(small);
+    assert.equal(small.rises, false);
+    assert.equal(small.oldPrice, oldPrice);
+    assert.equal(small.newPrice, oldPrice);
+    assert.equal(small.cost, oldPrice * (STOCK_BUY_BOOST_MIN - 1));
+
+    const big = previewStockBuy(g, area, STOCK_BUY_BOOST_MIN);
+    assert.ok(big);
+    assert.equal(big.rises, true);
+    assert.equal(big.oldPrice, oldPrice);
+    assert.equal(big.cost, oldPrice * STOCK_BUY_BOOST_MIN);
+    const expectedB = Math.floor(oldB * STOCK_BUY_B_RATE);
+    assert.ok(big.newPrice >= oldPrice);
+
+    // 売却予想とは別物（大口買いでも drops ではない）
+    const sellLike = previewStockSell(g, area, STOCK_BUY_BOOST_MIN);
+    assert.equal(sellLike.drops, true);
+    assert.notEqual(big.newPrice, sellLike.newPrice);
+
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 0, bankVisit: true, maxBuys: 1 };
+    g.players[0].cash = big.cost + 100;
+    const before = g.areas[area].B;
+    const bought = applyChoice(g, { action: 'buy', area, count: STOCK_BUY_BOOST_MIN });
+    assert.equal(bought.ok, true);
+    assert.equal(g.areas[area].B, expectedB);
+    assert.equal(g.areas[area].B, Math.floor(before * STOCK_BUY_B_RATE));
+    assert.equal(g.areas[area].stockPrice, big.newPrice);
+  });
+
+  it('previews stock price drop when selling 10+ shares in own turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 111,
@@ -2433,50 +2610,66 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(g.areas[area].B, expectedB);
     assert.equal(g.areas[area].stockPrice, big.newPrice);
-    assert.equal(g.areas[area].sellPressure, 0);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
   });
 
-  it('applies shared cumulative sell pressure across players and partial sells', () => {
+  it('tracks per-player turn sell pressure and resets on next own turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 222,
       cash: 5000,
     });
     const area = Number(Object.keys(g.areas)[0]);
-    g.players[0].stocks[area] = 30;
-    g.players[1].stocks[area] = 30;
+    g.players[0].stocks[area] = 40;
+    g.players[1].stocks[area] = 40;
     updateAreaStockPrices(g);
     const B0 = g.areas[area].B;
 
-    // 9枚売っても下落しない（累計9）
+    // 9枚売っても下落しない（今ターン累計9）
     assert.equal(preTurnSell(g, 0, area, 9).ok, true);
-    assert.equal(g.areas[area].sellPressure, 9);
+    assert.equal(g.players[0].turnSellPressure[area], 9);
     assert.equal(g.areas[area].B, B0);
 
-    // 別プレイヤーが1枚売ると累計10で下落
+    // 別プレイヤーの番では相手の累計は別枠（共有しない）→1枚売っても下落しない
     g.currentPlayerIdx = 1;
+    resetTurnSellPressure(g.players[1]);
     g.phase = 'await_roll';
-    const priceBeforeDrop = g.areas[area].stockPrice;
+    const previewOther = previewStockSell(g, area, 1);
+    assert.equal(previewOther.drops, false);
+    assert.equal(previewOther.pressureBefore, 0);
+    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    assert.equal(g.areas[area].B, B0);
+    assert.equal(g.players[1].turnSellPressure[area], 1);
+    // Aの累計は手番外でも残っているが、Bには効かない
+    assert.equal(g.players[0].turnSellPressure[area], 9);
+
+    // Aの番が巡ると累計リセット → 9枚売ってもまた下落なし
+    g.currentPlayerIdx = 0;
+    resetTurnSellPressure(g.players[0]);
+    g.phase = 'await_roll';
+    assert.equal(g.players[0].turnSellPressure[area], undefined);
+    assert.equal(preTurnSell(g, 0, area, 9).ok, true);
+    assert.equal(g.players[0].turnSellPressure[area], 9);
+    assert.equal(g.areas[area].B, B0);
+
+    // 同ターン内でさらに1枚 → 累計10で下落
     const preview = previewStockSell(g, area, 1);
     assert.equal(preview.drops, true);
     assert.equal(preview.pressureBefore, 9);
     assert.equal(preview.untilDrop, 1);
-    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    assert.equal(preTurnSell(g, 0, area, 1).ok, true);
     const B1 = Math.max(100, Math.floor(B0 * STOCK_SELL_B_RATE));
     assert.equal(g.areas[area].B, B1);
-    assert.equal(g.areas[area].sellPressure, 0);
-    assert.ok(g.areas[area].stockPrice <= priceBeforeDrop);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
 
     // 20枚売却で2回分の圧
-    g.currentPlayerIdx = 0;
-    g.phase = 'await_roll';
     const BBeforeBulk = g.areas[area].B;
     assert.equal(preTurnSell(g, 0, area, 20).ok, true);
     let expected = BBeforeBulk;
     expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
     expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
     assert.equal(g.areas[area].B, expected);
-    assert.equal(g.areas[area].sellPressure, 0);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {

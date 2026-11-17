@@ -708,9 +708,23 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .pc-assets { color: var(--accent-strong); font-size: 0.8rem; font-weight: 700; }
 .pc-sub { font-size: 0.7rem; color: var(--muted); }
-.pc-marks { display: flex; gap: 0.22rem; margin-top: 0.2rem; }
+.pc-marks { display: flex; gap: 0.22rem; margin-top: 0.2rem; flex-wrap: wrap; align-items: center; }
 .mark { opacity: 0.22; }
 .mark.on { opacity: 1; color: var(--accent); }
+.pc-wilds {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.1rem;
+  margin-left: 0.15rem;
+  padding: 0.05rem 0.28rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: #f4e4c4;
+  background: color-mix(in srgb, #6b3d6a 72%, #1a1218);
+  border: 1px solid color-mix(in srgb, #c9a0c4 45%, transparent);
+}
+.pc-wilds small { opacity: 0.75; font-size: 0.65rem; }
 .pc-bust { color: var(--danger); font-weight: 700; font-size: 0.78rem; }
 .pc-flag {
   font-size: 0.68rem;
@@ -982,8 +996,12 @@ body.your-turn #btn-roll:not(:disabled) {
 .sell-preview.drop {
   color: #ffb4a8;
 }
+.sell-preview.rise {
+  color: #9ad4b1;
+}
 .sell-preview strong { color: var(--ink); font-weight: 700; }
 .sell-preview.drop strong { color: #ff8a80; }
+.sell-preview.rise strong { color: #6fd39a; }
 .raise-row .sell-preview {
   flex: 1 1 100%;
   margin-top: 0.1rem;

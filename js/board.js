@@ -73,8 +73,6 @@ function buildAreas(nodes, areaOverrides = {}) {
     areas[a] = {
       B: Math.ceil((targetStock * 65536) / avg),
       stockPrice: targetStock,
-      /** 全プレイヤー共有の売却累計（STOCK_SELL_PRESSURE_MIN ごとに株価下落） */
-      sellPressure: 0,
       name: meta.name || `エリア${a}`,
       color: meta.color || '#888',
       pattern: meta.pattern || 'check',
@@ -498,7 +496,7 @@ export function buildCliffIsle() {
   put(ox + 1, oy + 2, shop(7, ox + 1, oy + 2));
   put(ox + 2, oy + 2, N('lucky', { label: '★', col: ox + 2, row: oy + 2 }));
   put(ox + 3, oy + 2, shop(8, ox + 3, oy + 2));
-  put(ox + 4, oy + 2, N('suit_fill', { label: 'マーク補充', col: ox + 4, row: oy + 2 }));
+  put(ox + 4, oy + 2, N('suit_fill', { label: 'ワイルド', col: ox + 4, row: oy + 2 }));
 
   put(ox + 0, oy + 3, shop(7, ox + 0, oy + 3));
   put(ox + 4, oy + 3, shop(8, ox + 4, oy + 3));

@@ -455,8 +455,12 @@ export function createGame({
       pos: board.startId,
       prevPos: null,
       marks: [false, false, false, false],
+      /** ワイルドカード枚数（銀行で空きマークに変化。上限 MAX_WILDCARDS） */
+      wildcards: 0,
       level: 1,
       stocks: {},
+      /** 自分のターン中のエリア別売却累計（ターン開始でリセット。10枚ごとに株価下落） */
+      turnSellPressure: {},
       lucky: false,
       resting: false,
       shopsClosed: false,
@@ -704,10 +708,14 @@ export function refreshGoalPressure(g) {
   return on;
 }
 
-/** エリア売却累計がこの枚数に達するごとに相場係数 B が下がる（全プレイヤー共有） */
+/** 自分のターン内でこの枚数売るごとに相場係数 B が下がる（エリア別・手番プレイヤー個人） */
 export const STOCK_SELL_PRESSURE_MIN = 10;
 /** 売却圧による B 乗率 */
 export const STOCK_SELL_B_RATE = 0.93;
+/** 一度にこの枚数以上買うと相場係数 B が上がる */
+export const STOCK_BUY_BOOST_MIN = 10;
+/** 大口購入時の B 乗率 */
+export const STOCK_BUY_B_RATE = 1.07;
 
 function areaShopAvgPrice(g, area) {
   const shops = getAreaShops(g, area);
@@ -719,20 +727,31 @@ function stockPriceFromB(avg, B) {
   return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
 }
 
-function areaSellPressure(meta) {
-  return Math.max(0, Math.floor(Number(meta?.sellPressure) || 0));
+function playerTurnSellPressure(p, area) {
+  const a = Number(area);
+  const map = p?.turnSellPressure;
+  if (!map || typeof map !== 'object') return 0;
+  return Math.max(0, Math.floor(Number(map[a]) || 0));
+}
+
+/** 手番開始時にそのプレイヤーの売却累計をクリア */
+export function resetTurnSellPressure(p) {
+  if (!p) return;
+  p.turnSellPressure = {};
 }
 
 /**
- * 売却枚数を共有累計に加算し、閾値ごとに B を下げる。
+ * 手番プレイヤーのターン内売却累計に加算し、閾値ごとに B を下げる。
  * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, B: number }}
  */
-export function applyStockSellPressure(g, area, count) {
+export function applyStockSellPressure(g, player, area, count) {
   const a = Number(area);
   const meta = g.areas?.[a];
-  if (!meta) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  const p = player || currentPlayer(g);
+  if (!meta || !p) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  if (!p.turnSellPressure || typeof p.turnSellPressure !== 'object') p.turnSellPressure = {};
   const n = Math.max(0, Math.floor(Number(count) || 0));
-  const pressureBefore = areaSellPressure(meta);
+  const pressureBefore = playerTurnSellPressure(p, a);
   let pressure = pressureBefore + n;
   let drops = 0;
   let B = meta.B || 100;
@@ -741,7 +760,7 @@ export function applyStockSellPressure(g, area, count) {
     pressure -= STOCK_SELL_PRESSURE_MIN;
     drops += 1;
   }
-  meta.sellPressure = pressure;
+  p.turnSellPressure[a] = pressure;
   meta.B = B;
   return { drops, pressureBefore, pressureAfter: pressure, B };
 }
@@ -750,10 +769,10 @@ export function applyStockSellPressure(g, area, count) {
  * 売却後の B / 累計を予測（状態は変更しない）。
  * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, nextB: number }}
  */
-export function simulateStockSellPressure(meta, count) {
+export function simulateStockSellPressure(meta, pressureBefore, count) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
-  const pressureBefore = areaSellPressure(meta);
-  let pressure = pressureBefore + n;
+  const before = Math.max(0, Math.floor(Number(pressureBefore) || 0));
+  let pressure = before + n;
   let drops = 0;
   let nextB = meta?.B || 100;
   while (pressure >= STOCK_SELL_PRESSURE_MIN) {
@@ -761,7 +780,7 @@ export function simulateStockSellPressure(meta, count) {
     pressure -= STOCK_SELL_PRESSURE_MIN;
     drops += 1;
   }
-  return { drops, pressureBefore, pressureAfter: pressure, nextB };
+  return { drops, pressureBefore: before, pressureAfter: pressure, nextB };
 }
 
 export function updateAreaStockPrices(g) {
@@ -785,18 +804,22 @@ export function updateAreaStockPrices(g) {
 
 /**
  * 株売却後の株価を予測（実際の売却は現行価格で受取→その後 B 低下）。
- * 売却圧はエリア単位・全プレイヤー共有の累計。
+ * 売却圧は手番プレイヤーのターン内・エリア別累計（次の自分の番でリセット）。
+ * @param {number} [playerId] 省略時は currentPlayerIdx
  * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, dropCount:number, pressureBefore:number, pressureAfter:number, untilDrop:number, threshold:number }|null}
  */
-export function previewStockSell(g, area, count) {
+export function previewStockSell(g, area, count, playerId = null) {
   const a = Number(area);
   const meta = g.areas?.[a];
   if (!meta) return null;
   const avg = areaShopAvgPrice(g, a);
   if (!avg) return null;
+  const pid = playerId != null ? playerId : g.currentPlayerIdx;
+  const p = g.players?.[pid];
   const n = Math.max(0, Math.floor(Number(count) || 0));
   const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
-  const sim = simulateStockSellPressure(meta, n);
+  const pressureBefore = playerTurnSellPressure(p, a);
+  const sim = simulateStockSellPressure(meta, pressureBefore, n);
   const newPrice = stockPriceFromB(avg, sim.nextB);
   const untilDrop = Math.max(0, STOCK_SELL_PRESSURE_MIN - sim.pressureBefore);
   return {
@@ -812,6 +835,35 @@ export function previewStockSell(g, area, count) {
     pressureAfter: sim.pressureAfter,
     untilDrop,
     threshold: STOCK_SELL_PRESSURE_MIN,
+  };
+}
+
+/**
+ * 株購入後の株価を予測（支払は現行価格→その後大口なら B 上昇）。
+ * @returns {{ area:number, count:number, cost:number, oldPrice:number, newPrice:number, diff:number, rises:boolean, threshold:number }|null}
+ */
+export function previewStockBuy(g, area, count) {
+  const a = Number(area);
+  const meta = g.areas?.[a];
+  if (!meta) return null;
+  const avg = areaShopAvgPrice(g, a);
+  if (!avg) return null;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
+  const rises = n >= STOCK_BUY_BOOST_MIN;
+  const nextB = rises
+    ? Math.floor((meta.B || 100) * STOCK_BUY_B_RATE)
+    : (meta.B || 100);
+  const newPrice = stockPriceFromB(avg, nextB);
+  return {
+    area: a,
+    count: n,
+    cost: oldPrice * n,
+    oldPrice,
+    newPrice,
+    diff: newPrice - oldPrice,
+    rises,
+    threshold: STOCK_BUY_BOOST_MIN,
   };
 }
 
@@ -1273,6 +1325,48 @@ export function hasFullMarks(p) {
   return p.marks.every(Boolean);
 }
 
+/** ワイルドカードの最大所持数 */
+export const MAX_WILDCARDS = 4;
+
+export function getWildcardCount(p) {
+  return Math.max(0, Math.min(MAX_WILDCARDS, Math.floor(Number(p?.wildcards) || 0)));
+}
+
+/**
+ * ワイルドカードを1枚付与。上限なら false。
+ * @returns {boolean}
+ */
+export function grantWildcard(g, p) {
+  if (!p) return false;
+  const have = getWildcardCount(p);
+  if (have >= MAX_WILDCARDS) {
+    addLog(g, `${p.name} はワイルドカードが上限（${MAX_WILDCARDS}枚）`, 'mark');
+    return false;
+  }
+  p.wildcards = have + 1;
+  addLog(g, `${p.name} がワイルドカードを入手！（${p.wildcards}/${MAX_WILDCARDS}）`, 'mark');
+  return true;
+}
+
+/**
+ * 銀行到達時：ワイルドカードを空きマークへ変換。
+ * @returns {number} 埋めた枚数
+ */
+export function applyWildcardsToMarks(p) {
+  if (!p?.marks) return 0;
+  let w = getWildcardCount(p);
+  if (!w) return 0;
+  let used = 0;
+  for (let i = 0; i < p.marks.length && w > 0; i++) {
+    if (p.marks[i]) continue;
+    p.marks[i] = true;
+    w -= 1;
+    used += 1;
+  }
+  p.wildcards = w;
+  return used;
+}
+
 function addLog(g, text, kind = 'info') {
   g.logs.unshift({ text, kind, t: Date.now() });
   if (g.logs.length > 80) g.logs.length = 80;
@@ -1326,7 +1420,10 @@ export function getSharedEventTable(g) {
 
 export function restoreState(data) {
   const g = { ...data };
-  for (const p of g.players || []) ensureStats(p);
+  for (const p of g.players || []) {
+    ensureStats(p);
+    if (!p.turnSellPressure || typeof p.turnSellPressure !== 'object') p.turnSellPressure = {};
+  }
   // 再接続・旧状態で未知色が残っていてもパレットへ寄せる
   if (Array.isArray(g.players) && g.players.length) {
     const normalized = normalizeLobbyColors(g.players);
@@ -1355,6 +1452,10 @@ function onPassThrough(g, p, nodeId) {
   if (nd.type === 'mark' && !p.marks[nd.mark]) {
     p.marks[nd.mark] = true;
     addLog(g, `${p.name} が通過で ${SUIT_LABELS[nd.mark]} を入手！`, 'mark');
+  }
+  // 通過のみここで付与。最終着地は resolveLanding 側（二重付与防止）
+  if (nd.type === 'suit_fill' && g.move && g.move.stepsLeft > 0) {
+    grantWildcard(g, p);
   }
   // 銀行処理は advanceMove / resolveLanding 側で一度だけ行う
 }
@@ -1696,14 +1797,9 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   }
 
   if (sq.type === 'suit_fill') {
-    const missing = p.marks.findIndex((m) => !m);
-    if (missing >= 0) {
-      p.marks[missing] = true;
-      addLog(g, `${p.name} が足りないマーク ${SUIT_LABELS[missing]} を入手！`, 'mark');
-    } else {
-      addLog(g, `${p.name} はすでに全マーク所持`, 'mark');
-    }
-    finishLanding(g, p);
+    grantWildcard(g, p);
+    // マークマスと同様、ぴったり停止でスクラッチ1回
+    openScratch(g, p);
     return;
   }
 
@@ -1845,6 +1941,10 @@ function resumeMoveAfterBank(g, p) {
 function handleBank(g, p, landed) {
   // 昇進前の総資産（昇進賞金で初めて目標到達した場合は再通過が必要）
   const hadGoalBefore = getPlayerAssets(g, p).total >= g.goal;
+  const filled = applyWildcardsToMarks(p);
+  if (filled > 0) {
+    addLog(g, `${p.name} のワイルドカード×${filled}が空きマークに変化！`, 'mark');
+  }
   let leveledUp = false;
   if (hasFullMarks(p)) {
     const old = p.level;
@@ -1855,6 +1955,7 @@ function handleBank(g, p, landed) {
     bumpStat(p, 'levelUps', 1);
     p.level = to;
     p.marks = [false, false, false, false];
+    // 余ったワイルドカードは持ち越し
     p.flags.pendingLevelUp = { from: old, to, bonus };
     leveledUp = true;
     addLog(g, `${p.name} 昇進！ Lv.${old}→${to} 賞金 +${bonus}G（Lv.${to}基準）`, 'level');
@@ -2070,7 +2171,7 @@ function sellStockForCash(g, p, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  applyStockSellPressure(g, a, n);
+  applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
@@ -2089,6 +2190,7 @@ export function declareBankrupt(g, p) {
     sq.price = sq.basePrice;
   }
   p.stocks = {};
+  p.wildcards = 0;
   for (const area of claimedAreas) applyMonopolyBreak(g, p.id, area);
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
@@ -2478,8 +2580,8 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockBought', count);
       bumpStat(p, 'stockSpent', cost);
       syncStockValueSnap(g, p);
-      if (count >= 10) {
-        g.areas[area].B = Math.floor(g.areas[area].B * 1.07);
+      if (count >= STOCK_BUY_BOOST_MIN) {
+        g.areas[area].B = Math.floor(g.areas[area].B * STOCK_BUY_B_RATE);
       }
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 購入（${cost}G）`, 'stock');
@@ -2507,7 +2609,7 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
       syncStockValueSnap(g, p);
-      applyStockSellPressure(g, area, count);
+      applyStockSellPressure(g, p, area, count);
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
     }
@@ -3236,7 +3338,7 @@ export function preTurnSell(g, playerId, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  applyStockSellPressure(g, a, n);
+  applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
@@ -3279,6 +3381,8 @@ function endTurn(g) {
   }
   if (next <= g.currentPlayerIdx) g.turn++;
   g.currentPlayerIdx = next;
+  // 自分の番が巡ってきたら、そのプレイヤーのターン内売却累計をリセット
+  resetTurnSellPressure(g.players[next]);
   g.phase = 'await_roll';
   g.pending = null;
   g.dice = null;
@@ -3688,8 +3792,8 @@ function scoreScratchLine(table, cells, color) {
 export function cpuPickScratchCell(g, p, openIds) {
   const table = getSharedEventTable(g);
   const traits = getCpuPersonality(p);
-  const myColor = PLAYER_COLORS.findIndex((c) => c.toLowerCase() === (p.color || '').toLowerCase());
-  const color = myColor >= 0 ? myColor : p.id % 4;
+  // スクラッチ色は開けた人の座席IDで塗られる
+  const color = p.id;
   const size = table.size;
   const openSet = new Set(openIds);
   let best = openIds[0];

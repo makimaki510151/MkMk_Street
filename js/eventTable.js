@@ -24,6 +24,46 @@ export function takeWarpFx(g) {
   return warps;
 }
 
+/** ワイルドカード上限（engine.MAX_WILDCARDS と同値。循環 import 回避のためここにも置く） */
+const WARP_WILDCARD_MAX = 4;
+
+/**
+ * ワープ先がマーク／ワイルドマスなら入手する（スクラッチは開かない）。
+ * @returns {{ kind: 'mark'|'wildcard'|null, gained: boolean }}
+ */
+export function collectWarpSquareRewards(g, player, destId, messages = []) {
+  if (!g?.map || !player || destId == null) return { kind: null, gained: false };
+  const dest = g.map.find((n) => n.id === destId);
+  if (!dest) return { kind: null, gained: false };
+
+  if (dest.type === 'mark') {
+    const idx = Number(dest.mark);
+    if (!Number.isFinite(idx) || idx < 0 || !player.marks) {
+      return { kind: 'mark', gained: false };
+    }
+    if (player.marks[idx]) {
+      messages.push(`${dest.label || 'マーク'}はすでに所持`);
+      return { kind: 'mark', gained: false };
+    }
+    player.marks[idx] = true;
+    messages.push(`${dest.label || 'マーク'}を入手！`);
+    return { kind: 'mark', gained: true };
+  }
+
+  if (dest.type === 'suit_fill') {
+    const have = Math.max(0, Math.min(WARP_WILDCARD_MAX, Math.floor(Number(player.wildcards) || 0)));
+    if (have >= WARP_WILDCARD_MAX) {
+      messages.push(`ワイルドカード上限（${WARP_WILDCARD_MAX}枚）`);
+      return { kind: 'wildcard', gained: false };
+    }
+    player.wildcards = have + 1;
+    messages.push(`ワイルドカード入手！（${player.wildcards}/${WARP_WILDCARD_MAX}）`);
+    return { kind: 'wildcard', gained: true };
+  }
+
+  return { kind: null, gained: false };
+}
+
 /**
  * 1〜200 のユニークイベント定義。
  * 類似の金運・店みがきを抑え、店価操作・買収権利・強制売却など固有効果を厚くする。
@@ -418,10 +458,9 @@ export function scratchCell(g, player, cellId) {
 
   cell.scratched = true;
   cell.scratchedBy = player.id;
-  // 開けた人の色で塗る（そろいボーナスもその色）
-  const painted = playerColorIndex(player);
-  cell.color = painted;
-  cell.group = painted;
+  // 開けた人の座席IDで塗る（見た目の色＝そのプレイヤー色。そろいも同一プレイヤー基準）
+  cell.color = player.id;
+  cell.group = player.id;
   const messages = [];
   const def = EVENT_CATALOG[cell.eventId - 1];
   applyEventDef(g, player, def, messages);
@@ -653,6 +692,7 @@ function applyEventDef(g, player, def, messages) {
         player.prevPos = player.pos;
         player.pos = mark.id;
         messages.push(`${mark.label || 'マーク'}マスへ移動`);
+        collectWarpSquareRewards(g, player, mark.id, messages);
       } else {
         player.flags.extraRoll = true;
         messages.push('もう一度サイコロ！');
@@ -666,6 +706,7 @@ function applyEventDef(g, player, def, messages) {
         player.prevPos = player.pos;
         player.pos = vacant.id;
         messages.push(`空き店「${vacant.label}」へ`);
+        collectWarpSquareRewards(g, player, vacant.id, messages);
       } else {
         applyStocks(g, player, 5, messages);
       }
@@ -679,6 +720,7 @@ function applyEventDef(g, player, def, messages) {
         player.prevPos = player.pos;
         player.pos = dest.id;
         messages.push(`「${dest.label || dest.type}」へワープ`);
+        collectWarpSquareRewards(g, player, dest.id, messages);
       }
       break;
     }
@@ -990,6 +1032,8 @@ function applyEventDef(g, player, def, messages) {
       player.prevPos = null;
       other.prevPos = null;
       messages.push(`${other.name} と場所交換`);
+      collectWarpSquareRewards(g, player, bFrom, messages);
+      collectWarpSquareRewards(g, other, aFrom, messages);
       break;
     }
     case 'swap_all_pos': {
@@ -1007,6 +1051,7 @@ function applyEventDef(g, player, def, messages) {
         recordWarp(g, p.id, p.pos, to);
         p.prevPos = null;
         p.pos = to;
+        collectWarpSquareRewards(g, p, to, messages);
       });
       messages.push(`全員の位置を入れ替え（${alive.length}人）`);
       break;
@@ -1031,6 +1076,7 @@ function applyEventDef(g, player, def, messages) {
         recordWarp(g, p.id, p.pos, to);
         p.prevPos = null;
         p.pos = to;
+        collectWarpSquareRewards(g, p, to, messages);
       });
       messages.push(`全員がバラバラのマスへ飛んだ（${alive.length}人）`);
       break;
@@ -1047,6 +1093,7 @@ function applyEventDef(g, player, def, messages) {
         recordWarp(g, p.id, p.pos, dest.id);
         p.prevPos = null;
         p.pos = dest.id;
+        collectWarpSquareRewards(g, p, dest.id, messages);
       });
       messages.push(`全員が「${dest.label || dest.type}」に集合！`);
       break;
@@ -1207,7 +1254,20 @@ function contiguousColorRuns(lineCells, table, color) {
   return runs;
 }
 
-/** 縦・横・斜めに同じ色が隣接して3つ以上そろえば、その色のプレイヤーに報酬 */
+/** ライン上に塗られているプレイヤー色（座席ID）を列挙 */
+function colorsPresentOnLine(lineCells, table) {
+  const set = new Set();
+  for (const id of lineCells) {
+    const cell = table.cells[id];
+    if (cell?.scratched && Number.isInteger(cell.color)) set.add(cell.color);
+  }
+  return [...set];
+}
+
+/**
+ * 縦・横・斜めに同じプレイヤー色が隣接して3つ以上そろえば、
+ * そのマスを開けたプレイヤーへ報酬。
+ */
 function checkColorMatches(g, table, cellId, messages) {
   const size = table.size;
   const row = Math.floor(cellId / size);
@@ -1244,7 +1304,7 @@ function checkColorMatches(g, table, cellId, messages) {
   if (!table.claimedMatches) table.claimedMatches = {};
 
   for (const line of lines) {
-    for (let color = 0; color < 4; color++) {
+    for (const color of colorsPresentOnLine(line.cells, table)) {
       const runs = contiguousColorRuns(line.cells, table, color).filter((r) => r.length >= 3);
       if (!runs.length) continue;
       const cellIds = runs.flat();
@@ -1256,9 +1316,8 @@ function checkColorMatches(g, table, cellId, messages) {
       table.claimedMatches[claimKey] = n;
 
       const bonus = n * MATCH_BONUS_PER;
-      const beneficiary = g.players.find((p) => !p.bankrupt && p.id === color)
-        || g.players.find((p) => !p.bankrupt && (p.color || '').toLowerCase() === GROUP_COLORS[color].toLowerCase())
-        || g.players[color];
+      // color は開けた人の player.id。グループ色インデックスとの取り違えをしない
+      const beneficiary = g.players.find((p) => !p.bankrupt && p.id === color);
       if (beneficiary && !beneficiary.bankrupt) {
         beneficiary.cash += bonus;
         total += bonus;
@@ -1272,7 +1331,7 @@ function checkColorMatches(g, table, cellId, messages) {
           beneficiaryName: beneficiary.name,
           beneficiaryColor: beneficiary.color,
         });
-        messages.push(`${COLOR_LABELS[color]}色そろい×${n} → ${beneficiary.name} +${bonus}G`);
+        messages.push(`${beneficiary.name}色そろい×${n} → ${beneficiary.name} +${bonus}G`);
       }
     }
   }

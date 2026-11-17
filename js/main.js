@@ -23,6 +23,7 @@ import {
   recordNudgeStats,
   updateAreaStockPrices,
   previewStockSell,
+  previewStockBuy,
   STOCK_SELL_PRESSURE_MIN,
   getLiquidatableValue,
   calcToll,
@@ -60,6 +61,7 @@ import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
 import { APP_VERSION } from './version.js';
 import { evaluateOrderRolls, rollOrderDie } from './orderRoll.js';
+import { isLocalPlayer, isMyTurnSeat } from './turnOwner.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -1212,8 +1214,19 @@ function handleNetEvent({ from, data }) {
         app.game.players[app.localSeat].peerId = myPeer;
         app.game.players[app.localSeat].offline = false;
       } else {
-        app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
-        if (app.localSeat < 0) app.localSeat = 0;
+        // seatMap があれば peerId より先に確定（順番ダイス後の id ずれ防止）
+        const mapIdx = Array.isArray(data.seatMap)
+          ? data.seatMap.findIndex((id) => id === myPeer)
+          : -1;
+        app.localSeat = mapIdx >= 0
+          ? mapIdx
+          : app.game.players.findIndex((p) => p.peerId === myPeer);
+        if (app.localSeat < 0) {
+          console.warn('[seat] could not resolve local seat for', myPeer);
+          app.localSeat = 0;
+        } else if (app.game.players[app.localSeat]) {
+          app.game.players[app.localSeat].peerId = myPeer;
+        }
       }
       enterGame();
       if (data.type === 'game_rejoin') toast('再接続しました');
@@ -1743,8 +1756,8 @@ function maybeDemoLanding() {
         const cell = table.cells[i];
         cell.scratched = true;
         cell.scratchedBy = who.id;
-        cell.color = playerColorIndex(who);
-        cell.group = cell.color;
+        cell.color = who.id;
+        cell.group = who.id;
       }
     } else {
       // 開けた人の色で塗られた状態を見せる（イベント効果は適用しない）
@@ -1753,8 +1766,8 @@ function maybeDemoLanding() {
         const cell = table.cells[i];
         cell.scratched = true;
         cell.scratchedBy = who.id;
-        cell.color = playerColorIndex(who);
-        cell.group = cell.color;
+        cell.color = who.id;
+        cell.group = who.id;
       }
     }
     p.pos = mark.id;
@@ -2187,13 +2200,13 @@ function maybeAutoSkipRest() {
 
 function isMyTurn() {
   if (!app.game) return false;
-  if (app.game.phase === 'gameover') return false;
-  const cur = currentPlayer(app.game);
-  if (!cur || cur.isCPU) return false;
-  if (app.mode === 'local') return !cur.isCPU;
-  if (app.mode === 'host') return cur.peerId === app.net?.peerId || cur.id === 0;
-  if (app.mode === 'guest') return cur.peerId === app.net?.peerId;
-  return false;
+  return isMyTurnSeat({
+    mode: app.mode,
+    phase: app.game.phase,
+    currentPlayer: currentPlayer(app.game),
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
 }
 
 /** 操作待ち座席（自分含む）。ホスト側の催促検証でも使う */
@@ -3211,9 +3224,9 @@ async function playScratchMatchReveal(matches, messages = [], { banner = true } 
   const matchMsgs = messages.filter((m) => String(m).includes('そろい'));
   const top = matches.reduce((a, b) => (b.count > a.count ? b : a), matches[0]);
   const totalBonus = matches.reduce((s, m) => s + (m.bonus || 0), 0);
-  const title = `${COLOR_LABELS[top.color] || ''}色 ${top.count}そろい！`;
+  const title = `${top.beneficiaryName || ''}色 ${top.count}そろい！`;
   const detail = matchMsgs.join(' / ') || `+${totalBonus}G`;
-  const color = top.beneficiaryColor || GROUP_COLORS[top.color] || '#ffe08a';
+  const color = top.beneficiaryColor || '#ffe08a';
 
   const modalGrid = document.querySelector('#modal:not([hidden]) .scratch-grid');
   let usedOverlay = false;
@@ -3808,9 +3821,12 @@ function maybeYourTurnChime() {
   if (app.busy || isEventUiBlocking()) return;
   const cur = currentPlayer(g);
   if (!cur || cur.isCPU || cur.resting) return;
-  const mine = app.mode === 'local' ? !cur.isCPU : (
-    app.mode === 'guest' ? cur.peerId === app.net?.peerId : (cur.peerId === app.net?.peerId || cur.id === 0)
-  );
+  const mine = isLocalPlayer({
+    mode: app.mode,
+    player: cur,
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
   const key = `${g.turn}-${g.currentPlayerIdx}-${g.phase}`;
   if (!mine || app.lastTurnKey === key) return;
   app.lastTurnKey = key;
@@ -3882,6 +3898,10 @@ function refreshGameUI() {
   box.innerHTML = g.players.map((p) => {
     const a = getPlayerAssets(g, p);
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
+    const wildN = Math.max(0, Math.floor(Number(p.wildcards) || 0));
+    const wilds = wildN > 0
+      ? `<span class="pc-wilds" title="ワイルドカード（銀行で空きマークに変化）">${'Ｗ'.repeat(Math.min(4, wildN))}<small>×${wildN}</small></span>`
+      : '';
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
     const myTurnCard = active && me ? 'my-turn' : '';
@@ -3924,7 +3944,7 @@ function refreshGameUI() {
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
         ${stockLine}
-        <div class="pc-marks">${marks}${status}</div>
+        <div class="pc-marks">${marks}${wilds}${status}</div>
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
     `;
@@ -4192,7 +4212,7 @@ function bannerFromLog(g, l) {
     // 確認ダイアログ（busy）にするとスクラッチ／分岐UIが塞がり P2P が止まる。
     if (/通過で/.test(l.text)) {
       detail = `${player?.name || ''} が通過でマークを入手`;
-    } else if (/足りないマーク|全マーク所持/.test(l.text)) {
+    } else if (/ワイルドカード|空きマークに変化|足りないマーク|全マーク所持/.test(l.text)) {
       detail = l.text;
     } else if (/入手/.test(l.text)) {
       detail = `${player?.name || ''} がマークを入手`;
@@ -4417,9 +4437,12 @@ function canDismissEventFlash() {
   }
   if (reader.isCPU) return false; // NPCタイマーが force で閉じる
   if (app.mode === 'local') return true;
-  if (app.mode === 'host') return reader.id === app.localSeat || reader.peerId === app.net?.peerId || reader.id === 0;
-  if (app.mode === 'guest') return reader.id === app.localSeat || reader.peerId === app.net?.peerId;
-  return false;
+  return isLocalPlayer({
+    mode: app.mode,
+    player: reader,
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
 }
 
 function scheduleNpcEventFlashIfNeeded() {
@@ -5368,7 +5391,7 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。エリアごとの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに売却後の株価が下がります。${
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。自分のターン内でエリアごとに${STOCK_SELL_PRESSURE_MIN}枚売るごとに売却後の株価が下がります（次の自分の番で累計リセット）。${
         mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
       }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
@@ -5463,7 +5486,7 @@ function showChoiceModal(g) {
       ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
       : '証券マス — 株を1種類購入';
     $('#modal-card').classList.add('stock-modal');
-    // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
+    // 盤面は通常表示のまま。ホバー/選択したエリアの店だけハイライト
     app.renderer?.setStockHighlight(null, true);
     applyModalMode();
 
@@ -5494,13 +5517,13 @@ function showChoiceModal(g) {
     }).join('');
 
     body.innerHTML = `
-      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のエリア店が光ります。</p>
+      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のそのエリアの店が光ります（マス表記は通常のまま）。</p>
       <div class="stock-grid">${cards}</div>
       <div id="stock-buy-panel" class="stock-buy-panel" hidden>
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
         <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
         ${broker ? '<button class="btn ghost" id="m-stock-sell" hidden>この枚数で売る</button>' : ''}
-        <div id="stock-sell-preview" class="sell-preview" hidden></div>
+        <div id="stock-trade-preview" class="sell-preview" hidden></div>
       </div>`;
     $('#btn-end-choice').hidden = true;
     $('#btn-skip-choice').hidden = false;
@@ -5510,21 +5533,40 @@ function showChoiceModal(g) {
 
     let selected = null;
     bindAreaHighlight(body);
-    const syncStockSellPreview = () => {
-      const preview = $('#stock-sell-preview');
-      const sellBtn = $('#m-stock-sell');
+    /** 購入可能なら購入後株価予想、売却のみのときだけ売却予想 */
+    const syncStockTradePreview = () => {
+      const preview = $('#stock-trade-preview');
       if (!preview) return;
-      if (selected == null || sellBtn?.hidden) {
+      if (selected == null) {
         preview.hidden = true;
         preview.textContent = '';
         return;
       }
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+      const maxBuy = Number(card?.dataset.maxBuy) || 0;
       const have = Number(card?.dataset.have) || 0;
-      const count = Math.max(1, Math.min(have, Number($('#m-stock-count')?.value) || 1));
-      preview.hidden = false;
-      preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
-      preview.innerHTML = formatStockSellPreview(g, selected, count);
+      const raw = Number($('#m-stock-count')?.value) || 1;
+      const buyBtn = $('#m-stock-confirm');
+      const sellBtn = $('#m-stock-sell');
+      const canBuy = buyBtn && !buyBtn.hidden && maxBuy >= 1;
+      const canSell = sellBtn && !sellBtn.hidden && have >= 1;
+      if (canBuy) {
+        const count = Math.max(1, Math.min(maxBuy, raw));
+        const prev = previewStockBuy(g, selected, count);
+        preview.hidden = false;
+        preview.className = `sell-preview${prev?.rises ? ' rise' : ''}`;
+        preview.innerHTML = formatStockBuyPreview(g, selected, count);
+        return;
+      }
+      if (canSell) {
+        const count = Math.max(1, Math.min(have, raw));
+        preview.hidden = false;
+        preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
+        preview.innerHTML = formatStockSellPreview(g, selected, count);
+        return;
+      }
+      preview.hidden = true;
+      preview.textContent = '';
     };
     body.querySelectorAll('.stock-card').forEach((btn) => {
       btn.onclick = () => {
@@ -5562,11 +5604,11 @@ function showChoiceModal(g) {
             sellBtn.hidden = true;
           }
         }
-        syncStockSellPreview();
+        syncStockTradePreview();
       };
     });
-    $('#m-stock-count')?.addEventListener('input', syncStockSellPreview);
-    $('#m-stock-count')?.addEventListener('change', syncStockSellPreview);
+    $('#m-stock-count')?.addEventListener('input', syncStockTradePreview);
+    $('#m-stock-count')?.addEventListener('change', syncStockTradePreview);
     $('#m-stock-confirm').onclick = () => {
       if (selected == null) return;
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
@@ -5607,13 +5649,13 @@ function showChoiceModal(g) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
     }
-    const legend = GROUP_COLORS.map((c, i) =>
-      `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
+    const legend = g.players.filter((p) => !p.bankrupt).map((p) =>
+      `<span class="scratch-legend" style="--sc:${p.color}">${escapeHtml(p.name)}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
       if (c.scratched) {
-        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
-        const pc = scratcher?.color || GROUP_COLORS[c.color] || '#888';
+        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : g.players[c.color];
+        const pc = scratcher?.color || '#888';
         const who = scratcher ? escapeHtml(scratcher.name) : '';
         // 開けた人の色で塗り、番号のみ表示（イベント名は title）
         return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
@@ -5624,7 +5666,7 @@ function showChoiceModal(g) {
       return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">マスを1つ選んでめくります。同じ色が縦・横・斜めに隣接3つ以上で<strong>${MATCH_BONUS_PER}G×枚数</strong></p>
+      <p class="hint">マスを1つ選んでめくります。同じプレイヤー色が縦・横・斜めに隣接3つ以上で<strong>${MATCH_BONUS_PER}G×枚数</strong>（その人へ）</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-board-fit">
         <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>
@@ -6188,7 +6230,7 @@ function renderStockPanel(g) {
     ? `<div class="stocks-sell">
         <div class="sh-title">自分の株を売る</div>
         <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
-        <p class="hint">エリアの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに株価が下がります（受取は今の株価）</p>
+        <p class="hint">自分のターン内でエリアごとに${STOCK_SELL_PRESSURE_MIN}枚売るごとに株価が下がります（受取は今の株価・次の自分の番で累計リセット）</p>
         ${held.map((area) => {
           const meta = g.areas[area];
           const have = me.stocks[area] || 0;
@@ -6274,7 +6316,7 @@ function formatStockSellPreview(g, area, count) {
   const prev = previewStockSell(g, area, count);
   if (!prev || prev.count <= 0) return '';
   const got = `受取 <strong>${prev.proceeds.toLocaleString()}G</strong>`;
-  const meter = `累計 ${prev.pressureBefore}/${prev.threshold}`;
+  const meter = `今ターン ${prev.pressureBefore}/${prev.threshold}`;
   if (!prev.drops) {
     return `${got} · 株価変動なし（${meter} · あと${prev.untilDrop}枚）`;
   }
@@ -6284,6 +6326,21 @@ function formatStockSellPreview(g, area, count) {
   }
   const arrow = `${prev.oldPrice}→${prev.newPrice}G（${prev.diff}G）`;
   return `${got} · 売却後の株価 <strong>${arrow}</strong>（圧${times} · ${meter}→${prev.pressureAfter}）`;
+}
+
+/** 株購入の支払額と購入後株価の予測テキスト */
+function formatStockBuyPreview(g, area, count) {
+  const prev = previewStockBuy(g, area, count);
+  if (!prev || prev.count <= 0) return '';
+  const cost = `支払 <strong>${prev.cost.toLocaleString()}G</strong>`;
+  if (!prev.rises) {
+    return `${cost} · 株価変動なし（${prev.threshold}枚未満）`;
+  }
+  if (prev.diff === 0) {
+    return `${cost} · 購入後も株価 ${prev.oldPrice}G`;
+  }
+  const arrow = `${prev.oldPrice}→${prev.newPrice}G（+${prev.diff}G）`;
+  return `${cost} · 購入後の株価 <strong>${arrow}</strong>（${prev.threshold}枚以上で上昇）`;
 }
 
 function escapeHtml(s) {
