@@ -49,7 +49,7 @@ export function createRenderer(canvas) {
   };
   let raf = 0;
   let layout = { size: 40, ox: 0, oy: 0, fit: 40, zoom: 1 };
-  /** 株購入中に盤面で強調するエリア番号（null=強調なし / 'all'=全店にA番号） */
+  /** 株購入中に盤面で強調するエリア番号（null=特定エリアなし＝通常表示のまま） */
   let stockHighlightArea = null;
   let stockHighlightMode = false;
   /** 1 = 全体フィット。拡大時は pan で移動 */
@@ -537,11 +537,9 @@ export function createRenderer(canvas) {
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
       const stockMode = stockHighlightMode || (g.phase === 'await_choice' && g.pending?.type === 'stock');
-      const areaHot = stockMode && n.type === 'shop' && (
-        stockHighlightArea == null
-          ? true
-          : Number(stockHighlightArea) === Number(n.area)
-      );
+      // 選択／ホバー中のエリアだけ強調。未選択時はマス表示を通常のままにする
+      const areaHot = stockMode && n.type === 'shop' && stockHighlightArea != null
+        && Number(stockHighlightArea) === Number(n.area);
       const areaDim = stockMode && n.type === 'shop' && stockHighlightArea != null
         && Number(stockHighlightArea) !== Number(n.area);
 
@@ -635,32 +633,28 @@ export function createRenderer(canvas) {
       ctx.textBaseline = 'middle';
 
       if (n.type === 'shop') {
-        if (stockMode) {
-          // 株購入中はエリア番号を大きく表示
-          ctx.font = `900 ${Math.max(11, size * 0.28)}px "Fredoka", "Zen Maru Gothic", sans-serif`;
-          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.35)' : '#ffe08a';
-          ctx.fillText(`A${n.area}`, x + size / 2, y + size / 2 - size * 0.12);
-          ctx.font = `700 ${Math.max(8, size * 0.16)}px "Zen Maru Gothic", sans-serif`;
-          ctx.fillStyle = areaDim ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.95)';
-          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 + size * 0.16);
+        // 株購入中も店名・料／価格を通常表示（エリア番号に差し替えない）
+        const labelAlpha = areaDim ? 0.35 : 1;
+        ctx.save();
+        ctx.globalAlpha = labelAlpha;
+        ctx.font = `700 ${Math.max(9, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
+        ctx.fillStyle = '#fffef5';
+        ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.14);
+        ctx.font = `800 ${Math.max(8, size * 0.15)}px "Zen Maru Gothic", sans-serif`;
+        if (n.owner >= 0) {
+          // 所有店は「止まると払う料」を主表示（価格より重要）
+          const closed = !!g.players[n.owner]?.shopsClosed;
+          const toll = calcToll(g, n);
+          ctx.fillStyle = closed ? 'rgba(255, 196, 150, 0.95)' : '#ffc2b4';
+          ctx.fillText(closed ? '店休・料0' : `料${toll.toLocaleString()}`, x + size / 2, y + size / 2 + size * 0.12);
+          ctx.font = `600 ${Math.max(7, size * 0.12)}px "Zen Maru Gothic", sans-serif`;
+          ctx.fillStyle = 'rgba(255,255,255,0.72)';
+          ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.32);
         } else {
-          ctx.font = `700 ${Math.max(9, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
-          ctx.fillText(n.label.slice(0, 3), x + size / 2, y + size / 2 - size * 0.14);
-          ctx.font = `800 ${Math.max(8, size * 0.15)}px "Zen Maru Gothic", sans-serif`;
-          if (n.owner >= 0) {
-            // 所有店は「止まると払う料」を主表示（価格より重要）
-            const closed = !!g.players[n.owner]?.shopsClosed;
-            const toll = calcToll(g, n);
-            ctx.fillStyle = closed ? 'rgba(255, 196, 150, 0.95)' : '#ffc2b4';
-            ctx.fillText(closed ? '店休・料0' : `料${toll.toLocaleString()}`, x + size / 2, y + size / 2 + size * 0.12);
-            ctx.font = `600 ${Math.max(7, size * 0.12)}px "Zen Maru Gothic", sans-serif`;
-            ctx.fillStyle = 'rgba(255,255,255,0.72)';
-            ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.32);
-          } else {
-            ctx.fillStyle = 'rgba(255,255,255,0.92)';
-            ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.18);
-          }
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.fillText(`${n.price.toLocaleString()}G`, x + size / 2, y + size / 2 + size * 0.18);
         }
+        ctx.restore();
       } else if (n.type === 'mark') {
         ctx.font = `900 ${Math.max(16, size * 0.42)}px "Fredoka", sans-serif`;
         ctx.fillText(SUIT_LABELS[n.mark], x + size / 2, y + size / 2);
@@ -759,7 +753,7 @@ export function createRenderer(canvas) {
     return null;
   }
 
-  /** @param {number|null} area 強調するエリア。null で解除。mode=true で株UI中のA番号表示 */
+  /** @param {number|null} area 強調するエリア。null は強調なし（通常マス表示）。mode=true で株UI中のハイライト */
   function setStockHighlight(area, mode = true) {
     stockHighlightMode = !!mode;
     stockHighlightArea = area == null ? null : Number(area);
