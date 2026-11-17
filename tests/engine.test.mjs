@@ -41,6 +41,7 @@ import {
   gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
+  recordNudgeStats,
   recordWorthSnapshot,
   syncStockValueSnap,
   payAreaStockDividend,
@@ -2452,6 +2453,15 @@ describe('MkMk Street engine', () => {
     g.players[2].stats.matchBonus = 200;
     g.players[2].stats.tollPayCount = 10;
     g.players[2].stats.tollPaid = 3000;
+    assert.equal(recordNudgeStats(g, 0, 1), true);
+    assert.equal(recordNudgeStats(g, 0, 2), true);
+    assert.equal(recordNudgeStats(g, 1, 0), true);
+    assert.equal(g.players[0].stats.nudgeSent, 2);
+    assert.equal(g.players[0].stats.nudgeReceived, 1);
+    assert.equal(g.players[1].stats.nudgeSent, 1);
+    assert.equal(g.players[1].stats.nudgeReceived, 1);
+    assert.equal(g.players[2].stats.nudgeReceived, 1);
+    assert.equal(recordNudgeStats(g, 0, 0), false);
     g.players[1].cash = 800;
     g.players[2].cash = 600;
     updateAreaStockPrices(g);
@@ -2482,6 +2492,9 @@ describe('MkMk Street engine', () => {
     assert.ok(titles.has('scratch_king'));
     assert.ok(titles.has('shopaholic'));
     assert.ok(titles.has('big_sale'));
+    assert.ok(titles.has('nudge_sender'));
+    assert.equal(results.ranking.find((r) => r.id === 0)?.stats.nudgeSent, 2);
+    assert.equal(results.ranking.find((r) => r.id === 0)?.stats.nudgeReceived, 1);
 
     // 欠けた stats でも ensure / build できる
     delete g.players[1].stats;
@@ -2508,9 +2521,11 @@ describe('MkMk Street engine', () => {
     assert.match(text, /\[順位\]/);
     assert.match(text, /\[特賞\]/);
     assert.match(text, new RegExp(g.players[0].name));
+    assert.match(text, /催促 2回→ \/ ←1回/);
 
     const csv = gameResultsExportToCsv(exported);
     assert.match(csv, /^rank,name,winner,/);
+    assert.match(csv, /nudgeSent,nudgeReceived/);
     assert.ok(csv.split('\n').length >= 4);
 
     const fname = gameResultsExportFilename(exported, 'json');

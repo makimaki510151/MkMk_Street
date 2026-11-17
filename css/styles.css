@@ -1549,8 +1549,8 @@ body.your-turn #btn-roll:not(:disabled) {
   grid-template-columns: minmax(4.5rem, 1.1fr) repeat(4, minmax(3.2rem, 0.85fr)) repeat(4, minmax(3.2rem, 0.85fr)) minmax(4.2rem, 0.95fr);
 }
 .ra-table {
-  grid-template-columns: minmax(4.5rem, 1.1fr) repeat(6, minmax(3.6rem, 0.9fr));
-  min-width: 560px;
+  grid-template-columns: minmax(4.5rem, 1.1fr) repeat(8, minmax(3.4rem, 0.85fr));
+  min-width: 680px;
 }
 .rs-head,
 .ra-head {
