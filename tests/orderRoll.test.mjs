@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { tiedRollKeys, evaluateOrderRolls, rollOrderDie } from '../js/orderRoll.js';
+import {
+  tiedRollKeys,
+  evaluateOrderRolls,
+  rollOrderDie,
+  ORDER_DIE_MIN,
+  ORDER_DIE_MAX,
+} from '../js/orderRoll.js';
 import { APP_VERSION } from '../js/version.js';
 import { PLAYER_COLORS, normalizeLobbyColors } from '../js/engine.js';
 
@@ -14,25 +20,34 @@ describe('order roll & lobby helpers', () => {
     assert.equal(new Set(PLAYER_COLORS.map((c) => c.toLowerCase())).size, PLAYER_COLORS.length);
   });
 
-  it('rollOrderDie returns 1..6', () => {
-    for (let i = 0; i < 40; i++) {
-      const n = rollOrderDie(() => i / 40);
-      assert.ok(n >= 1 && n <= 6);
+  it('rollOrderDie returns 1..100', () => {
+    assert.equal(ORDER_DIE_MIN, 1);
+    assert.equal(ORDER_DIE_MAX, 100);
+    for (let i = 0; i < 120; i++) {
+      const n = rollOrderDie(() => i / 120);
+      assert.ok(n >= 1 && n <= 100, String(n));
     }
     assert.equal(rollOrderDie(() => 0), 1);
-    assert.equal(rollOrderDie(() => 0.999), 6);
+    assert.equal(rollOrderDie(() => 0.999), 100);
   });
 
-  it('detects tied keys and asks for rerolls', () => {
+  it('detects tied keys and asks only those to reroll', () => {
     const players = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
-    const tied = evaluateOrderRolls(players, { a: 4, b: 4, c: 2 });
+    const tied = evaluateOrderRolls(players, { a: 44, b: 44, c: 12 });
     assert.equal(tied.done, false);
     assert.deepEqual(tied.rerollKeys.sort(), ['a', 'b']);
   });
 
+  it('keeps unique high roller while lower tie rerolls', () => {
+    const players = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
+    const mid = evaluateOrderRolls(players, { a: 90, b: 40, c: 40 });
+    assert.equal(mid.done, false);
+    assert.deepEqual(mid.rerollKeys.sort(), ['b', 'c']);
+  });
+
   it('orders players by dice high-to-low when unique', () => {
     const players = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
-    const ok = evaluateOrderRolls(players, { a: 2, b: 6, c: 5 });
+    const ok = evaluateOrderRolls(players, { a: 12, b: 88, c: 55 });
     assert.equal(ok.done, true);
     assert.deepEqual(ok.order, ['b', 'c', 'a']);
   });
@@ -40,9 +55,9 @@ describe('order roll & lobby helpers', () => {
   it('tiedRollKeys lists every member of a tied group', () => {
     assert.deepEqual(
       tiedRollKeys([
-        { key: 'x', value: 3 },
-        { key: 'y', value: 5 },
-        { key: 'z', value: 3 },
+        { key: 'x', value: 33 },
+        { key: 'y', value: 75 },
+        { key: 'z', value: 33 },
       ]).sort(),
       ['x', 'z'],
     );

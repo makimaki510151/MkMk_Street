@@ -37,6 +37,7 @@
           <li>自分の番で<strong>サイコロ</strong>を振り、マスを進みます。分岐では進む方向を選びます。</li>
           <li>マップは<strong>中央クロス／貝がら港／がけした島</strong>から選べます。</li>
           <li>右側の<strong>手番／所持／記録</strong>どのタブからでもサイコロを振れます。</li>
+          <li>盤上のコマには<strong>進行方向の矢印</strong>が付き、手番プレイヤーの次マスも点線で示されます。</li>
         </ul>
       </section>
 
@@ -95,7 +96,7 @@
         <h3>オンライン</h3>
         <ul>
           <li>ホストが部屋を作りコードを共有。ゲストは同じコードで入室。<strong>バージョンが違うと入れません</strong>（タイトルに表示）。</li>
-          <li>開始前に<strong>順番決めダイス</strong>で手番順を決めます。ロビーでプレイヤー色を選べます。</li>
+          <li>開始前に<strong>順番決めダイス（1〜100）</strong>で手番順を決めます（同点は同じ出目の人だけ振り直し）。ロビーでプレイヤー色を選べます。</li>
           <li>切断しても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。ホストは切断者をCPU化／キックできます。</li>
           <li>相手の操作待ちでは<strong>催促</strong>ボタンが使えます。部屋を作り直すときは先に<strong>部屋を解体</strong>します。</li>
         </ul>
@@ -107,6 +108,7 @@
           <li>出来事は盤面中央に出ます。<strong>手番の人が「つづける」まで進行しません</strong>（NPC手番はNPCが進めます）。</li>
           <li>選択ダイアログは「隠す」で一時退避できます。分岐の行き先は盤の端に出ます。</li>
           <li>現金の出入りは画面中央とプレイヤー欄に表示。左上のフィードでもさかのぼれます。</li>
+          <li><strong>スペース</strong>でサイコロ／出来事のつづける／選択スキップができます（クリックもそのまま使えます）。</li>
           <li>盤面右下の＋／−／全体、またはホイールで拡大縮小。拡大中はドラッグで移動できます。</li>
         </ul>
       </section>
@@ -121,7 +123,7 @@
   <section id="screen-order-roll" class="screen">
     <div class="panel">
       <h2>順番決めダイス</h2>
-      <p class="hint" id="order-roll-hint">出目が大きいほど先にサイコロを振ります。同点は振り直し。</p>
+      <p class="hint" id="order-roll-hint">1〜100の出目が大きいほど先手。同じ出目の人だけ振り直します。スペースでも振れます。</p>
       <div id="order-roll-list" class="order-roll-list"></div>
       <div class="row-actions">
         <button class="btn primary large" id="btn-order-roll" disabled>サイコロを振る</button>
