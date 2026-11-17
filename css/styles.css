@@ -348,7 +348,40 @@ button:disabled { opacity: .42; cursor: default; }
   font-size: 1.25rem;
 }
 .reconnect-card .hint { margin: 0 0 0.9rem; }
-.howto ol { padding-left: 1.15rem; display: grid; gap: 0.5rem; color: var(--muted); line-height: 1.5; }
+.howto {
+  max-width: min(42rem, 100%);
+  max-height: min(78vh, 52rem);
+  overflow: auto;
+}
+.howto-lead {
+  margin: 0 0 1rem;
+  color: var(--ink);
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+.howto-block {
+  margin: 0 0 1rem;
+  padding: 0 0 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+.howto-block:last-of-type { border-bottom: 0; margin-bottom: 0.35rem; }
+.howto-block h3 {
+  margin: 0 0 0.4rem;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+.howto-block ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.88rem;
+}
 .howto strong { color: var(--ink); }
 .hint { font-size: 0.78rem; color: var(--muted); }
 
