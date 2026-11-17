@@ -41,6 +41,7 @@ import {
   gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
+  recordNudgeStats,
   recordWorthSnapshot,
   syncStockValueSnap,
   payAreaStockDividend,
@@ -51,6 +52,7 @@ import {
   cpuAct,
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
+  scaleDiceSlotPrize,
   PLAYER_COLORS,
   normalizePlayerColor,
   normalizeLobbyColors,
@@ -710,6 +712,10 @@ describe('MkMk Street engine', () => {
     g.phase = 'await_choice';
     g.pending = { type: 'buy_shop', playerId: 0, shopId: last.id, price: last.price };
     const cashBefore = g.players[0].cash;
+    const BBefore = g.areas[area].B;
+    const stockBefore = g.areas[area].stockPrice;
+    const shopPricesBefore = shops.map((sq) => sq.price);
+    const tollBefore = calcToll(g, shops[0]);
     const value = shops.reduce((s, sq) => s + sq.price, 0);
     const expectedBonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
     const result = applyChoice(g, { action: 'buy' });
@@ -721,6 +727,12 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].cash, cashBefore - last.price + expectedBonus);
     // 二重付与されない
     assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
+    // 独占ボーナスでは店価・株価係数は動かない
+    assert.equal(g.areas[area].B, BBefore);
+    assert.equal(g.areas[area].stockPrice, stockBefore);
+    assert.deepEqual(shops.map((sq) => sq.price), shopPricesBefore);
+    // 買い物料は独占倍率で上がってよい
+    assert.ok(calcToll(g, shops[0]) > tollBefore);
   });
 
   it('crashes stock hard when a monopoly breaks', () => {
@@ -1593,13 +1605,13 @@ describe('MkMk Street engine', () => {
       seen.add(r.reveal.tier);
       const prize = g.players[0].cash - before;
       if (r.reveal.tier === 'jackpot') {
-        assert.ok(prize >= 900);
+        assert.ok(prize >= 1020);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'quad') {
-        assert.ok(prize >= 420);
+        assert.ok(prize >= 480);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'pair') {
-        assert.ok(prize >= 45);
+        assert.ok(prize >= 55);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'miss') {
         assert.equal(r.reveal.win, false);
@@ -1608,6 +1620,57 @@ describe('MkMk Street engine', () => {
       }
     }
     assert.ok(seen.has('pair') || seen.has('two_pair') || seen.has('triple'));
+  });
+
+  it('scales dice/slot minigame prizes by player level', () => {
+    assert.equal(scaleDiceSlotPrize(100, 1), 100);
+    assert.equal(scaleDiceSlotPrize(100, 3), 300);
+    assert.equal(scaleDiceSlotPrize(115, 2), 230);
+
+    let foundExact = false;
+    for (let seed = 1; seed <= 80 && !foundExact; seed++) {
+      for (let pick = 1; pick <= 6; pick++) {
+        const g2 = createGame({
+          players: [{ name: 'A' }, { name: 'B' }],
+          seed,
+          cash: 5000,
+        });
+        g2.players[0].level = 3;
+        g2.phase = 'await_choice';
+        g2.pending = { type: 'minigame', playerId: 0, game: 'guess_dice', label: 'サイコロ当て' };
+        const before = g2.players[0].cash;
+        const beforeB = g2.players[1].cash;
+        const r = applyChoice(g2, { action: 'pick', value: pick });
+        if (r.reveal?.tier !== 'exact') continue;
+        const gained = g2.players[0].cash - before;
+        // 本人賞 320×3 + 参加賞 60
+        assert.equal(gained, 320 * 3 + 60);
+        assert.ok(g2.players[1].cash > beforeB);
+        foundExact = true;
+        break;
+      }
+    }
+    assert.ok(foundExact, 'expected an exact dice guess within seeds');
+
+    // スロット：レベル3のワンペア以上なら基本額×3以上
+    let foundPair = false;
+    for (let seed = 1; seed <= 200 && !foundPair; seed++) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed,
+        cash: 5000,
+      });
+      g.players[0].level = 3;
+      g.phase = 'await_choice';
+      g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+      const before = g.players[0].cash;
+      const r = applyChoice(g, { action: 'spin' });
+      if (r.reveal?.tier !== 'pair') continue;
+      const gained = g.players[0].cash - before;
+      assert.equal(gained, 55 * 3 + 28);
+      foundPair = true;
+    }
+    assert.ok(foundPair, 'expected a slot pair within seeds');
   });
 
   it('scratch all_cash / minigame catalog entries apply correctly', () => {
@@ -2355,10 +2418,12 @@ describe('MkMk Street engine', () => {
     assert.equal(small.oldPrice, oldPrice);
     assert.equal(small.newPrice, oldPrice);
     assert.equal(small.proceeds, oldPrice * (STOCK_SELL_PRESSURE_MIN - 1));
+    assert.equal(small.untilDrop, STOCK_SELL_PRESSURE_MIN);
 
     const big = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN);
     assert.ok(big);
     assert.equal(big.drops, true);
+    assert.equal(big.dropCount, 1);
     assert.equal(big.oldPrice, oldPrice);
     assert.equal(big.proceeds, oldPrice * STOCK_SELL_PRESSURE_MIN);
     const expectedB = Math.max(100, Math.floor(oldB * STOCK_SELL_B_RATE));
@@ -2368,6 +2433,50 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(g.areas[area].B, expectedB);
     assert.equal(g.areas[area].stockPrice, big.newPrice);
+    assert.equal(g.areas[area].sellPressure, 0);
+  });
+
+  it('applies shared cumulative sell pressure across players and partial sells', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 222,
+      cash: 5000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 30;
+    g.players[1].stocks[area] = 30;
+    updateAreaStockPrices(g);
+    const B0 = g.areas[area].B;
+
+    // 9枚売っても下落しない（累計9）
+    assert.equal(preTurnSell(g, 0, area, 9).ok, true);
+    assert.equal(g.areas[area].sellPressure, 9);
+    assert.equal(g.areas[area].B, B0);
+
+    // 別プレイヤーが1枚売ると累計10で下落
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_roll';
+    const priceBeforeDrop = g.areas[area].stockPrice;
+    const preview = previewStockSell(g, area, 1);
+    assert.equal(preview.drops, true);
+    assert.equal(preview.pressureBefore, 9);
+    assert.equal(preview.untilDrop, 1);
+    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    const B1 = Math.max(100, Math.floor(B0 * STOCK_SELL_B_RATE));
+    assert.equal(g.areas[area].B, B1);
+    assert.equal(g.areas[area].sellPressure, 0);
+    assert.ok(g.areas[area].stockPrice <= priceBeforeDrop);
+
+    // 20枚売却で2回分の圧
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_roll';
+    const BBeforeBulk = g.areas[area].B;
+    assert.equal(preTurnSell(g, 0, area, 20).ok, true);
+    let expected = BBeforeBulk;
+    expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
+    expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
+    assert.equal(g.areas[area].B, expected);
+    assert.equal(g.areas[area].sellPressure, 0);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
@@ -2452,6 +2561,15 @@ describe('MkMk Street engine', () => {
     g.players[2].stats.matchBonus = 200;
     g.players[2].stats.tollPayCount = 10;
     g.players[2].stats.tollPaid = 3000;
+    assert.equal(recordNudgeStats(g, 0, 1), true);
+    assert.equal(recordNudgeStats(g, 0, 2), true);
+    assert.equal(recordNudgeStats(g, 1, 0), true);
+    assert.equal(g.players[0].stats.nudgeSent, 2);
+    assert.equal(g.players[0].stats.nudgeReceived, 1);
+    assert.equal(g.players[1].stats.nudgeSent, 1);
+    assert.equal(g.players[1].stats.nudgeReceived, 1);
+    assert.equal(g.players[2].stats.nudgeReceived, 1);
+    assert.equal(recordNudgeStats(g, 0, 0), false);
     g.players[1].cash = 800;
     g.players[2].cash = 600;
     updateAreaStockPrices(g);
@@ -2482,6 +2600,9 @@ describe('MkMk Street engine', () => {
     assert.ok(titles.has('scratch_king'));
     assert.ok(titles.has('shopaholic'));
     assert.ok(titles.has('big_sale'));
+    assert.ok(titles.has('nudge_sender'));
+    assert.equal(results.ranking.find((r) => r.id === 0)?.stats.nudgeSent, 2);
+    assert.equal(results.ranking.find((r) => r.id === 0)?.stats.nudgeReceived, 1);
 
     // 欠けた stats でも ensure / build できる
     delete g.players[1].stats;
@@ -2508,9 +2629,11 @@ describe('MkMk Street engine', () => {
     assert.match(text, /\[順位\]/);
     assert.match(text, /\[特賞\]/);
     assert.match(text, new RegExp(g.players[0].name));
+    assert.match(text, /催促 2回→ \/ ←1回/);
 
     const csv = gameResultsExportToCsv(exported);
     assert.match(csv, /^rank,name,winner,/);
+    assert.match(csv, /nudgeSent,nudgeReceived/);
     assert.ok(csv.split('\n').length >= 4);
 
     const fname = gameResultsExportFilename(exported, 'json');

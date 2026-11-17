@@ -20,7 +20,23 @@ import {
   remainingInvest as remainingInvestOf,
 } from './investLimits.js';
 
-export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
+/** ロビー／席で選べるプレイヤー色（最大4人なので重複なしで十分） */
+export const PLAYER_COLORS = [
+  '#e85d75', // あか
+  '#3d8bfd', // あお
+  '#f0a202', // きいろ
+  '#20c997', // みどり
+  '#fd7e14', // オレンジ
+  '#e64980', // ピンク
+  '#7950f2', // すみれ
+  '#15aabf', // シアン
+  '#868e96', // グレー
+  '#fab005', // ゴールド
+];
+export const PLAYER_COLOR_LABELS = [
+  'あか', 'あお', 'きいろ', 'みどり', 'オレンジ',
+  'ピンク', 'すみれ', 'シアン', 'グレー', 'ゴールド',
+];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
 
 /**
@@ -236,7 +252,22 @@ export function createEmptyStats() {
     minigamePlays: 0,
     minigameWins: 0,
     minigamePrize: 0,
+    /** 催促を送った回数 */
+    nudgeSent: 0,
+    /** 催促を受けた回数 */
+    nudgeReceived: 0,
   };
+}
+
+/** 催促が成立したときに送受信双方の統計を加算 */
+export function recordNudgeStats(g, fromSeat, targetSeat) {
+  if (!g?.players) return false;
+  const from = g.players[fromSeat];
+  const to = g.players[targetSeat];
+  if (!from || !to || fromSeat === targetSeat) return false;
+  bumpStat(from, 'nudgeSent', 1);
+  bumpStat(to, 'nudgeReceived', 1);
+  return true;
 }
 
 export function ensureStats(p) {
@@ -591,11 +622,7 @@ export function tryGrantMonopolyBonus(g, p, area) {
   bumpStat(p, 'monopolyCount', 1);
   bumpStat(p, 'monopolyBonus', bonus);
   p.flags.monopolyBonusClaimed[area] = true;
-
-  if (g.areas[area]) {
-    g.areas[area].B = Math.max(1, Math.floor((g.areas[area].B || 100) * 1.1));
-  }
-  updateAreaStockPrices(g);
+  // 店価・株価は動かさない。買い物料は所有軒数倍率（calcToll）側で上がる。
 
   const areaName = g.areas[area]?.name || `エリア${area}`;
   addLog(g, `${p.name} が「${areaName}」を独占！ ボーナス +${bonus}G`, 'level');
@@ -677,9 +704,9 @@ export function refreshGoalPressure(g) {
   return on;
 }
 
-/** 一度にこの枚数以上売ると相場係数 B が下がる */
+/** エリア売却累計がこの枚数に達するごとに相場係数 B が下がる（全プレイヤー共有） */
 export const STOCK_SELL_PRESSURE_MIN = 10;
-/** 大口売却時の B 乗率 */
+/** 売却圧による B 乗率 */
 export const STOCK_SELL_B_RATE = 0.93;
 
 function areaShopAvgPrice(g, area) {
@@ -690,6 +717,51 @@ function areaShopAvgPrice(g, area) {
 
 function stockPriceFromB(avg, B) {
   return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
+}
+
+function areaSellPressure(meta) {
+  return Math.max(0, Math.floor(Number(meta?.sellPressure) || 0));
+}
+
+/**
+ * 売却枚数を共有累計に加算し、閾値ごとに B を下げる。
+ * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, B: number }}
+ */
+export function applyStockSellPressure(g, area, count) {
+  const a = Number(area);
+  const meta = g.areas?.[a];
+  if (!meta) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const pressureBefore = areaSellPressure(meta);
+  let pressure = pressureBefore + n;
+  let drops = 0;
+  let B = meta.B || 100;
+  while (pressure >= STOCK_SELL_PRESSURE_MIN) {
+    B = Math.max(100, Math.floor(B * STOCK_SELL_B_RATE));
+    pressure -= STOCK_SELL_PRESSURE_MIN;
+    drops += 1;
+  }
+  meta.sellPressure = pressure;
+  meta.B = B;
+  return { drops, pressureBefore, pressureAfter: pressure, B };
+}
+
+/**
+ * 売却後の B / 累計を予測（状態は変更しない）。
+ * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, nextB: number }}
+ */
+export function simulateStockSellPressure(meta, count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const pressureBefore = areaSellPressure(meta);
+  let pressure = pressureBefore + n;
+  let drops = 0;
+  let nextB = meta?.B || 100;
+  while (pressure >= STOCK_SELL_PRESSURE_MIN) {
+    nextB = Math.max(100, Math.floor(nextB * STOCK_SELL_B_RATE));
+    pressure -= STOCK_SELL_PRESSURE_MIN;
+    drops += 1;
+  }
+  return { drops, pressureBefore, pressureAfter: pressure, nextB };
 }
 
 export function updateAreaStockPrices(g) {
@@ -713,7 +785,8 @@ export function updateAreaStockPrices(g) {
 
 /**
  * 株売却後の株価を予測（実際の売却は現行価格で受取→その後 B 低下）。
- * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, threshold:number }|null}
+ * 売却圧はエリア単位・全プレイヤー共有の累計。
+ * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, dropCount:number, pressureBefore:number, pressureAfter:number, untilDrop:number, threshold:number }|null}
  */
 export function previewStockSell(g, area, count) {
   const a = Number(area);
@@ -723,11 +796,9 @@ export function previewStockSell(g, area, count) {
   if (!avg) return null;
   const n = Math.max(0, Math.floor(Number(count) || 0));
   const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
-  const drops = n >= STOCK_SELL_PRESSURE_MIN;
-  const nextB = drops
-    ? Math.max(100, Math.floor((meta.B || 100) * STOCK_SELL_B_RATE))
-    : (meta.B || 100);
-  const newPrice = stockPriceFromB(avg, nextB);
+  const sim = simulateStockSellPressure(meta, n);
+  const newPrice = stockPriceFromB(avg, sim.nextB);
+  const untilDrop = Math.max(0, STOCK_SELL_PRESSURE_MIN - sim.pressureBefore);
   return {
     area: a,
     count: n,
@@ -735,7 +806,11 @@ export function previewStockSell(g, area, count) {
     oldPrice,
     newPrice,
     diff: newPrice - oldPrice,
-    drops,
+    drops: sim.drops > 0,
+    dropCount: sim.drops,
+    pressureBefore: sim.pressureBefore,
+    pressureAfter: sim.pressureAfter,
+    untilDrop,
     threshold: STOCK_SELL_PRESSURE_MIN,
   };
 }
@@ -856,6 +931,20 @@ const RESULT_AWARD_DEFS = [
     title: 'お買い物上手',
     desc: '買い物料を払った回数',
     metric: (row) => row.stats.tollPayCount,
+    format: (v) => `${v}回`,
+  },
+  {
+    id: 'nudge_sender',
+    title: '催促上手',
+    desc: '催促を送った回数',
+    metric: (row) => row.stats.nudgeSent,
+    format: (v) => `${v}回`,
+  },
+  {
+    id: 'nudge_target',
+    title: 'のんびり屋',
+    desc: '催促を受けた回数',
+    metric: (row) => row.stats.nudgeReceived,
     format: (v) => `${v}回`,
   },
 ];
@@ -1071,10 +1160,12 @@ export function gameResultsExportToText(payload) {
   for (const r of payload.ranking || []) {
     const s = r.sales || {};
     const p = r.payments || {};
+    const st = r.stats || {};
     lines.push(
       `${r.name}: 売上 ${s.count}回 ${fmtExportG(s.total)}（平均 ${fmtExportG(s.average)} / 最大 ${fmtExportG(s.greatest)}）`
       + ` ／ 支払 ${p.count}回 ${fmtExportG(p.total)}（平均 ${fmtExportG(p.average)} / 最大 ${fmtExportG(p.greatest)}）`
-      + ` ／ 株リターン ${fmtExportSignedG(r.stockReturn)}`,
+      + ` ／ 株リターン ${fmtExportSignedG(r.stockReturn)}`
+      + ` ／ 催促 ${st.nudgeSent || 0}回→ / ←${st.nudgeReceived || 0}回`,
     );
   }
   lines.push('');
@@ -1112,11 +1203,13 @@ export function gameResultsExportToCsv(payload) {
     'salesCount', 'salesTotal', 'salesAverage', 'salesMax',
     'payCount', 'payTotal', 'payAverage', 'payMax',
     'stockReturn', 'nextSalary',
+    'nudgeSent', 'nudgeReceived',
   ];
   const rows = (payload.ranking || []).map((r) => {
     const a = r.assets || {};
     const s = r.sales || {};
     const p = r.payments || {};
+    const st = r.stats || {};
     return [
       r.rank,
       r.name,
@@ -1139,6 +1232,8 @@ export function gameResultsExportToCsv(payload) {
       p.greatest ?? 0,
       r.stockReturn ?? 0,
       r.nextSalary ?? 0,
+      st.nudgeSent ?? 0,
+      st.nudgeReceived ?? 0,
     ].map(csvEscape).join(',');
   });
   return `${header.join(',')}\n${rows.join('\n')}\n`;
@@ -1975,9 +2070,7 @@ function sellStockForCash(g, p, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= STOCK_SELL_PRESSURE_MIN) {
-    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
-  }
+  applyStockSellPressure(g, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
@@ -2414,9 +2507,7 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
       syncStockValueSnap(g, p);
-      if (count >= STOCK_SELL_PRESSURE_MIN) {
-        g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * STOCK_SELL_B_RATE));
-      }
+      applyStockSellPressure(g, area, count);
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
     }
@@ -2691,6 +2782,12 @@ function payoutAll(g, amount, messages) {
   applyAllCash(g, amount, messages);
 }
 
+/** サイコロ／スロット系ミニゲーム報酬：基本額 × レベル */
+export function scaleDiceSlotPrize(base, level) {
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  return Math.max(1, Math.floor(Number(base) || 0) * lv);
+}
+
 function resolveMinigame(g, p, pending, choice) {
   const game = pending.game || 'guess_dice';
   const messages = [];
@@ -2702,6 +2799,7 @@ function resolveMinigame(g, p, pending, choice) {
   /** @type {Record<string, unknown>} */
   const outcome = {};
   let pick = choice?.value;
+  const lvPrize = (base) => scaleDiceSlotPrize(base, p.level);
 
   if (game === 'guess_dice') {
     pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
@@ -2713,19 +2811,19 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'exact';
       title = 'ぴったり！';
-      const prize = 280 + p.level * 40;
+      const prize = lvPrize(320);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ぴったり！出目${roll} → +${prize}G`);
+      messages.push(`ぴったり！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 60, messages);
     } else if (diff === 1) {
       win = true;
       tier = 'near';
       title = 'おしい！';
-      const prize = 100 + p.level * 15;
+      const prize = lvPrize(115);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
+      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 40, messages);
     } else {
       tier = 'miss';
@@ -2747,10 +2845,10 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'win';
       title = 'カーニバル当たり！';
-      const prize = 160 + p.level * 22;
+      const prize = lvPrize(180);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${pickLabel}正解！出目${roll} → +${prize}G`);
+      messages.push(`${pickLabel}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 50, messages);
     } else {
       tier = 'miss';
@@ -2772,10 +2870,10 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'win';
       title = 'フォーチュン！';
-      const prize = 240 + p.level * 36;
+      const prize = lvPrize(275);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${bandLabel[pick]}正解！出目${roll} → +${prize}G`);
+      messages.push(`${bandLabel[pick]}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 65, messages);
     } else {
       tier = 'miss';
@@ -2953,55 +3051,55 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'jackpot';
       title = 'ジャックポット！';
-      const prize = 900 + p.level * 120;
+      const prize = lvPrize(1020);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`5揃い ${line}！ → +${prize}G`);
+      messages.push(`5揃い ${line}！ → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 180, messages);
     } else if (top === 4) {
       win = true;
       tier = 'quad';
       title = 'フォーカード！';
-      const prize = 420 + p.level * 60;
+      const prize = lvPrize(480);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`4揃い ${line} → +${prize}G`);
+      messages.push(`4揃い ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 100, messages);
     } else if (top === 3 && second === 2) {
       win = true;
       tier = 'fullhouse';
       title = 'フルハウス！';
-      const prize = 280 + p.level * 42;
+      const prize = lvPrize(320);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`フルハウス ${line} → +${prize}G`);
+      messages.push(`フルハウス ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 75, messages);
     } else if (top === 3) {
       win = true;
       tier = 'triple';
       title = 'スリーカード！';
-      const prize = 150 + p.level * 28;
+      const prize = lvPrize(180);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`3揃い ${line} → +${prize}G`);
+      messages.push(`3揃い ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 55, messages);
     } else if (top === 2 && second === 2) {
       win = true;
       tier = 'two_pair';
       title = 'ツーペア！';
-      const prize = 90 + p.level * 16;
+      const prize = lvPrize(105);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ツーペア ${line} → +${prize}G`);
+      messages.push(`ツーペア ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 40, messages);
     } else if (top === 2) {
       win = true;
       tier = 'pair';
       title = 'ワンペア！';
-      const prize = 45 + p.level * 8;
+      const prize = lvPrize(55);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ワンペア ${line} → +${prize}G`);
+      messages.push(`ワンペア ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 28, messages);
     } else {
       tier = 'miss';
@@ -3030,37 +3128,37 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'jackpot';
       title = 'ネオンジャックポット！';
-      const prize = 1000 + p.level * 130;
+      const prize = lvPrize(1130);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から5連続 ${line}！ → +${prize}G`);
+      messages.push(`左から5連続 ${line}！ → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 200, messages);
     } else if (run >= 4) {
       win = true;
       tier = 'quad';
       title = 'ネオン4連続！';
-      const prize = 480 + p.level * 70;
+      const prize = lvPrize(550);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から4連続 ${line} → +${prize}G`);
+      messages.push(`左から4連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 110, messages);
     } else if (run >= 3) {
       win = true;
       tier = 'triple';
       title = 'ネオン3連続！';
-      const prize = 200 + p.level * 35;
+      const prize = lvPrize(235);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から3連続 ${line} → +${prize}G`);
+      messages.push(`左から3連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 60, messages);
     } else if (run >= 2) {
       win = true;
       tier = 'pair';
       title = 'ネオン2連続！';
-      const prize = 70 + p.level * 12;
+      const prize = lvPrize(80);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から2連続 ${line} → +${prize}G`);
+      messages.push(`左から2連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 32, messages);
     } else {
       tier = 'miss';
@@ -3138,9 +3236,7 @@ export function preTurnSell(g, playerId, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= STOCK_SELL_PRESSURE_MIN) {
-    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
-  }
+  applyStockSellPressure(g, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };

@@ -20,6 +20,7 @@ import {
   gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
+  recordNudgeStats,
   updateAreaStockPrices,
   previewStockSell,
   STOCK_SELL_PRESSURE_MIN,
@@ -29,6 +30,7 @@ import {
   getNode,
   getSharedEventTable,
   PLAYER_COLORS,
+  PLAYER_COLOR_LABELS,
   normalizePlayerColor,
   normalizeLobbyColors,
   getCpuPersonality,
@@ -45,6 +47,7 @@ import {
   getGoalPressurePlayers,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
+import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
   GROUP_COLORS,
   TABLE_SIZE,
@@ -55,6 +58,8 @@ import {
 import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
+import { APP_VERSION } from './version.js';
+import { evaluateOrderRolls, rollOrderDie } from './orderRoll.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -69,6 +74,10 @@ const app = {
   localSeat: 0,
   localName: '',
   lobbyPlayers: [],
+  /** 自分が選んだロビー色 */
+  lobbyColor: PLAYER_COLORS[0],
+  /** 開始前の順番決めダイス状態 */
+  orderRoll: null,
   renderer: null,
   cpuTimer: null,
   busy: false,
@@ -231,7 +240,7 @@ function reclaimOrPushLobbyPlayer(from, data) {
   if (idx >= 0) {
     const others = app.lobbyPlayers.filter((_, i) => i !== idx).map((p) => p.color);
     const prev = app.lobbyPlayers[idx];
-    const color = normalizePlayerColor(prev.color, idx, others);
+    const color = normalizePlayerColor(data.color || prev.color, idx, others);
     app.lobbyPlayers[idx] = { ...prev, peerId, name, color, isCPU: false };
     return { reclaimed: true, index: idx };
   }
@@ -248,6 +257,104 @@ function reclaimOrPushLobbyPlayer(from, data) {
 
 function resyncLobbyColors() {
   app.lobbyPlayers = normalizeLobbyColors(app.lobbyPlayers);
+}
+
+function usedLobbyColors(exceptKey = null) {
+  return app.lobbyPlayers
+    .filter((p) => (exceptKey == null ? true : lobbyPlayerKey(p) !== exceptKey))
+    .map((p) => p.color)
+    .filter(Boolean);
+}
+
+function lobbyPlayerKey(p) {
+  return p?.peerId || p?.key || p?.name || '';
+}
+
+function myLobbyKey() {
+  if (app.mode === 'host') {
+    return app.lobbyPlayers.find((p) => p.isHost)?.peerId || app.net?.peerId || 'host';
+  }
+  return app.net?.peerId || 'guest';
+}
+
+/**
+ * 色ピッカーを描画。taken は選択不可（自分の現在色は除く）。
+ * @param {HTMLElement|null} box
+ * @param {string} selected
+ * @param {{ taken?: string[], onPick?: (color: string) => void, disabled?: boolean }} [opts]
+ */
+function renderColorPicker(box, selected, opts = {}) {
+  if (!box) return;
+  const taken = new Set((opts.taken || []).map((c) => String(c).toLowerCase()));
+  const sel = String(selected || PLAYER_COLORS[0]).toLowerCase();
+  box.innerHTML = PLAYER_COLORS.map((color, i) => {
+    const isSel = color.toLowerCase() === sel;
+    const blocked = !isSel && taken.has(color.toLowerCase());
+    const label = PLAYER_COLOR_LABELS[i] || color;
+    return `<button type="button" class="color-swatch-btn${isSel ? ' selected' : ''}"
+      data-color="${color}" title="${escapeHtml(label)}"
+      aria-label="${escapeHtml(label)}"
+      style="--swatch:${color}"
+      ${blocked || opts.disabled ? 'disabled' : ''}></button>`;
+  }).join('');
+  if (opts.disabled) return;
+  box.querySelectorAll('.color-swatch-btn').forEach((btn) => {
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      const color = btn.dataset.color;
+      opts.onPick?.(color);
+    };
+  });
+}
+
+function applyLocalLobbyColor(color) {
+  const next = normalizePlayerColor(color, 0, []);
+  app.lobbyColor = next;
+  const myKey = myLobbyKey();
+  const idx = app.lobbyPlayers.findIndex((p) => lobbyPlayerKey(p) === myKey || (app.mode === 'host' && p.isHost));
+  if (idx >= 0) {
+    const others = usedLobbyColors(lobbyPlayerKey(app.lobbyPlayers[idx]));
+    app.lobbyPlayers[idx].color = normalizePlayerColor(next, idx, others);
+    resyncLobbyColors();
+    renderLobbyPlayers();
+    refreshLobbyColorPicker();
+    if (app.mode === 'host' && app.net) {
+      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+    } else if (app.mode === 'guest' && app.net) {
+      app.net.sendToHost({ type: 'lobby_color', color: next, peerId: app.net.peerId });
+    }
+  } else {
+    refreshLobbyColorPicker();
+  }
+}
+
+function refreshLobbyColorPicker() {
+  const box = $('#lobby-color-picker');
+  if (!box) return;
+  const myKey = app.lobbyPlayers.length ? myLobbyKey() : null;
+  const taken = myKey ? usedLobbyColors(myKey) : [];
+  // 未接続時は自分の希望色だけ
+  const selected = (() => {
+    if (!app.lobbyPlayers.length) return app.lobbyColor;
+    const me = app.lobbyPlayers.find((p) => lobbyPlayerKey(p) === myKey || (app.mode === 'host' && p.isHost));
+    return me?.color || app.lobbyColor;
+  })();
+  renderColorPicker(box, selected, {
+    taken,
+    onPick: (color) => applyLocalLobbyColor(color),
+  });
+}
+
+function setHostPlayerColor(peerId, color) {
+  if (app.mode !== 'host') return;
+  const idx = app.lobbyPlayers.findIndex((p) => p.peerId === peerId);
+  if (idx < 0) return;
+  const others = usedLobbyColors(peerId);
+  app.lobbyPlayers[idx].color = normalizePlayerColor(color, idx, others);
+  resyncLobbyColors();
+  renderLobbyPlayers();
+  refreshLobbyColorPicker();
+  app.net?.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
 }
 
 function clearDisconnectTimer(seat) {
@@ -444,6 +551,8 @@ async function attemptGuestReconnect({ room, name } = {}) {
       type: 'hello',
       name: nm,
       peerId: info.peerId,
+      version: APP_VERSION,
+      color: app.lobbyColor,
       rejoinSeat: rejoin?.seat ?? app.localSeat,
     });
     if (!sent) throw new Error('ホストへ送れませんでした');
@@ -661,14 +770,18 @@ function renderSeatEditors(count) {
     if (!saved && i === 0 && playerName) name = playerName;
     const row = document.createElement('div');
     row.className = 'seat-row';
+    const defaultColor = PLAYER_COLORS[i % PLAYER_COLORS.length];
     row.innerHTML = `
-      <span class="seat-swatch" style="background:${PLAYER_COLORS[i]}"></span>
       <input class="seat-name" data-i="${i}" value="${escapeHtml(name)}" maxlength="10" />
       <label class="seat-cpu"><input type="checkbox" data-cpu="${i}" ${i >= count ? 'checked' : ''}/> CPU</label>
       <label class="seat-on"><input type="checkbox" data-on="${i}" ${i < count ? 'checked' : ''}/> 参加</label>
+      <div class="seat-color-block color-picker" data-seat-colors="${i}"></div>
     `;
     box.appendChild(row);
+    const colorBox = row.querySelector(`[data-seat-colors="${i}"]`);
+    colorBox.dataset.color = defaultColor;
   }
+  renderSeatEditorsColorsOnly();
   box.querySelectorAll('input.seat-name').forEach((input) => {
     input.addEventListener('change', () => {
       const allNames = [0, 1, 2, 3].map((i) => (
@@ -679,18 +792,41 @@ function renderSeatEditors(count) {
   });
 }
 
+/** ローカル席の色ピッカーを、他席の使用色を踏まえて描き直す */
+function renderSeatEditorsColorsOnly() {
+  for (let i = 0; i < 4; i++) {
+    const colorBox = $(`[data-seat-colors="${i}"]`);
+    if (!colorBox) continue;
+    const selected = colorBox.dataset.color || PLAYER_COLORS[i % PLAYER_COLORS.length];
+    const taken = [];
+    for (let j = 0; j < 4; j++) {
+      if (j === i) continue;
+      const other = $(`[data-seat-colors="${j}"]`)?.dataset.color;
+      if (other) taken.push(other);
+    }
+    renderColorPicker(colorBox, selected, {
+      taken,
+      onPick: (c) => {
+        colorBox.dataset.color = c;
+        renderSeatEditorsColorsOnly();
+      },
+    });
+  }
+}
+
 function readSeatEditors() {
   const seats = [];
   for (let i = 0; i < 4; i++) {
     const on = $(`input[data-on="${i}"]`)?.checked;
     if (!on) continue;
+    const colorBox = $(`[data-seat-colors="${i}"]`);
     seats.push({
       name: $(`input.seat-name[data-i="${i}"]`)?.value || `P${i + 1}`,
-      color: PLAYER_COLORS[i],
+      color: colorBox?.dataset.color || PLAYER_COLORS[i % PLAYER_COLORS.length],
       isCPU: $(`input[data-cpu="${i}"]`)?.checked || false,
     });
   }
-  return seats;
+  return normalizeLobbyColors(seats);
 }
 
 async function openLobby(role, prefill = {}) {
@@ -734,6 +870,10 @@ async function openLobby(role, prefill = {}) {
     if (n) savePlayerName(n);
   };
   nameInput.onchange = () => savePlayerName(nameInput.value);
+  if (!PLAYER_COLORS.some((c) => c.toLowerCase() === String(app.lobbyColor || '').toLowerCase())) {
+    app.lobbyColor = PLAYER_COLORS[0];
+  }
+  refreshLobbyColorPicker();
   setStatus(
     role === 'host'
       ? '「部屋作成」で部屋を開きます。建て直すときは先に「部屋を解体」してください'
@@ -802,8 +942,14 @@ async function openLobby(role, prefill = {}) {
       $('#lobby-code-display').textContent = info.roomCode;
       syncLobbyRoomControls({ roomOpen: true });
       if (role === 'host') {
-        app.lobbyPlayers = [{ peerId: info.peerId, name, color: PLAYER_COLORS[0], isHost: true }];
+        app.lobbyPlayers = [{
+          peerId: info.peerId,
+          name,
+          color: normalizePlayerColor(app.lobbyColor, 0, []),
+          isHost: true,
+        }];
         renderLobbyPlayers();
+        refreshLobbyColorPicker();
         app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
         setStatus(`部屋 ${info.roomCode} を公開中。建て直すときは「部屋を解体」`, 'ok');
       } else {
@@ -812,6 +958,8 @@ async function openLobby(role, prefill = {}) {
           type: 'hello',
           name,
           peerId: info.peerId,
+          version: APP_VERSION,
+          color: app.lobbyColor,
           rejoinSeat: rejoinSeat?.seat,
         });
       }
@@ -836,12 +984,9 @@ async function openLobby(role, prefill = {}) {
       name: p.name,
       color: p.color,
       isCPU: !!p.isCPU,
+      key: p.peerId,
     }));
-    app.game = createGame({ players, goal, mapId });
-    app.localSeat = 0;
-    app.net.broadcast({ type: 'game_start', state: serializeState(app.game), seatMap: players.map((p) => p.peerId) });
-    enterGame();
-    saveRejoinSession();
+    beginOrderRoll({ players, goal, mapId, mode: 'host' });
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -874,11 +1019,26 @@ async function openLobby(role, prefill = {}) {
 function renderLobbyPlayers() {
   const box = $('#lobby-players');
   box.innerHTML = app.lobbyPlayers.map((p, i) => `
-    <div class="lobby-player" style="--pc:${p.color || PLAYER_COLORS[i]}">
+    <div class="lobby-player" style="--pc:${p.color || PLAYER_COLORS[i % PLAYER_COLORS.length]}">
       <span class="lp-dot"></span>
-      <span>${p.name}${p.isHost ? '（ホスト）' : ''}${p.isCPU ? '（CPU）' : ''}</span>
+      <span>${escapeHtml(p.name)}${p.isHost ? '（ホスト）' : ''}${p.isCPU ? '（CPU）' : ''}</span>
+      ${app.mode === 'host' && p.isCPU
+        ? `<div class="color-picker tiny" data-lobby-cpu-colors="${escapeHtml(p.peerId)}"></div>`
+        : ''}
     </div>
   `).join('');
+  if (app.mode === 'host') {
+    box.querySelectorAll('[data-lobby-cpu-colors]').forEach((colorBox) => {
+      const peerId = colorBox.getAttribute('data-lobby-cpu-colors');
+      const pl = app.lobbyPlayers.find((x) => x.peerId === peerId);
+      if (!pl) return;
+      renderColorPicker(colorBox, pl.color, {
+        taken: usedLobbyColors(peerId),
+        onPick: (color) => setHostPlayerColor(peerId, color),
+      });
+    });
+  }
+  refreshLobbyColorPicker();
 }
 
 function handleNetEvent({ from, data }) {
@@ -886,6 +1046,14 @@ function handleNetEvent({ from, data }) {
 
   if (app.mode === 'host') {
     if (data.type === 'hello') {
+      if (data.version !== APP_VERSION) {
+        app.net.sendTo(from, {
+          type: 'version_mismatch',
+          hostVersion: APP_VERSION,
+          clientVersion: data.version || '?',
+        });
+        return;
+      }
       if (app.game) {
         const seat = findRejoinSeat(app.game, data.name, data.rejoinSeat);
         if (seat >= 0) {
@@ -916,6 +1084,10 @@ function handleNetEvent({ from, data }) {
         app.net.sendTo(from, { type: 'game_already' });
         return;
       }
+      if (app.orderRoll) {
+        app.net.sendTo(from, { type: 'game_already' });
+        return;
+      }
       const joined = reclaimOrPushLobbyPlayer(from, data);
       if (joined.full) {
         app.net.sendTo(from, { type: 'lobby_full' });
@@ -924,6 +1096,22 @@ function handleNetEvent({ from, data }) {
       resyncLobbyColors();
       renderLobbyPlayers();
       app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+      return;
+    }
+    if (data.type === 'lobby_color') {
+      if (app.game || app.orderRoll) return;
+      const peerId = data.peerId || from;
+      const idx = app.lobbyPlayers.findIndex((p) => p.peerId === peerId);
+      if (idx < 0) return;
+      const others = usedLobbyColors(peerId);
+      app.lobbyPlayers[idx].color = normalizePlayerColor(data.color, idx, others);
+      resyncLobbyColors();
+      renderLobbyPlayers();
+      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+      return;
+    }
+    if (data.type === 'order_roll_claim') {
+      handleOrderRollClaim(from);
       return;
     }
     if (data.type === 'event_flash_dismiss') {
@@ -964,6 +1152,16 @@ function handleNetEvent({ from, data }) {
       return;
     }
     if (data.type === 'peer_left') {
+      if (app.orderRoll) {
+        app.orderRoll = null;
+        toast('順番決め中に切断がありました。ロビーに戻ります');
+        showScreen('screen-lobby');
+        app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
+        renderLobbyPlayers();
+        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        app.net.broadcast({ type: 'order_roll_abort' });
+        return;
+      }
       if (!app.game) {
         app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
         renderLobbyPlayers();
@@ -977,6 +1175,14 @@ function handleNetEvent({ from, data }) {
   }
 
   if (app.mode === 'guest') {
+    if (data.type === 'version_mismatch') {
+      toast(`バージョン不一致（部屋 v${data.hostVersion} / あなた v${data.clientVersion || APP_VERSION}）。同じ版を開き直してください`);
+      setStatus('バージョンが合わないため入室できません', 'error');
+      app.net?.destroy();
+      app.net = null;
+      syncLobbyRoomControls({ roomOpen: false });
+      return;
+    }
     if (data.type === 'lobby_sync') {
       app.lobbyPlayers = normalizeLobbyColors(data.players || []);
       renderLobbyPlayers();
@@ -986,7 +1192,18 @@ function handleNetEvent({ from, data }) {
       toast('部屋が満員です');
       return;
     }
+    if (data.type === 'order_roll_sync') {
+      applyOrderRollSync(data);
+      return;
+    }
+    if (data.type === 'order_roll_abort') {
+      app.orderRoll = null;
+      toast('順番決めが中断されました');
+      showScreen('screen-lobby');
+      return;
+    }
     if (data.type === 'game_start' || data.type === 'game_rejoin') {
+      app.orderRoll = null;
       hideReconnectOverlay();
       app.game = restoreState(data.state);
       const myPeer = app.net.peerId;
@@ -1235,6 +1452,231 @@ function syncGoalPressureBgm(g) {
   if (!urgent) app.goalPressureBannerShown = false;
 }
 
+/** 順番決めダイスを開始（ホスト／ローカル） */
+function beginOrderRoll({ players, goal, mapId, mode }) {
+  const list = players.map((p, i) => ({
+    key: p.key || p.peerId || `p-${i}`,
+    peerId: p.peerId || null,
+    name: p.name,
+    color: p.color,
+    isCPU: !!p.isCPU,
+  }));
+  app.orderRoll = {
+    players: list,
+    rolls: {},
+    pending: list.map((p) => p.key),
+    round: 1,
+    goal,
+    mapId,
+    mode,
+  };
+  showOrderRollScreen();
+  broadcastOrderRollSync();
+  scheduleOrderRollCpus();
+}
+
+function broadcastOrderRollSync() {
+  if (!app.orderRoll) return;
+  if (app.mode === 'host' && app.net) {
+    app.net.broadcast({
+      type: 'order_roll_sync',
+      ...serializeOrderRoll(),
+    });
+  }
+}
+
+function serializeOrderRoll() {
+  const o = app.orderRoll;
+  return {
+    players: o.players,
+    rolls: o.rolls,
+    pending: o.pending,
+    round: o.round,
+    goal: o.goal,
+    mapId: o.mapId,
+  };
+}
+
+function applyOrderRollSync(data) {
+  app.orderRoll = {
+    players: data.players || [],
+    rolls: data.rolls || {},
+    pending: data.pending || [],
+    round: data.round || 1,
+    goal: data.goal,
+    mapId: data.mapId,
+    mode: 'guest',
+  };
+  showOrderRollScreen();
+}
+
+function showOrderRollScreen() {
+  showScreen('screen-order-roll');
+  renderOrderRollUi();
+  const btn = $('#btn-order-roll');
+  if (!btn) return;
+  btn.onclick = () => {
+    audio.sfx.click();
+    claimOrderRoll();
+  };
+}
+
+function renderOrderRollUi() {
+  const o = app.orderRoll;
+  if (!o) return;
+  const list = $('#order-roll-list');
+  const status = $('#order-roll-status');
+  const hint = $('#order-roll-hint');
+  const btn = $('#btn-order-roll');
+  const myKey = orderRollMyKey();
+  const pendingSet = new Set(o.pending || []);
+  if (hint) {
+    hint.textContent = o.round > 1
+      ? `同点のため振り直し（${o.round}回目）。出目が大きいほど先手です。`
+      : '出目が大きいほど先にサイコロを振ります。同点は振り直し。';
+  }
+  if (list) {
+    list.innerHTML = o.players.map((p) => {
+      const rolled = Number.isFinite(o.rolls[p.key]);
+      const waiting = pendingSet.has(p.key);
+      const cls = [
+        'order-roll-row',
+        waiting ? 'pending' : '',
+        waiting && o.round > 1 ? 'tied' : '',
+      ].filter(Boolean).join(' ');
+      const dice = rolled ? String(o.rolls[p.key]) : (waiting ? '待ち' : '—');
+      return `<div class="${cls}" style="--pc:${p.color || PLAYER_COLORS[0]}">
+        <span class="or-dot"></span>
+        <span>${escapeHtml(p.name)}${p.isCPU ? '（CPU）' : ''}${p.key === myKey ? '（あなた）' : ''}</span>
+        <span class="or-dice">${escapeHtml(dice)}</span>
+      </div>`;
+    }).join('');
+  }
+  const canRoll = !!myKey && pendingSet.has(myKey) && !o.players.find((p) => p.key === myKey)?.isCPU;
+  if (btn) {
+    btn.disabled = !canRoll;
+    btn.textContent = o.round > 1 ? 'もう一度振る' : 'サイコロを振る';
+  }
+  if (status) {
+    if (!pendingSet.size) status.textContent = '結果を確定しています…';
+    else if (canRoll) status.textContent = 'あなたの番です。サイコロを振ってください';
+    else status.textContent = '他のプレイヤーの出目を待っています…';
+  }
+}
+
+function orderRollMyKey() {
+  const o = app.orderRoll;
+  if (!o) return null;
+  if (o.mode === 'local') {
+    // 未ロールの人間を順に振る（ボタン1つで回す）
+    const pendingHuman = o.players.find((p) => !p.isCPU && (o.pending || []).includes(p.key));
+    return pendingHuman?.key || null;
+  }
+  if (o.mode === 'host') {
+    return o.players.find((p) => p.peerId === app.net?.peerId)?.key || null;
+  }
+  return o.players.find((p) => p.peerId === app.net?.peerId)?.key || null;
+}
+
+function claimOrderRoll() {
+  const o = app.orderRoll;
+  if (!o) return;
+  const myKey = orderRollMyKey();
+  if (!myKey || !(o.pending || []).includes(myKey)) return;
+  if (o.mode === 'guest') {
+    app.net?.sendToHost({ type: 'order_roll_claim', peerId: app.net.peerId });
+    return;
+  }
+  // host / local: 自分で確定
+  resolveOrderRollClaim(myKey);
+}
+
+function handleOrderRollClaim(from) {
+  const o = app.orderRoll;
+  if (!o || (app.mode !== 'host' && o.mode !== 'local')) return;
+  const key = o.players.find((p) => p.peerId === from || p.key === from)?.key;
+  if (!key) return;
+  resolveOrderRollClaim(key);
+}
+
+function resolveOrderRollClaim(key) {
+  const o = app.orderRoll;
+  if (!o) return;
+  if (!(o.pending || []).includes(key)) return;
+  if (Number.isFinite(o.rolls[key])) return;
+  o.rolls[key] = rollOrderDie();
+  try { audio.sfx.dice(); } catch (_) { audio.sfx.click(); }
+  o.pending = o.pending.filter((k) => k !== key);
+  renderOrderRollUi();
+  broadcastOrderRollSync();
+  if (o.pending.length) {
+    scheduleOrderRollCpus();
+    return;
+  }
+  finishOrderRollRound();
+}
+
+function scheduleOrderRollCpus() {
+  const o = app.orderRoll;
+  if (!o) return;
+  if (o.mode === 'guest') return;
+  const cpus = o.players.filter((p) => p.isCPU && (o.pending || []).includes(p.key));
+  cpus.forEach((p, i) => {
+    setTimeout(() => {
+      if (!app.orderRoll) return;
+      resolveOrderRollClaim(p.key);
+    }, 350 + i * 280);
+  });
+}
+
+function finishOrderRollRound() {
+  const o = app.orderRoll;
+  if (!o) return;
+  const result = evaluateOrderRolls(o.players, o.rolls);
+  if (!result.done) {
+    o.pending = result.rerollKeys;
+    o.round += 1;
+    for (const k of result.rerollKeys) delete o.rolls[k];
+    renderOrderRollUi();
+    broadcastOrderRollSync();
+    toast('同点！もう一度振ります');
+    scheduleOrderRollCpus();
+    return;
+  }
+  const ordered = result.order.map((key) => o.players.find((p) => p.key === key)).filter(Boolean);
+  const players = ordered.map((p) => ({
+    peerId: p.peerId,
+    name: p.name,
+    color: p.color,
+    isCPU: !!p.isCPU,
+  }));
+  const goal = o.goal;
+  const mapId = o.mapId;
+  const mode = o.mode;
+  app.orderRoll = null;
+
+  if (mode === 'local') {
+    app.mode = 'local';
+    app.game = createGame({ players, goal, mapId });
+    app.localSeat = players.findIndex((p) => !p.isCPU);
+    if (app.localSeat < 0) app.localSeat = 0;
+    enterGame();
+    return;
+  }
+
+  // host online
+  app.game = createGame({ players, goal, mapId });
+  app.localSeat = app.game.players.findIndex((p) => p.peerId === app.net?.peerId);
+  if (app.localSeat < 0) app.localSeat = 0;
+  app.net.broadcast({
+    type: 'game_start',
+    state: serializeState(app.game),
+    seatMap: players.map((p) => p.peerId),
+  });
+  enterGame();
+  saveRejoinSession();
+}
+
 function startLocal(seats) {
   const params = new URLSearchParams(location.search);
   const demo = params.get('demo');
@@ -1247,11 +1689,21 @@ function startLocal(seats) {
   const goal = mapFromDemo
     ? (mapDef?.defaultGoal)
     : (goalFromUi || mapDef?.defaultGoal || 10000);
-  app.game = createGame({ players: seats, goal, mapId });
-  app.localSeat = seats.findIndex((s) => !s.isCPU);
-  if (app.localSeat < 0) app.localSeat = 0;
-  enterGame();
-  maybeDemoLanding();
+  // デモ直入れは順番ダイスを飛ばす
+  if (demo) {
+    app.game = createGame({ players: seats, goal, mapId });
+    app.localSeat = seats.findIndex((s) => !s.isCPU);
+    if (app.localSeat < 0) app.localSeat = 0;
+    enterGame();
+    maybeDemoLanding();
+    return;
+  }
+  const players = seats.map((s, i) => ({
+    ...s,
+    peerId: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
+    key: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
+  }));
+  beginOrderRoll({ players, goal, mapId, mode: 'local' });
 }
 
 function maybeDemoLanding() {
@@ -1487,6 +1939,7 @@ function seedResultsDemo(g) {
         salaryEarned: 2100, levelUps: 3, monopolyCount: 2, monopolyBonus: 1800,
         stockBought: 40, stockSpent: 2200, stockSold: 8, stockIncome: 500, stockReturn: 640,
         scratchCount: 6, matchBonus: 300, minigamePlays: 3, minigameWins: 2, minigamePrize: 520,
+        nudgeSent: 5, nudgeReceived: 1,
       },
     },
     {
@@ -1499,6 +1952,7 @@ function seedResultsDemo(g) {
         salaryEarned: 1200, levelUps: 2, monopolyCount: 0, monopolyBonus: 0,
         stockBought: 85, stockSpent: 4800, stockSold: 20, stockIncome: 1400, stockReturn: 1280,
         scratchCount: 4, matchBonus: 100, minigamePlays: 2, minigameWins: 0, minigamePrize: 0,
+        nudgeSent: 2, nudgeReceived: 4,
       },
     },
     {
@@ -1511,6 +1965,7 @@ function seedResultsDemo(g) {
         salaryEarned: 900, levelUps: 2, monopolyCount: 1, monopolyBonus: 900,
         stockBought: 15, stockSpent: 800, stockSold: 5, stockIncome: 280, stockReturn: -180,
         scratchCount: 8, matchBonus: 450, minigamePlays: 5, minigameWins: 3, minigamePrize: 780,
+        nudgeSent: 1, nudgeReceived: 2,
       },
     },
     {
@@ -1523,6 +1978,7 @@ function seedResultsDemo(g) {
         salaryEarned: 400, levelUps: 1, monopolyCount: 0, monopolyBonus: 0,
         stockBought: 10, stockSpent: 400, stockSold: 2, stockIncome: 90, stockReturn: -90,
         scratchCount: 3, matchBonus: 50, minigamePlays: 1, minigameWins: 0, minigamePrize: 0,
+        nudgeSent: 0, nudgeReceived: 3,
       },
     },
   ];
@@ -1740,26 +2196,27 @@ function isMyTurn() {
   return false;
 }
 
+/** 操作待ち座席（自分含む）。ホスト側の催促検証でも使う */
+function getWaitingSeatId() {
+  if (!app.game || app.game.phase === 'gameover') return null;
+  return resolveWaitingSeatId({
+    phase: app.game.phase,
+    pendingPlayerId: app.game.pending?.playerId ?? null,
+    currentPlayerIdx: app.game.currentPlayerIdx,
+    hideDiceResult: !!app.hideDiceResult,
+    eventFlashReaderId: app.eventFlashReaderId,
+    eventUiBlocking: isEventUiBlocking(),
+  });
+}
+
 /** 操作待ちで止まっている人間プレイヤー（自分以外）。P2P専用 */
 function getNudgeTarget() {
   if (!app.game || app.game.phase === 'gameover') return null;
   // 同一端末のローカル対戦では相手端末が無いので不要
   if (app.mode !== 'host' && app.mode !== 'guest') return null;
 
-  let targetId = null;
-  if (isEventUiBlocking() && app.eventFlashReaderId != null) {
-    targetId = app.eventFlashReaderId;
-  } else if (
-    (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
-    && app.game.pending
-    && !app.busy
-  ) {
-    targetId = app.game.pending.playerId;
-  } else if (app.game.phase === 'await_roll' && !app.busy && !app.hideDiceResult) {
-    targetId = app.game.currentPlayerIdx;
-  } else {
-    return null;
-  }
+  const targetId = getWaitingSeatId();
+  if (targetId == null) return null;
 
   const p = app.game.players[targetId];
   if (!p || p.isCPU || p.offline || p.bankrupt) return null;
@@ -1814,6 +2271,10 @@ function playNudgeReceived(fromName) {
 function deliverNudge({ fromSeat, targetSeat, fromName }) {
   const target = app.game?.players?.[targetSeat];
   if (!target || target.isCPU) return;
+  if (app.game) {
+    recordNudgeStats(app.game, fromSeat, targetSeat);
+    syncState();
+  }
   broadcastFx({
     kind: 'nudge',
     fromSeat,
@@ -1865,15 +2326,21 @@ function handleHostNudge(fromPeer, data) {
   if (fromSeat < 0) return;
   const last = app.nudgeLastBySeat[fromSeat] || 0;
   if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
-  const target = getNudgeTarget();
-  if (!target) return;
-  // 送信時点の対象と一致するものだけ（古い催促の誤爆防止）
-  if (data.targetSeat != null && Number(data.targetSeat) !== target.id) return;
-  if (target.id === fromSeat) return;
+
+  // ホスト自身が待ちのときも届けられるよう、自己除外前の待ち座席で検証する
+  const waitingId = getWaitingSeatId();
+  if (waitingId == null) return;
+  const targetSeat = data.targetSeat != null ? Number(data.targetSeat) : waitingId;
+  if (targetSeat !== waitingId) return;
+  if (targetSeat === fromSeat) return;
+
+  const target = app.game.players[targetSeat];
+  if (!target || target.isCPU || target.offline || target.bankrupt) return;
+
   app.nudgeLastBySeat[fromSeat] = Date.now();
   deliverNudge({
     fromSeat,
-    targetSeat: target.id,
+    targetSeat,
     fromName: app.game.players[fromSeat]?.name || '相手',
   });
 }
@@ -4901,7 +5368,7 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。一度に${STOCK_SELL_PRESSURE_MIN}枚以上の株を売ると売却後の株価が下がります。${
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。エリアごとの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに売却後の株価が下がります。${
         mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
       }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
@@ -5579,9 +6046,11 @@ function renderResultsAssetsPane(results) {
       <span>プレイヤー</span>
       <span>総資産</span><span>現金</span><span>お店</span><span>株</span>
       <span>レベル</span><span>次の給料</span>
+      <span>催促した</span><span>催促された</span>
     </div>`;
   const rows = results.ranking.map((row, i) => {
     const a = row.assets;
+    const st = row.stats || {};
     return `<div class="ra-table ra-row ${row.isWinner ? 'is-winner' : ''} ${row.bankrupt ? 'is-bankrupt' : ''}" style="--i:${i}">
       <span class="ra-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</span>
       <span class="ra-total">${fmtG(a.total)}</span>
@@ -5590,10 +6059,12 @@ function renderResultsAssetsPane(results) {
       <span>${fmtG(a.stockAsset)}</span>
       <span>Lv.${row.level}</span>
       <span>${fmtG(row.nextSalary)}</span>
+      <span>${Number(st.nudgeSent || 0)}回</span>
+      <span>${Number(st.nudgeReceived || 0)}回</span>
     </div>`;
   }).join('');
   return `<div class="ra-scroll">${head}${rows}</div>
-    <p class="results-hint">次の給料＝あと1レベル昇進したときの昇進賞金見込み</p>`;
+    <p class="results-hint">次の給料＝あと1レベル昇進したときの昇進賞金見込み／催促はオンライン対戦での送受信回数</p>`;
 }
 
 function renderResultsAwardsPane(results) {
@@ -5717,7 +6188,7 @@ function renderStockPanel(g) {
     ? `<div class="stocks-sell">
         <div class="sh-title">自分の株を売る</div>
         <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
-        <p class="hint">一度に${STOCK_SELL_PRESSURE_MIN}枚以上売ると売却後の株価が下がります（受取は今の株価）</p>
+        <p class="hint">エリアの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに株価が下がります（受取は今の株価）</p>
         ${held.map((area) => {
           const meta = g.areas[area];
           const have = me.stocks[area] || 0;
@@ -5803,14 +6274,16 @@ function formatStockSellPreview(g, area, count) {
   const prev = previewStockSell(g, area, count);
   if (!prev || prev.count <= 0) return '';
   const got = `受取 <strong>${prev.proceeds.toLocaleString()}G</strong>`;
+  const meter = `累計 ${prev.pressureBefore}/${prev.threshold}`;
   if (!prev.drops) {
-    return `${got} · 株価変動なし（${prev.threshold}枚未満）`;
+    return `${got} · 株価変動なし（${meter} · あと${prev.untilDrop}枚）`;
   }
+  const times = prev.dropCount > 1 ? `×${prev.dropCount}` : '';
   if (prev.diff === 0) {
-    return `${got} · 売却後も株価 ${prev.oldPrice}G`;
+    return `${got} · 売却後も株価 ${prev.oldPrice}G（圧${times} · ${meter}→${prev.pressureAfter}）`;
   }
   const arrow = `${prev.oldPrice}→${prev.newPrice}G（${prev.diff}G）`;
-  return `${got} · 売却後の株価 <strong>${arrow}</strong>`;
+  return `${got} · 売却後の株価 <strong>${arrow}</strong>（圧${times} · ${meter}→${prev.pressureAfter}）`;
 }
 
 function escapeHtml(s) {
@@ -5827,6 +6300,8 @@ function escapeHtml(s) {
   } else {
     app.localName = 'プレイヤー';
   }
+  const ver = $('#app-version-label');
+  if (ver) ver.textContent = `v${APP_VERSION}`;
 }
 bindVolumeUI();
 bindSideChrome();

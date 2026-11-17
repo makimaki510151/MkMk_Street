@@ -73,6 +73,8 @@ function buildAreas(nodes, areaOverrides = {}) {
     areas[a] = {
       B: Math.ceil((targetStock * 65536) / avg),
       stockPrice: targetStock,
+      /** 全プレイヤー共有の売却累計（STOCK_SELL_PRESSURE_MIN ごとに株価下落） */
+      sellPressure: 0,
       name: meta.name || `エリア${a}`,
       color: meta.color || '#888',
       pattern: meta.pattern || 'check',
