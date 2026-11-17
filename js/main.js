@@ -1743,8 +1743,8 @@ function maybeDemoLanding() {
         const cell = table.cells[i];
         cell.scratched = true;
         cell.scratchedBy = who.id;
-        cell.color = playerColorIndex(who);
-        cell.group = cell.color;
+        cell.color = who.id;
+        cell.group = who.id;
       }
     } else {
       // 開けた人の色で塗られた状態を見せる（イベント効果は適用しない）
@@ -1753,8 +1753,8 @@ function maybeDemoLanding() {
         const cell = table.cells[i];
         cell.scratched = true;
         cell.scratchedBy = who.id;
-        cell.color = playerColorIndex(who);
-        cell.group = cell.color;
+        cell.color = who.id;
+        cell.group = who.id;
       }
     }
     p.pos = mark.id;
@@ -3211,9 +3211,9 @@ async function playScratchMatchReveal(matches, messages = [], { banner = true } 
   const matchMsgs = messages.filter((m) => String(m).includes('そろい'));
   const top = matches.reduce((a, b) => (b.count > a.count ? b : a), matches[0]);
   const totalBonus = matches.reduce((s, m) => s + (m.bonus || 0), 0);
-  const title = `${COLOR_LABELS[top.color] || ''}色 ${top.count}そろい！`;
+  const title = `${top.beneficiaryName || ''}色 ${top.count}そろい！`;
   const detail = matchMsgs.join(' / ') || `+${totalBonus}G`;
-  const color = top.beneficiaryColor || GROUP_COLORS[top.color] || '#ffe08a';
+  const color = top.beneficiaryColor || '#ffe08a';
 
   const modalGrid = document.querySelector('#modal:not([hidden]) .scratch-grid');
   let usedOverlay = false;
@@ -3882,6 +3882,10 @@ function refreshGameUI() {
   box.innerHTML = g.players.map((p) => {
     const a = getPlayerAssets(g, p);
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
+    const wildN = Math.max(0, Math.floor(Number(p.wildcards) || 0));
+    const wilds = wildN > 0
+      ? `<span class="pc-wilds" title="ワイルドカード（銀行で空きマークに変化）">${'Ｗ'.repeat(Math.min(4, wildN))}<small>×${wildN}</small></span>`
+      : '';
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';
     const myTurnCard = active && me ? 'my-turn' : '';
@@ -3924,7 +3928,7 @@ function refreshGameUI() {
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
         <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
         ${stockLine}
-        <div class="pc-marks">${marks}${status}</div>
+        <div class="pc-marks">${marks}${wilds}${status}</div>
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
     `;
@@ -4192,7 +4196,7 @@ function bannerFromLog(g, l) {
     // 確認ダイアログ（busy）にするとスクラッチ／分岐UIが塞がり P2P が止まる。
     if (/通過で/.test(l.text)) {
       detail = `${player?.name || ''} が通過でマークを入手`;
-    } else if (/足りないマーク|全マーク所持/.test(l.text)) {
+    } else if (/ワイルドカード|空きマークに変化|足りないマーク|全マーク所持/.test(l.text)) {
       detail = l.text;
     } else if (/入手/.test(l.text)) {
       detail = `${player?.name || ''} がマークを入手`;
@@ -5607,13 +5611,13 @@ function showChoiceModal(g) {
       body.innerHTML = '<p class="hint">イベント表がありません</p>';
       return;
     }
-    const legend = GROUP_COLORS.map((c, i) =>
-      `<span class="scratch-legend" style="--sc:${c}">${COLOR_LABELS[i]}</span>`
+    const legend = g.players.filter((p) => !p.bankrupt).map((p) =>
+      `<span class="scratch-legend" style="--sc:${p.color}">${escapeHtml(p.name)}</span>`
     ).join('');
     const cells = table.cells.map((c) => {
       if (c.scratched) {
-        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : null;
-        const pc = scratcher?.color || GROUP_COLORS[c.color] || '#888';
+        const scratcher = c.scratchedBy != null ? g.players[c.scratchedBy] : g.players[c.color];
+        const pc = scratcher?.color || '#888';
         const who = scratcher ? escapeHtml(scratcher.name) : '';
         // 開けた人の色で塗り、番号のみ表示（イベント名は title）
         return `<button type="button" class="scratch-cell done by-player" style="--pc:${pc}" disabled title="${escapeHtml(c.label)}${who ? ` — ${who}` : ''}">
@@ -5624,7 +5628,7 @@ function showChoiceModal(g) {
       return `<button type="button" class="scratch-cell sealed" data-cell="${c.id}" aria-label="イベントマス" ${canPick ? '' : 'disabled'}>?</button>`;
     }).join('');
     body.innerHTML = `
-      <p class="hint">マスを1つ選んでめくります。同じ色が縦・横・斜めに隣接3つ以上で<strong>${MATCH_BONUS_PER}G×枚数</strong></p>
+      <p class="hint">マスを1つ選んでめくります。同じプレイヤー色が縦・横・斜めに隣接3つ以上で<strong>${MATCH_BONUS_PER}G×枚数</strong>（その人へ）</p>
       <div class="scratch-legends">${legend}</div>
       <div class="scratch-board-fit">
         <div class="scratch-grid" style="--n:${TABLE_SIZE}">${cells}</div>

@@ -455,6 +455,8 @@ export function createGame({
       pos: board.startId,
       prevPos: null,
       marks: [false, false, false, false],
+      /** ワイルドカード枚数（銀行で空きマークに変化。上限 MAX_WILDCARDS） */
+      wildcards: 0,
       level: 1,
       stocks: {},
       lucky: false,
@@ -1273,6 +1275,48 @@ export function hasFullMarks(p) {
   return p.marks.every(Boolean);
 }
 
+/** ワイルドカードの最大所持数 */
+export const MAX_WILDCARDS = 4;
+
+export function getWildcardCount(p) {
+  return Math.max(0, Math.min(MAX_WILDCARDS, Math.floor(Number(p?.wildcards) || 0)));
+}
+
+/**
+ * ワイルドカードを1枚付与。上限なら false。
+ * @returns {boolean}
+ */
+export function grantWildcard(g, p) {
+  if (!p) return false;
+  const have = getWildcardCount(p);
+  if (have >= MAX_WILDCARDS) {
+    addLog(g, `${p.name} はワイルドカードが上限（${MAX_WILDCARDS}枚）`, 'mark');
+    return false;
+  }
+  p.wildcards = have + 1;
+  addLog(g, `${p.name} がワイルドカードを入手！（${p.wildcards}/${MAX_WILDCARDS}）`, 'mark');
+  return true;
+}
+
+/**
+ * 銀行到達時：ワイルドカードを空きマークへ変換。
+ * @returns {number} 埋めた枚数
+ */
+export function applyWildcardsToMarks(p) {
+  if (!p?.marks) return 0;
+  let w = getWildcardCount(p);
+  if (!w) return 0;
+  let used = 0;
+  for (let i = 0; i < p.marks.length && w > 0; i++) {
+    if (p.marks[i]) continue;
+    p.marks[i] = true;
+    w -= 1;
+    used += 1;
+  }
+  p.wildcards = w;
+  return used;
+}
+
 function addLog(g, text, kind = 'info') {
   g.logs.unshift({ text, kind, t: Date.now() });
   if (g.logs.length > 80) g.logs.length = 80;
@@ -1355,6 +1399,10 @@ function onPassThrough(g, p, nodeId) {
   if (nd.type === 'mark' && !p.marks[nd.mark]) {
     p.marks[nd.mark] = true;
     addLog(g, `${p.name} が通過で ${SUIT_LABELS[nd.mark]} を入手！`, 'mark');
+  }
+  // 通過のみここで付与。最終着地は resolveLanding 側（二重付与防止）
+  if (nd.type === 'suit_fill' && g.move && g.move.stepsLeft > 0) {
+    grantWildcard(g, p);
   }
   // 銀行処理は advanceMove / resolveLanding 側で一度だけ行う
 }
@@ -1696,13 +1744,7 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   }
 
   if (sq.type === 'suit_fill') {
-    const missing = p.marks.findIndex((m) => !m);
-    if (missing >= 0) {
-      p.marks[missing] = true;
-      addLog(g, `${p.name} が足りないマーク ${SUIT_LABELS[missing]} を入手！`, 'mark');
-    } else {
-      addLog(g, `${p.name} はすでに全マーク所持`, 'mark');
-    }
+    grantWildcard(g, p);
     finishLanding(g, p);
     return;
   }
@@ -1845,6 +1887,10 @@ function resumeMoveAfterBank(g, p) {
 function handleBank(g, p, landed) {
   // 昇進前の総資産（昇進賞金で初めて目標到達した場合は再通過が必要）
   const hadGoalBefore = getPlayerAssets(g, p).total >= g.goal;
+  const filled = applyWildcardsToMarks(p);
+  if (filled > 0) {
+    addLog(g, `${p.name} のワイルドカード×${filled}が空きマークに変化！`, 'mark');
+  }
   let leveledUp = false;
   if (hasFullMarks(p)) {
     const old = p.level;
@@ -1855,6 +1901,7 @@ function handleBank(g, p, landed) {
     bumpStat(p, 'levelUps', 1);
     p.level = to;
     p.marks = [false, false, false, false];
+    // 余ったワイルドカードは持ち越し
     p.flags.pendingLevelUp = { from: old, to, bonus };
     leveledUp = true;
     addLog(g, `${p.name} 昇進！ Lv.${old}→${to} 賞金 +${bonus}G（Lv.${to}基準）`, 'level');
@@ -2089,6 +2136,7 @@ export function declareBankrupt(g, p) {
     sq.price = sq.basePrice;
   }
   p.stocks = {};
+  p.wildcards = 0;
   for (const area of claimedAreas) applyMonopolyBreak(g, p.id, area);
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
@@ -3688,8 +3736,8 @@ function scoreScratchLine(table, cells, color) {
 export function cpuPickScratchCell(g, p, openIds) {
   const table = getSharedEventTable(g);
   const traits = getCpuPersonality(p);
-  const myColor = PLAYER_COLORS.findIndex((c) => c.toLowerCase() === (p.color || '').toLowerCase());
-  const color = myColor >= 0 ? myColor : p.id % 4;
+  // スクラッチ色は開けた人の座席IDで塗られる
+  const color = p.id;
   const size = table.size;
   const openSet = new Set(openIds);
   let best = openIds[0];

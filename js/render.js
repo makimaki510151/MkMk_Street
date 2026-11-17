@@ -16,7 +16,7 @@ const TYPE_ICON = {
   stockbroker: '株',
   lucky: '★',
   rollon: '再',
-  suit_fill: '全',
+  suit_fill: 'Ｗ',
   junction: '岐',
   warp: '転',
   switch: '切',
@@ -893,7 +893,9 @@ export function shopTooltip(g, sq) {
   }
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
-  if (sq.type === 'suit_fill') return `${sq.label} — 止まると足りないマークを1つ入手`;
+  if (sq.type === 'suit_fill') {
+    return `${sq.label} — 通過／停止でワイルドカードを入手（最大4枚・銀行で空きマークに変化）`;
+  }
   if (sq.type === 'lucky') return `${sq.label} — ラッキーステータス獲得`;
   if (sq.type === 'rollon') return `${sq.label} — もう一度サイコロ`;
   if (sq.type === 'stockbroker') return `${sq.label} — 株を1種類購入`;

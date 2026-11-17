@@ -418,10 +418,9 @@ export function scratchCell(g, player, cellId) {
 
   cell.scratched = true;
   cell.scratchedBy = player.id;
-  // 開けた人の色で塗る（そろいボーナスもその色）
-  const painted = playerColorIndex(player);
-  cell.color = painted;
-  cell.group = painted;
+  // 開けた人の座席IDで塗る（見た目の色＝そのプレイヤー色。そろいも同一プレイヤー基準）
+  cell.color = player.id;
+  cell.group = player.id;
   const messages = [];
   const def = EVENT_CATALOG[cell.eventId - 1];
   applyEventDef(g, player, def, messages);
@@ -1207,7 +1206,20 @@ function contiguousColorRuns(lineCells, table, color) {
   return runs;
 }
 
-/** 縦・横・斜めに同じ色が隣接して3つ以上そろえば、その色のプレイヤーに報酬 */
+/** ライン上に塗られているプレイヤー色（座席ID）を列挙 */
+function colorsPresentOnLine(lineCells, table) {
+  const set = new Set();
+  for (const id of lineCells) {
+    const cell = table.cells[id];
+    if (cell?.scratched && Number.isInteger(cell.color)) set.add(cell.color);
+  }
+  return [...set];
+}
+
+/**
+ * 縦・横・斜めに同じプレイヤー色が隣接して3つ以上そろえば、
+ * そのマスを開けたプレイヤーへ報酬。
+ */
 function checkColorMatches(g, table, cellId, messages) {
   const size = table.size;
   const row = Math.floor(cellId / size);
@@ -1244,7 +1256,7 @@ function checkColorMatches(g, table, cellId, messages) {
   if (!table.claimedMatches) table.claimedMatches = {};
 
   for (const line of lines) {
-    for (let color = 0; color < 4; color++) {
+    for (const color of colorsPresentOnLine(line.cells, table)) {
       const runs = contiguousColorRuns(line.cells, table, color).filter((r) => r.length >= 3);
       if (!runs.length) continue;
       const cellIds = runs.flat();
@@ -1256,9 +1268,8 @@ function checkColorMatches(g, table, cellId, messages) {
       table.claimedMatches[claimKey] = n;
 
       const bonus = n * MATCH_BONUS_PER;
-      const beneficiary = g.players.find((p) => !p.bankrupt && p.id === color)
-        || g.players.find((p) => !p.bankrupt && (p.color || '').toLowerCase() === GROUP_COLORS[color].toLowerCase())
-        || g.players[color];
+      // color は開けた人の player.id。グループ色インデックスとの取り違えをしない
+      const beneficiary = g.players.find((p) => !p.bankrupt && p.id === color);
       if (beneficiary && !beneficiary.bankrupt) {
         beneficiary.cash += bonus;
         total += bonus;
@@ -1272,7 +1283,7 @@ function checkColorMatches(g, table, cellId, messages) {
           beneficiaryName: beneficiary.name,
           beneficiaryColor: beneficiary.color,
         });
-        messages.push(`${COLOR_LABELS[color]}色そろい×${n} → ${beneficiary.name} +${bonus}G`);
+        messages.push(`${beneficiary.name}色そろい×${n} → ${beneficiary.name} +${bonus}G`);
       }
     }
   }

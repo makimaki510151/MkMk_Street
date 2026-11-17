@@ -53,6 +53,11 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   scaleDiceSlotPrize,
+  MAX_WILDCARDS,
+  grantWildcard,
+  applyWildcardsToMarks,
+  getWildcardCount,
+  hasFullMarks,
   PLAYER_COLORS,
   normalizePlayerColor,
   normalizeLobbyColors,
@@ -210,18 +215,57 @@ describe('MkMk Street engine', () => {
     assert.ok(landed.warps?.length >= 1);
     assert.equal(g.players[0].pos, mainWarp.warpTo);
 
-    // マーク補充マス：足りないマークを1つ付与
+    // ワイルドマス：通過／着地でワイルドカードを1枚付与（マークはそのまま）
     const fill = g.map.find((n) => n.type === 'suit_fill');
     assert.ok(fill);
+    assert.match(fill.label, /ワイルド/);
     g.currentPlayerIdx = 0;
     g.players[0].marks = [true, false, true, false];
+    g.players[0].wildcards = 0;
     g.players[0].pos = fill.id;
     g.players[0].flags.bankVisitDone = false;
     g.move = { stepsLeft: 0, path: [fill.id], passedBank: false, startPos: g.startId };
     g.phase = 'moving';
     g.pending = null;
     advanceMove(g);
-    assert.deepEqual(g.players[0].marks, [true, true, true, false]);
+    assert.deepEqual(g.players[0].marks, [true, false, true, false]);
+    assert.equal(g.players[0].wildcards, 1);
+
+    // 上限4枚
+    assert.equal(MAX_WILDCARDS, 4);
+    g.players[0].wildcards = 4;
+    assert.equal(grantWildcard(g, g.players[0]), false);
+    assert.equal(getWildcardCount(g.players[0]), 4);
+
+    // 銀行で空きマークへ変化し、4つ揃えば昇進
+    const p = g.players[0];
+    p.marks = [true, false, true, false];
+    p.wildcards = 2;
+    p.level = 1;
+    p.cash = 1000;
+    const filled = applyWildcardsToMarks(p);
+    assert.equal(filled, 2);
+    assert.deepEqual(p.marks, [true, true, true, true]);
+    assert.equal(p.wildcards, 0);
+    assert.equal(hasFullMarks(p), true);
+
+    // 銀行訪問でワイルド→マーク→昇進
+    g.currentPlayerIdx = 0;
+    p.marks = [false, false, true, true];
+    p.wildcards = 3;
+    p.level = 2;
+    p.flags.bankVisitDone = false;
+    p.flags.pendingLevelUp = null;
+    p.pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    const cashBefore = p.cash;
+    advanceMove(g);
+    assert.equal(p.level, 3);
+    assert.deepEqual(p.marks, [false, false, false, false]);
+    assert.equal(p.wildcards, 1, '余剰ワイルドは持ち越し');
+    assert.ok(p.cash > cashBefore);
   });
 
   it('shell harbor forks at inward switch between pier and sea route', () => {
@@ -1951,20 +1995,23 @@ describe('MkMk Street engine', () => {
     assert.ok(g.players[0].cash >= cashBefore + Math.floor(shop.basePrice * 0.5) - 1);
   });
 
-  it('scratch paints cell with opener player color', () => {
+  it('scratch paints cell with opener player id (not group-color index)', () => {
     const g = createGame({
-      players: [{ name: 'A', color: PLAYER_COLORS[0] }, { name: 'B', color: PLAYER_COLORS[1] }],
+      players: [
+        { name: 'A', color: PLAYER_COLORS[0] },
+        { name: 'B', color: PLAYER_COLORS[5] },
+      ],
       seed: 55,
       cash: 1500,
     });
     const cell = g.sharedEventTable.cells[3];
-    cell.color = 3; // 事前の表色とは違う色にしておく
+    cell.color = 3;
     cell.group = 3;
     cell.scratched = false;
     const r = scratchCell(g, g.players[1], 3);
     assert.equal(r.ok, true);
     assert.equal(cell.scratchedBy, 1);
-    assert.equal(cell.color, playerColorIndex(g.players[1]));
+    assert.equal(cell.color, g.players[1].id);
     assert.equal(cell.color, 1);
   });
 
@@ -1977,12 +2024,12 @@ describe('MkMk Street engine', () => {
     });
     const table = g.sharedEventTable;
     const who = g.players[0];
-    // 先頭行 0,1 をあか色で先に開ける（イベント効果は無視して状態だけ）
+    // 先頭行 0,1 を opener 色で先に開ける（イベント効果は無視して状態だけ）
     for (const i of [0, 1]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     // イベント効果を無効化してボーナスだけ検証
     table.cells[2].eventId = EVENT_CATALOG.findIndex((e) => e.effect === 'noop') + 1;
@@ -2001,7 +2048,38 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(m.cellIds.slice().sort((a, b) => a - b), [0, 1, 2]);
     assert.ok(r.matchBonus >= 150);
     assert.ok(who.cash >= before + 150);
+    assert.equal(m.beneficiaryId, who.id);
     assert.match(r.messages.join(' '), /そろい×3/);
+  });
+
+  it('scratch match pays the opener, not the group-color seat index', () => {
+    // 旧バグ: cell.color を 0〜3 のグループ色にし、p.id === color で受取先を決めていた
+    const g = createGame({
+      players: [
+        { name: 'Host', color: PLAYER_COLORS[4] },
+        { name: 'Guest', color: PLAYER_COLORS[5] },
+      ],
+      seed: 17,
+      cash: 1000,
+    });
+    const table = g.sharedEventTable;
+    const guest = g.players[1];
+    for (const i of [0, 1]) {
+      table.cells[i].scratched = true;
+      table.cells[i].scratchedBy = guest.id;
+      table.cells[i].color = guest.id;
+      table.cells[i].group = guest.id;
+    }
+    const rollAgainId = EVENT_CATALOG.findIndex((e) => e.effect === 'extra_roll') + 1;
+    table.cells[2].eventId = rollAgainId > 0 ? rollAgainId : 1;
+    const beforeHost = g.players[0].cash;
+    const beforeGuest = guest.cash;
+    const r = scratchCell(g, guest, 2);
+    assert.equal(r.ok, true);
+    assert.ok(r.matchBonus >= 150);
+    assert.equal(r.matches[0].beneficiaryId, guest.id);
+    assert.equal(guest.cash, beforeGuest + r.matchBonus);
+    assert.equal(g.players[0].cash, beforeHost);
   });
 
   it('scratch match requires contiguous cells (no spaced matches)', () => {
@@ -2017,8 +2095,8 @@ describe('MkMk Street engine', () => {
     for (const i of [0, 2]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[4].eventId = rollAgainId;
     const before = who.cash;
@@ -2042,8 +2120,8 @@ describe('MkMk Street engine', () => {
     for (const i of [0, 1, 5]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[2].eventId = rollAgainId;
     const r = scratchCell(g, who, 2);
@@ -2069,8 +2147,8 @@ describe('MkMk Street engine', () => {
     for (const i of ids.slice(0, 2)) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[ids[2]].eventId = rollAgainId;
     const r = scratchCell(g, who, ids[2]);
@@ -2097,8 +2175,8 @@ describe('MkMk Street engine', () => {
     for (const i of [a, b]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[c].eventId = rollAgainId;
     const before = who.cash;
@@ -2128,8 +2206,8 @@ describe('MkMk Street engine', () => {
     for (const i of [a, b]) {
       table.cells[i].scratched = true;
       table.cells[i].scratchedBy = who.id;
-      table.cells[i].color = 0;
-      table.cells[i].group = 0;
+      table.cells[i].color = who.id;
+      table.cells[i].group = who.id;
     }
     table.cells[c].eventId = rollAgainId;
     const r = scratchCell(g, who, c);
