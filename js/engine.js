@@ -689,9 +689,9 @@ export function refreshGoalPressure(g) {
   return on;
 }
 
-/** 一度にこの枚数以上売ると相場係数 B が下がる */
+/** エリア売却累計がこの枚数に達するごとに相場係数 B が下がる（全プレイヤー共有） */
 export const STOCK_SELL_PRESSURE_MIN = 10;
-/** 大口売却時の B 乗率 */
+/** 売却圧による B 乗率 */
 export const STOCK_SELL_B_RATE = 0.93;
 
 function areaShopAvgPrice(g, area) {
@@ -702,6 +702,51 @@ function areaShopAvgPrice(g, area) {
 
 function stockPriceFromB(avg, B) {
   return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
+}
+
+function areaSellPressure(meta) {
+  return Math.max(0, Math.floor(Number(meta?.sellPressure) || 0));
+}
+
+/**
+ * 売却枚数を共有累計に加算し、閾値ごとに B を下げる。
+ * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, B: number }}
+ */
+export function applyStockSellPressure(g, area, count) {
+  const a = Number(area);
+  const meta = g.areas?.[a];
+  if (!meta) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const pressureBefore = areaSellPressure(meta);
+  let pressure = pressureBefore + n;
+  let drops = 0;
+  let B = meta.B || 100;
+  while (pressure >= STOCK_SELL_PRESSURE_MIN) {
+    B = Math.max(100, Math.floor(B * STOCK_SELL_B_RATE));
+    pressure -= STOCK_SELL_PRESSURE_MIN;
+    drops += 1;
+  }
+  meta.sellPressure = pressure;
+  meta.B = B;
+  return { drops, pressureBefore, pressureAfter: pressure, B };
+}
+
+/**
+ * 売却後の B / 累計を予測（状態は変更しない）。
+ * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, nextB: number }}
+ */
+export function simulateStockSellPressure(meta, count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const pressureBefore = areaSellPressure(meta);
+  let pressure = pressureBefore + n;
+  let drops = 0;
+  let nextB = meta?.B || 100;
+  while (pressure >= STOCK_SELL_PRESSURE_MIN) {
+    nextB = Math.max(100, Math.floor(nextB * STOCK_SELL_B_RATE));
+    pressure -= STOCK_SELL_PRESSURE_MIN;
+    drops += 1;
+  }
+  return { drops, pressureBefore, pressureAfter: pressure, nextB };
 }
 
 export function updateAreaStockPrices(g) {
@@ -725,7 +770,8 @@ export function updateAreaStockPrices(g) {
 
 /**
  * 株売却後の株価を予測（実際の売却は現行価格で受取→その後 B 低下）。
- * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, threshold:number }|null}
+ * 売却圧はエリア単位・全プレイヤー共有の累計。
+ * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, dropCount:number, pressureBefore:number, pressureAfter:number, untilDrop:number, threshold:number }|null}
  */
 export function previewStockSell(g, area, count) {
   const a = Number(area);
@@ -735,11 +781,9 @@ export function previewStockSell(g, area, count) {
   if (!avg) return null;
   const n = Math.max(0, Math.floor(Number(count) || 0));
   const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
-  const drops = n >= STOCK_SELL_PRESSURE_MIN;
-  const nextB = drops
-    ? Math.max(100, Math.floor((meta.B || 100) * STOCK_SELL_B_RATE))
-    : (meta.B || 100);
-  const newPrice = stockPriceFromB(avg, nextB);
+  const sim = simulateStockSellPressure(meta, n);
+  const newPrice = stockPriceFromB(avg, sim.nextB);
+  const untilDrop = Math.max(0, STOCK_SELL_PRESSURE_MIN - sim.pressureBefore);
   return {
     area: a,
     count: n,
@@ -747,7 +791,11 @@ export function previewStockSell(g, area, count) {
     oldPrice,
     newPrice,
     diff: newPrice - oldPrice,
-    drops,
+    drops: sim.drops > 0,
+    dropCount: sim.drops,
+    pressureBefore: sim.pressureBefore,
+    pressureAfter: sim.pressureAfter,
+    untilDrop,
     threshold: STOCK_SELL_PRESSURE_MIN,
   };
 }
@@ -1987,9 +2035,7 @@ function sellStockForCash(g, p, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= STOCK_SELL_PRESSURE_MIN) {
-    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
-  }
+  applyStockSellPressure(g, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
@@ -2426,9 +2472,7 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
       syncStockValueSnap(g, p);
-      if (count >= STOCK_SELL_PRESSURE_MIN) {
-        g.areas[area].B = Math.max(100, Math.floor(g.areas[area].B * STOCK_SELL_B_RATE));
-      }
+      applyStockSellPressure(g, area, count);
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
     }
@@ -3157,9 +3201,7 @@ export function preTurnSell(g, playerId, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  if (n >= STOCK_SELL_PRESSURE_MIN) {
-    g.areas[a].B = Math.max(100, Math.floor(g.areas[a].B * STOCK_SELL_B_RATE));
-  }
+  applyStockSellPressure(g, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };

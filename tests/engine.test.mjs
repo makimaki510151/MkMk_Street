@@ -2417,10 +2417,12 @@ describe('MkMk Street engine', () => {
     assert.equal(small.oldPrice, oldPrice);
     assert.equal(small.newPrice, oldPrice);
     assert.equal(small.proceeds, oldPrice * (STOCK_SELL_PRESSURE_MIN - 1));
+    assert.equal(small.untilDrop, STOCK_SELL_PRESSURE_MIN);
 
     const big = previewStockSell(g, area, STOCK_SELL_PRESSURE_MIN);
     assert.ok(big);
     assert.equal(big.drops, true);
+    assert.equal(big.dropCount, 1);
     assert.equal(big.oldPrice, oldPrice);
     assert.equal(big.proceeds, oldPrice * STOCK_SELL_PRESSURE_MIN);
     const expectedB = Math.max(100, Math.floor(oldB * STOCK_SELL_B_RATE));
@@ -2430,6 +2432,50 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(g.areas[area].B, expectedB);
     assert.equal(g.areas[area].stockPrice, big.newPrice);
+    assert.equal(g.areas[area].sellPressure, 0);
+  });
+
+  it('applies shared cumulative sell pressure across players and partial sells', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 222,
+      cash: 5000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.players[0].stocks[area] = 30;
+    g.players[1].stocks[area] = 30;
+    updateAreaStockPrices(g);
+    const B0 = g.areas[area].B;
+
+    // 9枚売っても下落しない（累計9）
+    assert.equal(preTurnSell(g, 0, area, 9).ok, true);
+    assert.equal(g.areas[area].sellPressure, 9);
+    assert.equal(g.areas[area].B, B0);
+
+    // 別プレイヤーが1枚売ると累計10で下落
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_roll';
+    const priceBeforeDrop = g.areas[area].stockPrice;
+    const preview = previewStockSell(g, area, 1);
+    assert.equal(preview.drops, true);
+    assert.equal(preview.pressureBefore, 9);
+    assert.equal(preview.untilDrop, 1);
+    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    const B1 = Math.max(100, Math.floor(B0 * STOCK_SELL_B_RATE));
+    assert.equal(g.areas[area].B, B1);
+    assert.equal(g.areas[area].sellPressure, 0);
+    assert.ok(g.areas[area].stockPrice <= priceBeforeDrop);
+
+    // 20枚売却で2回分の圧
+    g.currentPlayerIdx = 0;
+    g.phase = 'await_roll';
+    const BBeforeBulk = g.areas[area].B;
+    assert.equal(preTurnSell(g, 0, area, 20).ok, true);
+    let expected = BBeforeBulk;
+    expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
+    expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
+    assert.equal(g.areas[area].B, expected);
+    assert.equal(g.areas[area].sellPressure, 0);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
