@@ -83,6 +83,7 @@ import {
   EVENT_COUNT,
   applyAllCash,
   scratchCell,
+  collectWarpSquareRewards,
   playerColorIndex,
   MATCH_BONUS_PER,
 } from '../js/eventTable.js';
@@ -269,6 +270,55 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(p.marks, [false, false, false, false]);
     assert.equal(p.wildcards, 1, '余剰ワイルドは持ち越し');
     assert.ok(p.cash > cashBefore);
+  });
+
+  it('grants mark or wildcard when warping onto those squares', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 55,
+      mapId: 'cliff_isle',
+    });
+    const mark = g.map.find((n) => n.type === 'mark' && n.mark === 1);
+    const fill = g.map.find((n) => n.type === 'suit_fill');
+    assert.ok(mark && fill);
+    const p = g.players[0];
+    p.marks = [false, false, false, false];
+    p.wildcards = 0;
+    p.pos = g.startId;
+
+    const msgs = [];
+    const gotMark = collectWarpSquareRewards(g, p, mark.id, msgs);
+    assert.equal(gotMark.kind, 'mark');
+    assert.equal(gotMark.gained, true);
+    assert.equal(p.marks[1], true);
+    assert.match(msgs.join(' '), /入手/);
+
+    // すでに所持なら増えない
+    const again = collectWarpSquareRewards(g, p, mark.id, []);
+    assert.equal(again.gained, false);
+
+    const gotWild = collectWarpSquareRewards(g, p, fill.id, []);
+    assert.equal(gotWild.kind, 'wildcard');
+    assert.equal(gotWild.gained, true);
+    assert.equal(p.wildcards, 1);
+
+    // スクラッチのマークワープでも入手する
+    const warpId = EVENT_CATALOG.findIndex((e) => e.effect === 'warp_mark');
+    assert.ok(warpId >= 0);
+    const table = getSharedEventTable(g);
+    const cell = table.cells.find((c) => !c.scratched) || table.cells[0];
+    cell.scratched = false;
+    cell.eventId = warpId + 1;
+    cell.label = EVENT_CATALOG[warpId].label;
+    p.marks = [false, false, false, false];
+    const beforePos = p.pos;
+    const r = scratchCell(g, p, cell.id);
+    assert.equal(r.ok, true);
+    assert.notEqual(p.pos, beforePos);
+    const dest = g.map.find((n) => n.id === p.pos);
+    assert.equal(dest?.type, 'mark');
+    assert.equal(p.marks[dest.mark], true);
+    assert.ok(r.messages.some((m) => /入手/.test(m)));
   });
 
   it('shell harbor forks at inward switch between pier and sea route', () => {
