@@ -51,6 +51,7 @@ import {
   cpuAct,
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
+  scaleDiceSlotPrize,
   PLAYER_COLORS,
   normalizePlayerColor,
   normalizeLobbyColors,
@@ -710,6 +711,10 @@ describe('MkMk Street engine', () => {
     g.phase = 'await_choice';
     g.pending = { type: 'buy_shop', playerId: 0, shopId: last.id, price: last.price };
     const cashBefore = g.players[0].cash;
+    const BBefore = g.areas[area].B;
+    const stockBefore = g.areas[area].stockPrice;
+    const shopPricesBefore = shops.map((sq) => sq.price);
+    const tollBefore = calcToll(g, shops[0]);
     const value = shops.reduce((s, sq) => s + sq.price, 0);
     const expectedBonus = Math.max(100, Math.floor(value * MONOPOLY_BONUS_RATE));
     const result = applyChoice(g, { action: 'buy' });
@@ -721,6 +726,12 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[0].cash, cashBefore - last.price + expectedBonus);
     // 二重付与されない
     assert.equal(tryGrantMonopolyBonus(g, g.players[0], area), null);
+    // 独占ボーナスでは店価・株価係数は動かない
+    assert.equal(g.areas[area].B, BBefore);
+    assert.equal(g.areas[area].stockPrice, stockBefore);
+    assert.deepEqual(shops.map((sq) => sq.price), shopPricesBefore);
+    // 買い物料は独占倍率で上がってよい
+    assert.ok(calcToll(g, shops[0]) > tollBefore);
   });
 
   it('crashes stock hard when a monopoly breaks', () => {
@@ -1593,13 +1604,13 @@ describe('MkMk Street engine', () => {
       seen.add(r.reveal.tier);
       const prize = g.players[0].cash - before;
       if (r.reveal.tier === 'jackpot') {
-        assert.ok(prize >= 900);
+        assert.ok(prize >= 1020);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'quad') {
-        assert.ok(prize >= 420);
+        assert.ok(prize >= 480);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'pair') {
-        assert.ok(prize >= 45);
+        assert.ok(prize >= 55);
         assert.equal(r.reveal.win, true);
       } else if (r.reveal.tier === 'miss') {
         assert.equal(r.reveal.win, false);
@@ -1608,6 +1619,57 @@ describe('MkMk Street engine', () => {
       }
     }
     assert.ok(seen.has('pair') || seen.has('two_pair') || seen.has('triple'));
+  });
+
+  it('scales dice/slot minigame prizes by player level', () => {
+    assert.equal(scaleDiceSlotPrize(100, 1), 100);
+    assert.equal(scaleDiceSlotPrize(100, 3), 300);
+    assert.equal(scaleDiceSlotPrize(115, 2), 230);
+
+    let foundExact = false;
+    for (let seed = 1; seed <= 80 && !foundExact; seed++) {
+      for (let pick = 1; pick <= 6; pick++) {
+        const g2 = createGame({
+          players: [{ name: 'A' }, { name: 'B' }],
+          seed,
+          cash: 5000,
+        });
+        g2.players[0].level = 3;
+        g2.phase = 'await_choice';
+        g2.pending = { type: 'minigame', playerId: 0, game: 'guess_dice', label: 'サイコロ当て' };
+        const before = g2.players[0].cash;
+        const beforeB = g2.players[1].cash;
+        const r = applyChoice(g2, { action: 'pick', value: pick });
+        if (r.reveal?.tier !== 'exact') continue;
+        const gained = g2.players[0].cash - before;
+        // 本人賞 320×3 + 参加賞 60
+        assert.equal(gained, 320 * 3 + 60);
+        assert.ok(g2.players[1].cash > beforeB);
+        foundExact = true;
+        break;
+      }
+    }
+    assert.ok(foundExact, 'expected an exact dice guess within seeds');
+
+    // スロット：レベル3のワンペア以上なら基本額×3以上
+    let foundPair = false;
+    for (let seed = 1; seed <= 200 && !foundPair; seed++) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed,
+        cash: 5000,
+      });
+      g.players[0].level = 3;
+      g.phase = 'await_choice';
+      g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+      const before = g.players[0].cash;
+      const r = applyChoice(g, { action: 'spin' });
+      if (r.reveal?.tier !== 'pair') continue;
+      const gained = g.players[0].cash - before;
+      assert.equal(gained, 55 * 3 + 28);
+      foundPair = true;
+    }
+    assert.ok(foundPair, 'expected a slot pair within seeds');
   });
 
   it('scratch all_cash / minigame catalog entries apply correctly', () => {
