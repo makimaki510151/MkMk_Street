@@ -457,6 +457,8 @@ export function createGame({
       marks: [false, false, false, false],
       level: 1,
       stocks: {},
+      /** 自分のターン中のエリア別売却累計（ターン開始でリセット。10枚ごとに株価下落） */
+      turnSellPressure: {},
       lucky: false,
       resting: false,
       shopsClosed: false,
@@ -704,7 +706,7 @@ export function refreshGoalPressure(g) {
   return on;
 }
 
-/** エリア売却累計がこの枚数に達するごとに相場係数 B が下がる（全プレイヤー共有） */
+/** 自分のターン内でこの枚数売るごとに相場係数 B が下がる（エリア別・手番プレイヤー個人） */
 export const STOCK_SELL_PRESSURE_MIN = 10;
 /** 売却圧による B 乗率 */
 export const STOCK_SELL_B_RATE = 0.93;
@@ -719,20 +721,31 @@ function stockPriceFromB(avg, B) {
   return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
 }
 
-function areaSellPressure(meta) {
-  return Math.max(0, Math.floor(Number(meta?.sellPressure) || 0));
+function playerTurnSellPressure(p, area) {
+  const a = Number(area);
+  const map = p?.turnSellPressure;
+  if (!map || typeof map !== 'object') return 0;
+  return Math.max(0, Math.floor(Number(map[a]) || 0));
+}
+
+/** 手番開始時にそのプレイヤーの売却累計をクリア */
+export function resetTurnSellPressure(p) {
+  if (!p) return;
+  p.turnSellPressure = {};
 }
 
 /**
- * 売却枚数を共有累計に加算し、閾値ごとに B を下げる。
+ * 手番プレイヤーのターン内売却累計に加算し、閾値ごとに B を下げる。
  * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, B: number }}
  */
-export function applyStockSellPressure(g, area, count) {
+export function applyStockSellPressure(g, player, area, count) {
   const a = Number(area);
   const meta = g.areas?.[a];
-  if (!meta) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  const p = player || currentPlayer(g);
+  if (!meta || !p) return { drops: 0, pressureBefore: 0, pressureAfter: 0, B: 0 };
+  if (!p.turnSellPressure || typeof p.turnSellPressure !== 'object') p.turnSellPressure = {};
   const n = Math.max(0, Math.floor(Number(count) || 0));
-  const pressureBefore = areaSellPressure(meta);
+  const pressureBefore = playerTurnSellPressure(p, a);
   let pressure = pressureBefore + n;
   let drops = 0;
   let B = meta.B || 100;
@@ -741,7 +754,7 @@ export function applyStockSellPressure(g, area, count) {
     pressure -= STOCK_SELL_PRESSURE_MIN;
     drops += 1;
   }
-  meta.sellPressure = pressure;
+  p.turnSellPressure[a] = pressure;
   meta.B = B;
   return { drops, pressureBefore, pressureAfter: pressure, B };
 }
@@ -750,10 +763,10 @@ export function applyStockSellPressure(g, area, count) {
  * 売却後の B / 累計を予測（状態は変更しない）。
  * @returns {{ drops: number, pressureBefore: number, pressureAfter: number, nextB: number }}
  */
-export function simulateStockSellPressure(meta, count) {
+export function simulateStockSellPressure(meta, pressureBefore, count) {
   const n = Math.max(0, Math.floor(Number(count) || 0));
-  const pressureBefore = areaSellPressure(meta);
-  let pressure = pressureBefore + n;
+  const before = Math.max(0, Math.floor(Number(pressureBefore) || 0));
+  let pressure = before + n;
   let drops = 0;
   let nextB = meta?.B || 100;
   while (pressure >= STOCK_SELL_PRESSURE_MIN) {
@@ -761,7 +774,7 @@ export function simulateStockSellPressure(meta, count) {
     pressure -= STOCK_SELL_PRESSURE_MIN;
     drops += 1;
   }
-  return { drops, pressureBefore, pressureAfter: pressure, nextB };
+  return { drops, pressureBefore: before, pressureAfter: pressure, nextB };
 }
 
 export function updateAreaStockPrices(g) {
@@ -785,18 +798,22 @@ export function updateAreaStockPrices(g) {
 
 /**
  * 株売却後の株価を予測（実際の売却は現行価格で受取→その後 B 低下）。
- * 売却圧はエリア単位・全プレイヤー共有の累計。
+ * 売却圧は手番プレイヤーのターン内・エリア別累計（次の自分の番でリセット）。
+ * @param {number} [playerId] 省略時は currentPlayerIdx
  * @returns {{ area:number, count:number, proceeds:number, oldPrice:number, newPrice:number, diff:number, drops:boolean, dropCount:number, pressureBefore:number, pressureAfter:number, untilDrop:number, threshold:number }|null}
  */
-export function previewStockSell(g, area, count) {
+export function previewStockSell(g, area, count, playerId = null) {
   const a = Number(area);
   const meta = g.areas?.[a];
   if (!meta) return null;
   const avg = areaShopAvgPrice(g, a);
   if (!avg) return null;
+  const pid = playerId != null ? playerId : g.currentPlayerIdx;
+  const p = g.players?.[pid];
   const n = Math.max(0, Math.floor(Number(count) || 0));
   const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
-  const sim = simulateStockSellPressure(meta, n);
+  const pressureBefore = playerTurnSellPressure(p, a);
+  const sim = simulateStockSellPressure(meta, pressureBefore, n);
   const newPrice = stockPriceFromB(avg, sim.nextB);
   const untilDrop = Math.max(0, STOCK_SELL_PRESSURE_MIN - sim.pressureBefore);
   return {
@@ -1326,7 +1343,10 @@ export function getSharedEventTable(g) {
 
 export function restoreState(data) {
   const g = { ...data };
-  for (const p of g.players || []) ensureStats(p);
+  for (const p of g.players || []) {
+    ensureStats(p);
+    if (!p.turnSellPressure || typeof p.turnSellPressure !== 'object') p.turnSellPressure = {};
+  }
   // 再接続・旧状態で未知色が残っていてもパレットへ寄せる
   if (Array.isArray(g.players) && g.players.length) {
     const normalized = normalizeLobbyColors(g.players);
@@ -2070,7 +2090,7 @@ function sellStockForCash(g, p, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  applyStockSellPressure(g, a, n);
+  applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
@@ -2507,7 +2527,7 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
       syncStockValueSnap(g, p);
-      applyStockSellPressure(g, area, count);
+      applyStockSellPressure(g, p, area, count);
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
     }
@@ -3236,7 +3256,7 @@ export function preTurnSell(g, playerId, area, count) {
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
   syncStockValueSnap(g, p);
-  applyStockSellPressure(g, a, n);
+  applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
   addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
@@ -3279,6 +3299,8 @@ function endTurn(g) {
   }
   if (next <= g.currentPlayerIdx) g.turn++;
   g.currentPlayerIdx = next;
+  // 自分の番が巡ってきたら、そのプレイヤーのターン内売却累計をリセット
+  resetTurnSellPressure(g.players[next]);
   g.phase = 'await_roll';
   g.pending = null;
   g.dice = null;

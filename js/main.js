@@ -5368,7 +5368,7 @@ function showChoiceModal(g) {
       <p>所持金 <strong style="color:${(p?.cash || 0) < 0 ? '#ff8a80' : 'var(--gold)'}">${Number(p?.cash || 0).toLocaleString()}G</strong>
         ／ 目標 <strong>${target.toLocaleString()}G</strong>
         ${short > 0 ? `（あと ${short.toLocaleString()}G）` : '（達成）'}</p>
-      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。エリアごとの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに売却後の株価が下がります。${
+      <p class="hint">自動では売りません。株や物件を自分で選んで売却してください。自分のターン内でエリアごとに${STOCK_SELL_PRESSURE_MIN}枚売るごとに売却後の株価が下がります（次の自分の番で累計リセット）。${
         mustPay && !canContinue ? ' 買い物料不足のときは調達か破産が必要です。' : ''
       }</p>
       <div class="raise-section"><h4>株</h4>${stockRows || '<p class="hint">売却できる株がありません</p>'}</div>
@@ -6188,7 +6188,7 @@ function renderStockPanel(g) {
     ? `<div class="stocks-sell">
         <div class="sh-title">自分の株を売る</div>
         <p class="hint">自分のターン中なら、サイコロ前でも選択中でもいつでも売れます</p>
-        <p class="hint">エリアの売却累計（全員共有）が${STOCK_SELL_PRESSURE_MIN}枚に達するごとに株価が下がります（受取は今の株価）</p>
+        <p class="hint">自分のターン内でエリアごとに${STOCK_SELL_PRESSURE_MIN}枚売るごとに株価が下がります（受取は今の株価・次の自分の番で累計リセット）</p>
         ${held.map((area) => {
           const meta = g.areas[area];
           const have = me.stocks[area] || 0;
@@ -6274,7 +6274,7 @@ function formatStockSellPreview(g, area, count) {
   const prev = previewStockSell(g, area, count);
   if (!prev || prev.count <= 0) return '';
   const got = `受取 <strong>${prev.proceeds.toLocaleString()}G</strong>`;
-  const meter = `累計 ${prev.pressureBefore}/${prev.threshold}`;
+  const meter = `今ターン ${prev.pressureBefore}/${prev.threshold}`;
   if (!prev.drops) {
     return `${got} · 株価変動なし（${meter} · あと${prev.untilDrop}枚）`;
   }
