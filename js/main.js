@@ -45,6 +45,7 @@ import {
   getGoalPressurePlayers,
 } from './engine.js';
 import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
+import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
   GROUP_COLORS,
   TABLE_SIZE,
@@ -1740,26 +1741,27 @@ function isMyTurn() {
   return false;
 }
 
+/** 操作待ち座席（自分含む）。ホスト側の催促検証でも使う */
+function getWaitingSeatId() {
+  if (!app.game || app.game.phase === 'gameover') return null;
+  return resolveWaitingSeatId({
+    phase: app.game.phase,
+    pendingPlayerId: app.game.pending?.playerId ?? null,
+    currentPlayerIdx: app.game.currentPlayerIdx,
+    hideDiceResult: !!app.hideDiceResult,
+    eventFlashReaderId: app.eventFlashReaderId,
+    eventUiBlocking: isEventUiBlocking(),
+  });
+}
+
 /** 操作待ちで止まっている人間プレイヤー（自分以外）。P2P専用 */
 function getNudgeTarget() {
   if (!app.game || app.game.phase === 'gameover') return null;
   // 同一端末のローカル対戦では相手端末が無いので不要
   if (app.mode !== 'host' && app.mode !== 'guest') return null;
 
-  let targetId = null;
-  if (isEventUiBlocking() && app.eventFlashReaderId != null) {
-    targetId = app.eventFlashReaderId;
-  } else if (
-    (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
-    && app.game.pending
-    && !app.busy
-  ) {
-    targetId = app.game.pending.playerId;
-  } else if (app.game.phase === 'await_roll' && !app.busy && !app.hideDiceResult) {
-    targetId = app.game.currentPlayerIdx;
-  } else {
-    return null;
-  }
+  const targetId = getWaitingSeatId();
+  if (targetId == null) return null;
 
   const p = app.game.players[targetId];
   if (!p || p.isCPU || p.offline || p.bankrupt) return null;
@@ -1865,15 +1867,21 @@ function handleHostNudge(fromPeer, data) {
   if (fromSeat < 0) return;
   const last = app.nudgeLastBySeat[fromSeat] || 0;
   if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
-  const target = getNudgeTarget();
-  if (!target) return;
-  // 送信時点の対象と一致するものだけ（古い催促の誤爆防止）
-  if (data.targetSeat != null && Number(data.targetSeat) !== target.id) return;
-  if (target.id === fromSeat) return;
+
+  // ホスト自身が待ちのときも届けられるよう、自己除外前の待ち座席で検証する
+  const waitingId = getWaitingSeatId();
+  if (waitingId == null) return;
+  const targetSeat = data.targetSeat != null ? Number(data.targetSeat) : waitingId;
+  if (targetSeat !== waitingId) return;
+  if (targetSeat === fromSeat) return;
+
+  const target = app.game.players[targetSeat];
+  if (!target || target.isCPU || target.offline || target.bankrupt) return;
+
   app.nudgeLastBySeat[fromSeat] = Date.now();
   deliverNudge({
     fromSeat,
-    targetSeat: target.id,
+    targetSeat,
     fromName: app.game.players[fromSeat]?.name || '相手',
   });
 }
