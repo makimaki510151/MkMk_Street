@@ -20,6 +20,7 @@ import {
   gameResultsExportFilename,
   createEmptyStats,
   ensureStats,
+  recordNudgeStats,
   updateAreaStockPrices,
   previewStockSell,
   STOCK_SELL_PRESSURE_MIN,
@@ -1938,6 +1939,7 @@ function seedResultsDemo(g) {
         salaryEarned: 2100, levelUps: 3, monopolyCount: 2, monopolyBonus: 1800,
         stockBought: 40, stockSpent: 2200, stockSold: 8, stockIncome: 500, stockReturn: 640,
         scratchCount: 6, matchBonus: 300, minigamePlays: 3, minigameWins: 2, minigamePrize: 520,
+        nudgeSent: 5, nudgeReceived: 1,
       },
     },
     {
@@ -1950,6 +1952,7 @@ function seedResultsDemo(g) {
         salaryEarned: 1200, levelUps: 2, monopolyCount: 0, monopolyBonus: 0,
         stockBought: 85, stockSpent: 4800, stockSold: 20, stockIncome: 1400, stockReturn: 1280,
         scratchCount: 4, matchBonus: 100, minigamePlays: 2, minigameWins: 0, minigamePrize: 0,
+        nudgeSent: 2, nudgeReceived: 4,
       },
     },
     {
@@ -1962,6 +1965,7 @@ function seedResultsDemo(g) {
         salaryEarned: 900, levelUps: 2, monopolyCount: 1, monopolyBonus: 900,
         stockBought: 15, stockSpent: 800, stockSold: 5, stockIncome: 280, stockReturn: -180,
         scratchCount: 8, matchBonus: 450, minigamePlays: 5, minigameWins: 3, minigamePrize: 780,
+        nudgeSent: 1, nudgeReceived: 2,
       },
     },
     {
@@ -1974,6 +1978,7 @@ function seedResultsDemo(g) {
         salaryEarned: 400, levelUps: 1, monopolyCount: 0, monopolyBonus: 0,
         stockBought: 10, stockSpent: 400, stockSold: 2, stockIncome: 90, stockReturn: -90,
         scratchCount: 3, matchBonus: 50, minigamePlays: 1, minigameWins: 0, minigamePrize: 0,
+        nudgeSent: 0, nudgeReceived: 3,
       },
     },
   ];
@@ -2266,6 +2271,10 @@ function playNudgeReceived(fromName) {
 function deliverNudge({ fromSeat, targetSeat, fromName }) {
   const target = app.game?.players?.[targetSeat];
   if (!target || target.isCPU) return;
+  if (app.game) {
+    recordNudgeStats(app.game, fromSeat, targetSeat);
+    syncState();
+  }
   broadcastFx({
     kind: 'nudge',
     fromSeat,
@@ -6037,9 +6046,11 @@ function renderResultsAssetsPane(results) {
       <span>プレイヤー</span>
       <span>総資産</span><span>現金</span><span>お店</span><span>株</span>
       <span>レベル</span><span>次の給料</span>
+      <span>催促した</span><span>催促された</span>
     </div>`;
   const rows = results.ranking.map((row, i) => {
     const a = row.assets;
+    const st = row.stats || {};
     return `<div class="ra-table ra-row ${row.isWinner ? 'is-winner' : ''} ${row.bankrupt ? 'is-bankrupt' : ''}" style="--i:${i}">
       <span class="ra-name" style="color:${escapeHtml(row.color)}">${escapeHtml(row.name)}</span>
       <span class="ra-total">${fmtG(a.total)}</span>
@@ -6048,10 +6059,12 @@ function renderResultsAssetsPane(results) {
       <span>${fmtG(a.stockAsset)}</span>
       <span>Lv.${row.level}</span>
       <span>${fmtG(row.nextSalary)}</span>
+      <span>${Number(st.nudgeSent || 0)}回</span>
+      <span>${Number(st.nudgeReceived || 0)}回</span>
     </div>`;
   }).join('');
   return `<div class="ra-scroll">${head}${rows}</div>
-    <p class="results-hint">次の給料＝あと1レベル昇進したときの昇進賞金見込み</p>`;
+    <p class="results-hint">次の給料＝あと1レベル昇進したときの昇進賞金見込み／催促はオンライン対戦での送受信回数</p>`;
 }
 
 function renderResultsAwardsPane(results) {

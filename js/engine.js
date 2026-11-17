@@ -252,7 +252,22 @@ export function createEmptyStats() {
     minigamePlays: 0,
     minigameWins: 0,
     minigamePrize: 0,
+    /** 催促を送った回数 */
+    nudgeSent: 0,
+    /** 催促を受けた回数 */
+    nudgeReceived: 0,
   };
+}
+
+/** 催促が成立したときに送受信双方の統計を加算 */
+export function recordNudgeStats(g, fromSeat, targetSeat) {
+  if (!g?.players) return false;
+  const from = g.players[fromSeat];
+  const to = g.players[targetSeat];
+  if (!from || !to || fromSeat === targetSeat) return false;
+  bumpStat(from, 'nudgeSent', 1);
+  bumpStat(to, 'nudgeReceived', 1);
+  return true;
 }
 
 export function ensureStats(p) {
@@ -918,6 +933,20 @@ const RESULT_AWARD_DEFS = [
     metric: (row) => row.stats.tollPayCount,
     format: (v) => `${v}回`,
   },
+  {
+    id: 'nudge_sender',
+    title: '催促上手',
+    desc: '催促を送った回数',
+    metric: (row) => row.stats.nudgeSent,
+    format: (v) => `${v}回`,
+  },
+  {
+    id: 'nudge_target',
+    title: 'のんびり屋',
+    desc: '催促を受けた回数',
+    metric: (row) => row.stats.nudgeReceived,
+    format: (v) => `${v}回`,
+  },
 ];
 
 /**
@@ -1131,10 +1160,12 @@ export function gameResultsExportToText(payload) {
   for (const r of payload.ranking || []) {
     const s = r.sales || {};
     const p = r.payments || {};
+    const st = r.stats || {};
     lines.push(
       `${r.name}: 売上 ${s.count}回 ${fmtExportG(s.total)}（平均 ${fmtExportG(s.average)} / 最大 ${fmtExportG(s.greatest)}）`
       + ` ／ 支払 ${p.count}回 ${fmtExportG(p.total)}（平均 ${fmtExportG(p.average)} / 最大 ${fmtExportG(p.greatest)}）`
-      + ` ／ 株リターン ${fmtExportSignedG(r.stockReturn)}`,
+      + ` ／ 株リターン ${fmtExportSignedG(r.stockReturn)}`
+      + ` ／ 催促 ${st.nudgeSent || 0}回→ / ←${st.nudgeReceived || 0}回`,
     );
   }
   lines.push('');
@@ -1172,11 +1203,13 @@ export function gameResultsExportToCsv(payload) {
     'salesCount', 'salesTotal', 'salesAverage', 'salesMax',
     'payCount', 'payTotal', 'payAverage', 'payMax',
     'stockReturn', 'nextSalary',
+    'nudgeSent', 'nudgeReceived',
   ];
   const rows = (payload.ranking || []).map((r) => {
     const a = r.assets || {};
     const s = r.sales || {};
     const p = r.payments || {};
+    const st = r.stats || {};
     return [
       r.rank,
       r.name,
@@ -1199,6 +1232,8 @@ export function gameResultsExportToCsv(payload) {
       p.greatest ?? 0,
       r.stockReturn ?? 0,
       r.nextSalary ?? 0,
+      st.nudgeSent ?? 0,
+      st.nudgeReceived ?? 0,
     ].map(csvEscape).join(',');
   });
   return `${header.join(',')}\n${rows.join('\n')}\n`;
