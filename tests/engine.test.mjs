@@ -60,6 +60,14 @@ import {
   cpuCashReserve,
   cpuCanAffordSpend,
   cpuEstimateMaxToll,
+  cpuFocusAreas,
+  cpuGamePhase,
+  cpuNoise,
+  cpuShouldBuyShop,
+  cpuShouldFiveBuy,
+  cpuPickScratchCell,
+  cpuPickStockArea,
+  getSharedEventTable,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
 import {
@@ -2054,6 +2062,149 @@ describe('MkMk Street engine', () => {
     cpuAct(g);
     assert.ok(g.players[1].cash >= reserve - 1, `cash ${g.players[1].cash} reserve ${reserve}`);
     assert.equal(cpuCanAffordSpend(g, g.players[1], 0), true);
+  });
+
+  it('cpuNoise is deterministic for the same seed/turn/player', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 777,
+    });
+    const p = g.players[1];
+    const a = cpuNoise(g, p, 9);
+    const b = cpuNoise(g, p, 9);
+    assert.equal(a, b);
+    assert.notEqual(cpuNoise(g, p, 9), cpuNoise(g, p, 10));
+  });
+
+  it('CPU sticks to focus areas once chosen', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 88,
+      cash: 5000,
+    });
+    const p = g.players[1];
+    const areas = Object.keys(g.areas).map(Number);
+    const a0 = areas[0];
+    const a1 = areas[1] ?? areas[0];
+    for (const sq of g.map.filter((s) => s.type === 'shop' && s.area === a0).slice(0, 2)) {
+      sq.owner = 1;
+    }
+    const first = cpuFocusAreas(g, p);
+    assert.ok(first.includes(a0), 'owned area becomes focus');
+    g.turn = (g.turn || 1) + 5;
+    const second = cpuFocusAreas(g, p);
+    assert.deepEqual(second, first, 'focus stays sticky across turns');
+    // 別エリアにほぼ独占を作ると注力を寄せる
+    if (a1 !== a0) {
+      const shops1 = g.map.filter((s) => s.type === 'shop' && s.area === a1);
+      for (const sq of shops1.slice(0, Math.max(1, shops1.length - 1))) sq.owner = 1;
+      const third = cpuFocusAreas(g, p);
+      assert.ok(third.includes(a1) || third.includes(a0));
+    }
+  });
+
+  it('CPU always buys the shop that completes a monopoly when affordable', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 91,
+      cash: 8000,
+    });
+    const p = g.players[1];
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+    assert.ok(shops.length >= 2);
+    for (const sq of shops.slice(0, -1)) sq.owner = 1;
+    const last = shops[shops.length - 1];
+    last.owner = -1;
+    p.cash = Math.max(p.cash, last.price + cpuCashReserve(g, p) + 200);
+    assert.equal(cpuShouldBuyShop(g, p, last), true);
+    assert.equal(hasAreaMonopoly(g, 1, area), false);
+  });
+
+  it('CPU always five-buys to break an enemy monopoly when affordable', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 92,
+      cash: 12000,
+    });
+    const p = g.players[1];
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+    for (const sq of shops) sq.owner = 0;
+    const target = shops[0];
+    p.cash = Math.max(p.cash, target.price * 5 + cpuCashReserve(g, p) + 500);
+    const pend = { shopId: target.id, price: target.price * 5, toll: calcToll(g, target) };
+    assert.equal(hasAreaMonopoly(g, 0, area), true);
+    assert.equal(cpuShouldFiveBuy(g, p, pend), true);
+  });
+
+  it('CPU skips shop buys when closing on the goal', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 93,
+      cash: 5000,
+      goal: 10000,
+    });
+    const p = g.players[1];
+    p.cash = 9600;
+    const phase = cpuGamePhase(g, p);
+    assert.equal(phase.closing, true);
+    const vacant = g.map.find((s) => s.type === 'shop' && s.owner < 0);
+    assert.ok(vacant);
+    assert.equal(cpuShouldBuyShop(g, p, vacant), false);
+  });
+
+  it('CPU stock picks prefer focus / owned areas', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 94,
+      cash: 5000,
+    });
+    const p = g.players[1];
+    const areas = Object.keys(g.areas).map(Number);
+    const a0 = areas[0];
+    for (const sq of g.map.filter((s) => s.type === 'shop' && s.area === a0).slice(0, 2)) {
+      sq.owner = 1;
+    }
+    cpuFocusAreas(g, p);
+    const picked = cpuPickStockArea(g, p);
+    assert.equal(picked, a0);
+  });
+
+  it('CPU scratch prefers extending own color lines including diagonals', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'gambler' }],
+      seed: 95,
+    });
+    const p = g.players[1];
+    p.color = PLAYER_COLORS[1];
+    const table = getSharedEventTable(g);
+    const size = table.size;
+    // 主対角に2マス自分色、次マスを狙わせる
+    const a = 0;
+    const b = size + 1;
+    const c = 2 * (size + 1);
+    for (const id of [a, b]) {
+      table.cells[id].scratched = true;
+      table.cells[id].color = 1;
+    }
+    for (let i = 0; i < table.cells.length; i++) {
+      if (i !== a && i !== b && i !== c) {
+        table.cells[i].scratched = true;
+        table.cells[i].color = 0;
+      } else if (i === c) {
+        table.cells[i].scratched = false;
+      }
+    }
+    const open = [c];
+    // 他にも空マスを少し残す（ノイズ候補）
+    const decoy = size * 2; // (2,0) — ラインが弱い
+    if (decoy !== c) {
+      table.cells[decoy].scratched = false;
+      open.push(decoy);
+    }
+    const pick = cpuPickScratchCell(g, p, open);
+    assert.equal(pick, c, 'should extend main diagonal');
   });
 
   it('previews stock price drop when selling 10+ shares', () => {
