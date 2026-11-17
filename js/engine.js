@@ -1745,7 +1745,8 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
 
   if (sq.type === 'suit_fill') {
     grantWildcard(g, p);
-    finishLanding(g, p);
+    // マークマスと同様、ぴったり停止でスクラッチ1回
+    openScratch(g, p);
     return;
   }
 

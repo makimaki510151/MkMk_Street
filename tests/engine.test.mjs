@@ -215,7 +215,7 @@ describe('MkMk Street engine', () => {
     assert.ok(landed.warps?.length >= 1);
     assert.equal(g.players[0].pos, mainWarp.warpTo);
 
-    // ワイルドマス：通過／着地でワイルドカードを1枚付与（マークはそのまま）
+    // ワイルドマス：通過／着地でワイルドカードを1枚付与（マークはそのまま）。着地時はスクラッチも開く
     const fill = g.map.find((n) => n.type === 'suit_fill');
     assert.ok(fill);
     assert.match(fill.label, /ワイルド/);
@@ -230,6 +230,9 @@ describe('MkMk Street engine', () => {
     advanceMove(g);
     assert.deepEqual(g.players[0].marks, [true, false, true, false]);
     assert.equal(g.players[0].wildcards, 1);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'scratch');
+    assert.equal(g.pending?.playerId, 0);
 
     // 上限4枚
     assert.equal(MAX_WILDCARDS, 4);
