@@ -607,11 +607,7 @@ export function tryGrantMonopolyBonus(g, p, area) {
   bumpStat(p, 'monopolyCount', 1);
   bumpStat(p, 'monopolyBonus', bonus);
   p.flags.monopolyBonusClaimed[area] = true;
-
-  if (g.areas[area]) {
-    g.areas[area].B = Math.max(1, Math.floor((g.areas[area].B || 100) * 1.1));
-  }
-  updateAreaStockPrices(g);
+  // 店価・株価は動かさない。買い物料は所有軒数倍率（calcToll）側で上がる。
 
   const areaName = g.areas[area]?.name || `エリア${area}`;
   addLog(g, `${p.name} が「${areaName}」を独占！ ボーナス +${bonus}G`, 'level');
@@ -2707,6 +2703,12 @@ function payoutAll(g, amount, messages) {
   applyAllCash(g, amount, messages);
 }
 
+/** サイコロ／スロット系ミニゲーム報酬：基本額 × レベル */
+export function scaleDiceSlotPrize(base, level) {
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  return Math.max(1, Math.floor(Number(base) || 0) * lv);
+}
+
 function resolveMinigame(g, p, pending, choice) {
   const game = pending.game || 'guess_dice';
   const messages = [];
@@ -2718,6 +2720,7 @@ function resolveMinigame(g, p, pending, choice) {
   /** @type {Record<string, unknown>} */
   const outcome = {};
   let pick = choice?.value;
+  const lvPrize = (base) => scaleDiceSlotPrize(base, p.level);
 
   if (game === 'guess_dice') {
     pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
@@ -2729,19 +2732,19 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'exact';
       title = 'ぴったり！';
-      const prize = 280 + p.level * 40;
+      const prize = lvPrize(320);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ぴったり！出目${roll} → +${prize}G`);
+      messages.push(`ぴったり！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 60, messages);
     } else if (diff === 1) {
       win = true;
       tier = 'near';
       title = 'おしい！';
-      const prize = 100 + p.level * 15;
+      const prize = lvPrize(115);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G`);
+      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 40, messages);
     } else {
       tier = 'miss';
@@ -2763,10 +2766,10 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'win';
       title = 'カーニバル当たり！';
-      const prize = 160 + p.level * 22;
+      const prize = lvPrize(180);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${pickLabel}正解！出目${roll} → +${prize}G`);
+      messages.push(`${pickLabel}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 50, messages);
     } else {
       tier = 'miss';
@@ -2788,10 +2791,10 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'win';
       title = 'フォーチュン！';
-      const prize = 240 + p.level * 36;
+      const prize = lvPrize(275);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${bandLabel[pick]}正解！出目${roll} → +${prize}G`);
+      messages.push(`${bandLabel[pick]}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 65, messages);
     } else {
       tier = 'miss';
@@ -2969,55 +2972,55 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'jackpot';
       title = 'ジャックポット！';
-      const prize = 900 + p.level * 120;
+      const prize = lvPrize(1020);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`5揃い ${line}！ → +${prize}G`);
+      messages.push(`5揃い ${line}！ → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 180, messages);
     } else if (top === 4) {
       win = true;
       tier = 'quad';
       title = 'フォーカード！';
-      const prize = 420 + p.level * 60;
+      const prize = lvPrize(480);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`4揃い ${line} → +${prize}G`);
+      messages.push(`4揃い ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 100, messages);
     } else if (top === 3 && second === 2) {
       win = true;
       tier = 'fullhouse';
       title = 'フルハウス！';
-      const prize = 280 + p.level * 42;
+      const prize = lvPrize(320);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`フルハウス ${line} → +${prize}G`);
+      messages.push(`フルハウス ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 75, messages);
     } else if (top === 3) {
       win = true;
       tier = 'triple';
       title = 'スリーカード！';
-      const prize = 150 + p.level * 28;
+      const prize = lvPrize(180);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`3揃い ${line} → +${prize}G`);
+      messages.push(`3揃い ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 55, messages);
     } else if (top === 2 && second === 2) {
       win = true;
       tier = 'two_pair';
       title = 'ツーペア！';
-      const prize = 90 + p.level * 16;
+      const prize = lvPrize(105);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ツーペア ${line} → +${prize}G`);
+      messages.push(`ツーペア ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 40, messages);
     } else if (top === 2) {
       win = true;
       tier = 'pair';
       title = 'ワンペア！';
-      const prize = 45 + p.level * 8;
+      const prize = lvPrize(55);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`ワンペア ${line} → +${prize}G`);
+      messages.push(`ワンペア ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 28, messages);
     } else {
       tier = 'miss';
@@ -3046,37 +3049,37 @@ function resolveMinigame(g, p, pending, choice) {
       win = true;
       tier = 'jackpot';
       title = 'ネオンジャックポット！';
-      const prize = 1000 + p.level * 130;
+      const prize = lvPrize(1130);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から5連続 ${line}！ → +${prize}G`);
+      messages.push(`左から5連続 ${line}！ → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 200, messages);
     } else if (run >= 4) {
       win = true;
       tier = 'quad';
       title = 'ネオン4連続！';
-      const prize = 480 + p.level * 70;
+      const prize = lvPrize(550);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から4連続 ${line} → +${prize}G`);
+      messages.push(`左から4連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 110, messages);
     } else if (run >= 3) {
       win = true;
       tier = 'triple';
       title = 'ネオン3連続！';
-      const prize = 200 + p.level * 35;
+      const prize = lvPrize(235);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から3連続 ${line} → +${prize}G`);
+      messages.push(`左から3連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 60, messages);
     } else if (run >= 2) {
       win = true;
       tier = 'pair';
       title = 'ネオン2連続！';
-      const prize = 70 + p.level * 12;
+      const prize = lvPrize(80);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から2連続 ${line} → +${prize}G`);
+      messages.push(`左から2連続 ${line} → +${prize}G（×Lv${p.level}）`);
       payoutAll(g, 32, messages);
     } else {
       tier = 'miss';
