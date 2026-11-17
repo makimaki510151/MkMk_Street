@@ -1,7 +1,10 @@
 /**
- * ゲーム開始前の順番決めダイス。
+ * ゲーム開始前の順番決めダイス（1〜100）。
  * 出目が大きいほど先手。同点者がいればその人たちだけ振り直し。
  */
+
+export const ORDER_DIE_MIN = 1;
+export const ORDER_DIE_MAX = 100;
 
 /**
  * @param {{ key: string, value: number }[]} rolls
@@ -23,6 +26,12 @@ export function tiedRollKeys(rolls) {
   return tied;
 }
 
+function isValidOrderRoll(value) {
+  return Number.isFinite(value)
+    && value >= ORDER_DIE_MIN
+    && value <= ORDER_DIE_MAX;
+}
+
 /**
  * @param {{ key: string }[]} players
  * @param {Record<string, number>} rollMap
@@ -34,11 +43,11 @@ export function evaluateOrderRolls(players, rollMap) {
     key,
     value: Number(rollMap[key]),
   }));
-  if (rolls.some((r) => !Number.isFinite(r.value) || r.value < 1 || r.value > 6)) {
+  if (rolls.some((r) => !isValidOrderRoll(r.value))) {
     return {
       done: false,
       rerollKeys: rolls
-        .filter((r) => !Number.isFinite(r.value) || r.value < 1 || r.value > 6)
+        .filter((r) => !isValidOrderRoll(r.value))
         .map((r) => r.key),
     };
   }
@@ -52,8 +61,9 @@ export function evaluateOrderRolls(players, rollMap) {
   return { done: true, order };
 }
 
-/** 1〜6 の出目 */
+/** 1〜100 の出目 */
 export function rollOrderDie(rng = Math.random) {
   const n = typeof rng === 'function' ? rng() : Math.random();
-  return 1 + Math.floor(Math.max(0, Math.min(0.999999, n)) * 6);
+  const u = Math.max(0, Math.min(0.999999, n));
+  return ORDER_DIE_MIN + Math.floor(u * (ORDER_DIE_MAX - ORDER_DIE_MIN + 1));
 }

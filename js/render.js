@@ -1,7 +1,14 @@
 /** MkMk Street — ボード描画 */
 
 import { AREA_META, SUIT_LABELS } from './board.js';
-import { calcToll, hasAreaMonopoly, getPlayerAreaCount, getAreaShops, getTollMulti } from './engine.js';
+import {
+  calcToll,
+  hasAreaMonopoly,
+  getPlayerAreaCount,
+  getAreaShops,
+  getTollMulti,
+  getForwardNexts,
+} from './engine.js';
 
 const TYPE_ICON = {
   bank: '銀',
@@ -238,6 +245,134 @@ export function createRenderer(canvas) {
       x: layout.ox + vg.col * layout.size + layout.size / 2,
       y: layout.oy + vg.row * layout.size + layout.size / 2 - vg.hop * layout.size,
     };
+  }
+
+  /** 2マス間の向き（ラジアン）。同一点なら null */
+  function angleBetweenIds(g, fromId, toId) {
+    const a = nodeCenter(g, fromId);
+    const b = nodeCenter(g, toId);
+    if (!a || !b) return null;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (Math.hypot(dx, dy) < 0.5) return null;
+    return Math.atan2(dy, dx);
+  }
+
+  /**
+   * コマの進行向き。移動／ワープ中は行き先、停止中は直前マス→現在マス。
+   * @returns {number|null}
+   */
+  function tokenFacingAngle(g, p) {
+    const mv = anim.moves[p.id];
+    if (mv) return angleBetweenIds(g, mv.fromId, mv.toId);
+    const wv = anim.warps[p.id];
+    if (wv && warpProgress(wv) < 0.92) return angleBetweenIds(g, wv.fromId, wv.toId);
+    if (p.prevPos != null && p.prevPos !== p.pos) {
+      return angleBetweenIds(g, p.prevPos, p.pos);
+    }
+    return null;
+  }
+
+  /** コマ先端の向き矢印（白＋プレイヤー色） */
+  function drawFacingChevron(x, y, rad, angle, color, emphasize) {
+    if (angle == null || !Number.isFinite(angle)) return;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    const tip = rad * (emphasize ? 1.85 : 1.65);
+    const base = rad * 0.25;
+    const half = rad * (emphasize ? 0.62 : 0.52);
+    ctx.beginPath();
+    ctx.moveTo(tip, 0);
+    ctx.lineTo(base, -half);
+    ctx.lineTo(base, half);
+    ctx.closePath();
+    ctx.fillStyle = '#fffef5';
+    ctx.globalAlpha = emphasize ? 0.98 : 0.9;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = color || '#ffe08a';
+    ctx.lineWidth = emphasize ? 2.2 : 1.6;
+    ctx.stroke();
+    // 内側の色チップで自分の向きと分かりやすく
+    ctx.beginPath();
+    ctx.moveTo(tip - rad * 0.22, 0);
+    ctx.lineTo(base + rad * 0.12, -half * 0.45);
+    ctx.lineTo(base + rad * 0.12, half * 0.45);
+    ctx.closePath();
+    ctx.fillStyle = color || '#ffe08a';
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  /** 手番プレイヤーの次の進み先マスを薄く示す */
+  function drawForwardHeadingHints(g) {
+    const cur = g.players?.[g.currentPlayerIdx];
+    if (!cur || cur.bankrupt) return;
+    if (anim.warps[cur.id]) return;
+
+    let nextIds = [];
+    const mv = anim.moves[cur.id];
+    if (mv) {
+      nextIds = [mv.toId];
+    } else if (g.phase === 'await_fork' && Array.isArray(g.pending?.options)) {
+      nextIds = g.pending.options.map((o) => o.id).filter((id) => id != null);
+    } else if (g.phase === 'await_roll' || g.phase === 'moving') {
+      nextIds = getForwardNexts(g, cur.pos, cur.prevPos);
+    }
+    if (!nextIds.length) return;
+
+    const from = nodeCenter(g, mv ? mv.fromId : cur.pos);
+    if (!from) return;
+    const size = layout.size;
+    const pulse = 0.45 + Math.sin(anim.pulse) * 0.2;
+
+    for (const nid of nextIds) {
+      const to = nodeCenter(g, nid);
+      if (!to) continue;
+      ctx.save();
+      ctx.strokeStyle = cur.color || '#ffe08a';
+      ctx.globalAlpha = pulse * 0.85;
+      ctx.lineWidth = Math.max(2.5, size * 0.06);
+      ctx.setLineDash([Math.max(4, size * 0.12), Math.max(4, size * 0.1)]);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 行き先マスの縁
+      const n = g.map.find((x) => x.id === nid);
+      if (n) {
+        const vg = visualGridPos(n);
+        const pad = size * 0.08;
+        const r = size * 0.14;
+        const x = layout.ox + vg.col * size;
+        const y = layout.oy + vg.row * size - vg.hop * size;
+        ctx.globalAlpha = 0.35 + Math.sin(anim.pulse) * 0.15;
+        ctx.strokeStyle = cur.color || '#ffe08a';
+        ctx.lineWidth = 3;
+        roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+        ctx.stroke();
+      }
+
+      // 線先の矢印
+      const ang = Math.atan2(to.y - from.y, to.x - from.x);
+      const ah = size * 0.16;
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = cur.color || '#ffe08a';
+      ctx.translate(to.x, to.y);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(ah * 0.15, 0);
+      ctx.lineTo(-ah * 0.55, -ah * 0.4);
+      ctx.lineTo(-ah * 0.55, ah * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   /** コマ移動アニメを予約 */
@@ -677,6 +812,9 @@ export function createRenderer(canvas) {
     pruneFinishedTileSlides();
     drawWarpEffects(g);
 
+    // 手番の進み先ヒント（コマの下に敷く）
+    drawForwardHeadingHints(g);
+
     // コマ
     const byPos = {};
     g.players.forEach((p) => {
@@ -695,6 +833,7 @@ export function createRenderer(canvas) {
       if (!pos) continue;
       const rad = layout.size * 0.16;
       const warping = !!anim.warps[p.id];
+      const isCurrent = g.currentPlayerIdx === p.id;
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, rad * (warping ? 1.08 : 1), 0, Math.PI * 2);
       ctx.fillStyle = p.color;
@@ -704,7 +843,7 @@ export function createRenderer(canvas) {
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = warping ? 2.5 : 2;
       ctx.stroke();
-      if (g.currentPlayerIdx === p.id || warping) {
+      if (isCurrent || warping) {
         const pulse = rad + 4 + Math.sin(anim.pulse) * 2;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, pulse, 0, Math.PI * 2);
@@ -719,6 +858,9 @@ export function createRenderer(canvas) {
           ctx.stroke();
         }
       }
+      // 進行方向（自分・他プレイヤーとも）
+      const facing = tokenFacingAngle(g, p);
+      drawFacingChevron(pos.x, pos.y, rad, facing, p.color, isCurrent || warping || !!anim.moves[p.id]);
     }
 
     // ブランド表記はトップバーに集約（盤面マスと被らない）

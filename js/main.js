@@ -1545,8 +1545,8 @@ function renderOrderRollUi() {
   const pendingSet = new Set(o.pending || []);
   if (hint) {
     hint.textContent = o.round > 1
-      ? `同点のため振り直し（${o.round}回目）。出目が大きいほど先手です。`
-      : '出目が大きいほど先にサイコロを振ります。同点は振り直し。';
+      ? `同じ出目の人だけ振り直し（${o.round}回目）。1〜100・大きいほど先手。スペースでも振れます。`
+      : '1〜100の出目が大きいほど先手。同じ出目の人だけ振り直します。スペースでも振れます。';
   }
   if (list) {
     list.innerHTML = o.players.map((p) => {
@@ -1652,7 +1652,7 @@ function finishOrderRollRound() {
     for (const k of result.rerollKeys) delete o.rolls[k];
     renderOrderRollUi();
     broadcastOrderRollSync();
-    toast('同点！もう一度振ります');
+    toast('同点の人だけもう一度振ります');
     scheduleOrderRollCpus();
     return;
   }
@@ -4997,6 +4997,65 @@ function dismissEventFlash({ remote = false, force = false } = {}) {
   }
 }
 
+function isTypingTarget(el) {
+  if (!el || !(el instanceof Element)) return false;
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (el.isContentEditable) return true;
+  return !!el.closest?.('input, textarea, select, [contenteditable="true"]');
+}
+
+function screenIsActive(id) {
+  return !!$(id)?.classList.contains('active');
+}
+
+/** スペース：サイコロ／出来事のつづける／選択のスキップ。クリック操作はそのまま */
+function bindSpaceShortcuts() {
+  if (document.body.dataset.spaceBound === '1') return;
+  document.body.dataset.spaceBound = '1';
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== ' ' && e.code !== 'Space') return;
+    if (e.repeat) return;
+    if (isTypingTarget(document.activeElement) || isTypingTarget(e.target)) return;
+
+    // 出来事フラッシュ（つづける）
+    if (app.eventFlashOpen) {
+      e.preventDefault();
+      dismissEventFlash();
+      return;
+    }
+
+    // 順番決めダイス
+    if (screenIsActive('#screen-order-roll') && app.orderRoll) {
+      const btn = $('#btn-order-roll');
+      if (btn && !btn.disabled) {
+        e.preventDefault();
+        btn.click();
+        return;
+      }
+    }
+
+    // ゲーム中のサイコロ
+    if (screenIsActive('#screen-game') && app.game) {
+      const roll = $('#btn-roll');
+      if (roll && !roll.disabled && !app.busy) {
+        e.preventDefault();
+        roll.click();
+        return;
+      }
+    }
+
+    // 選択ダイアログのスキップ（表示中のみ）
+    if (app.modalActive && app.modalMode !== 'hidden') {
+      const skip = $('#btn-skip-choice');
+      if (skip && !skip.hidden && !skip.disabled) {
+        e.preventDefault();
+        skip.click();
+      }
+    }
+  });
+}
+
 function bindEventFlashControls() {
   const overlay = $('#event-flash');
   if (!overlay || overlay.dataset.bound === '1') return;
@@ -5013,7 +5072,7 @@ function bindEventFlashControls() {
   });
   document.addEventListener('keydown', (e) => {
     if (!app.eventFlashOpen) return;
-    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+    if (e.key === 'Enter' || e.key === 'Escape') {
       e.preventDefault();
       dismissEventFlash();
     }
@@ -6364,6 +6423,7 @@ bindVolumeUI();
 bindSideChrome();
 bindTitle();
 bindEventFlashControls();
+bindSpaceShortcuts();
 showScreen('screen-title');
 
 const field = $('#title-field');
