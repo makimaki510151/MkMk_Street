@@ -61,6 +61,7 @@ import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
 import { APP_VERSION } from './version.js';
 import { evaluateOrderRolls, rollOrderDie } from './orderRoll.js';
+import { isLocalPlayer, isMyTurnSeat } from './turnOwner.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -1213,8 +1214,19 @@ function handleNetEvent({ from, data }) {
         app.game.players[app.localSeat].peerId = myPeer;
         app.game.players[app.localSeat].offline = false;
       } else {
-        app.localSeat = app.game.players.findIndex((p) => p.peerId === myPeer);
-        if (app.localSeat < 0) app.localSeat = 0;
+        // seatMap があれば peerId より先に確定（順番ダイス後の id ずれ防止）
+        const mapIdx = Array.isArray(data.seatMap)
+          ? data.seatMap.findIndex((id) => id === myPeer)
+          : -1;
+        app.localSeat = mapIdx >= 0
+          ? mapIdx
+          : app.game.players.findIndex((p) => p.peerId === myPeer);
+        if (app.localSeat < 0) {
+          console.warn('[seat] could not resolve local seat for', myPeer);
+          app.localSeat = 0;
+        } else if (app.game.players[app.localSeat]) {
+          app.game.players[app.localSeat].peerId = myPeer;
+        }
       }
       enterGame();
       if (data.type === 'game_rejoin') toast('再接続しました');
@@ -2188,13 +2200,13 @@ function maybeAutoSkipRest() {
 
 function isMyTurn() {
   if (!app.game) return false;
-  if (app.game.phase === 'gameover') return false;
-  const cur = currentPlayer(app.game);
-  if (!cur || cur.isCPU) return false;
-  if (app.mode === 'local') return !cur.isCPU;
-  if (app.mode === 'host') return cur.peerId === app.net?.peerId || cur.id === 0;
-  if (app.mode === 'guest') return cur.peerId === app.net?.peerId;
-  return false;
+  return isMyTurnSeat({
+    mode: app.mode,
+    phase: app.game.phase,
+    currentPlayer: currentPlayer(app.game),
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
 }
 
 /** 操作待ち座席（自分含む）。ホスト側の催促検証でも使う */
@@ -3809,9 +3821,12 @@ function maybeYourTurnChime() {
   if (app.busy || isEventUiBlocking()) return;
   const cur = currentPlayer(g);
   if (!cur || cur.isCPU || cur.resting) return;
-  const mine = app.mode === 'local' ? !cur.isCPU : (
-    app.mode === 'guest' ? cur.peerId === app.net?.peerId : (cur.peerId === app.net?.peerId || cur.id === 0)
-  );
+  const mine = isLocalPlayer({
+    mode: app.mode,
+    player: cur,
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
   const key = `${g.turn}-${g.currentPlayerIdx}-${g.phase}`;
   if (!mine || app.lastTurnKey === key) return;
   app.lastTurnKey = key;
@@ -4422,9 +4437,12 @@ function canDismissEventFlash() {
   }
   if (reader.isCPU) return false; // NPCタイマーが force で閉じる
   if (app.mode === 'local') return true;
-  if (app.mode === 'host') return reader.id === app.localSeat || reader.peerId === app.net?.peerId || reader.id === 0;
-  if (app.mode === 'guest') return reader.id === app.localSeat || reader.peerId === app.net?.peerId;
-  return false;
+  return isLocalPlayer({
+    mode: app.mode,
+    player: reader,
+    localSeat: app.localSeat,
+    localPeerId: app.net?.peerId,
+  });
 }
 
 function scheduleNpcEventFlashIfNeeded() {
