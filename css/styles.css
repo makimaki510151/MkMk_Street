@@ -982,8 +982,12 @@ body.your-turn #btn-roll:not(:disabled) {
 .sell-preview.drop {
   color: #ffb4a8;
 }
+.sell-preview.rise {
+  color: #9ad4b1;
+}
 .sell-preview strong { color: var(--ink); font-weight: 700; }
 .sell-preview.drop strong { color: #ff8a80; }
+.sell-preview.rise strong { color: #6fd39a; }
 .raise-row .sell-preview {
   flex: 1 1 100%;
   margin-top: 0.1rem;
