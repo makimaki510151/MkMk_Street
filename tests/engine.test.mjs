@@ -26,6 +26,7 @@ import {
   canSellStockOnTurn,
   previewStockSell,
   previewStockBuy,
+  resetTurnSellPressure,
   STOCK_SELL_PRESSURE_MIN,
   STOCK_SELL_B_RATE,
   STOCK_BUY_BOOST_MIN,
@@ -2576,7 +2577,7 @@ describe('MkMk Street engine', () => {
     assert.equal(g.areas[area].stockPrice, big.newPrice);
   });
 
-  it('previews stock price drop when selling 10+ shares', () => {
+  it('previews stock price drop when selling 10+ shares in own turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 111,
@@ -2609,50 +2610,66 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(g.areas[area].B, expectedB);
     assert.equal(g.areas[area].stockPrice, big.newPrice);
-    assert.equal(g.areas[area].sellPressure, 0);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
   });
 
-  it('applies shared cumulative sell pressure across players and partial sells', () => {
+  it('tracks per-player turn sell pressure and resets on next own turn', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 222,
       cash: 5000,
     });
     const area = Number(Object.keys(g.areas)[0]);
-    g.players[0].stocks[area] = 30;
-    g.players[1].stocks[area] = 30;
+    g.players[0].stocks[area] = 40;
+    g.players[1].stocks[area] = 40;
     updateAreaStockPrices(g);
     const B0 = g.areas[area].B;
 
-    // 9枚売っても下落しない（累計9）
+    // 9枚売っても下落しない（今ターン累計9）
     assert.equal(preTurnSell(g, 0, area, 9).ok, true);
-    assert.equal(g.areas[area].sellPressure, 9);
+    assert.equal(g.players[0].turnSellPressure[area], 9);
     assert.equal(g.areas[area].B, B0);
 
-    // 別プレイヤーが1枚売ると累計10で下落
+    // 別プレイヤーの番では相手の累計は別枠（共有しない）→1枚売っても下落しない
     g.currentPlayerIdx = 1;
+    resetTurnSellPressure(g.players[1]);
     g.phase = 'await_roll';
-    const priceBeforeDrop = g.areas[area].stockPrice;
+    const previewOther = previewStockSell(g, area, 1);
+    assert.equal(previewOther.drops, false);
+    assert.equal(previewOther.pressureBefore, 0);
+    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    assert.equal(g.areas[area].B, B0);
+    assert.equal(g.players[1].turnSellPressure[area], 1);
+    // Aの累計は手番外でも残っているが、Bには効かない
+    assert.equal(g.players[0].turnSellPressure[area], 9);
+
+    // Aの番が巡ると累計リセット → 9枚売ってもまた下落なし
+    g.currentPlayerIdx = 0;
+    resetTurnSellPressure(g.players[0]);
+    g.phase = 'await_roll';
+    assert.equal(g.players[0].turnSellPressure[area], undefined);
+    assert.equal(preTurnSell(g, 0, area, 9).ok, true);
+    assert.equal(g.players[0].turnSellPressure[area], 9);
+    assert.equal(g.areas[area].B, B0);
+
+    // 同ターン内でさらに1枚 → 累計10で下落
     const preview = previewStockSell(g, area, 1);
     assert.equal(preview.drops, true);
     assert.equal(preview.pressureBefore, 9);
     assert.equal(preview.untilDrop, 1);
-    assert.equal(preTurnSell(g, 1, area, 1).ok, true);
+    assert.equal(preTurnSell(g, 0, area, 1).ok, true);
     const B1 = Math.max(100, Math.floor(B0 * STOCK_SELL_B_RATE));
     assert.equal(g.areas[area].B, B1);
-    assert.equal(g.areas[area].sellPressure, 0);
-    assert.ok(g.areas[area].stockPrice <= priceBeforeDrop);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
 
     // 20枚売却で2回分の圧
-    g.currentPlayerIdx = 0;
-    g.phase = 'await_roll';
     const BBeforeBulk = g.areas[area].B;
     assert.equal(preTurnSell(g, 0, area, 20).ok, true);
     let expected = BBeforeBulk;
     expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
     expected = Math.max(100, Math.floor(expected * STOCK_SELL_B_RATE));
     assert.equal(g.areas[area].B, expected);
-    assert.equal(g.areas[area].sellPressure, 0);
+    assert.equal(g.players[0].turnSellPressure[area], 0);
   });
 
   it('allows stock sell during own turn in roll/choice/fork phases', () => {
