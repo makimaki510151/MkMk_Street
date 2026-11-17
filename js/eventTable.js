@@ -396,11 +396,18 @@ export function unscratchedIds(table) {
   return table.cells.filter((c) => !c.scratched).map((c) => c.id);
 }
 
-/** プレイヤー色 → 表の色インデックス（あか/あお/きいろ/みどり） */
+/** プレイヤー色 → 表の色インデックス（スクラッチ表は4色グループ） */
 export function playerColorIndex(player) {
   const c = (player?.color || '').toLowerCase();
   const idx = GROUP_COLORS.findIndex((g) => g.toLowerCase() === c);
-  return idx >= 0 ? idx : (player?.id ?? 0) % GROUP_COLORS.length;
+  if (idx >= 0) return idx;
+  // 拡張パレット色は安定ハッシュで 0〜3 に割当
+  if (c) {
+    let h = 0;
+    for (let i = 0; i < c.length; i++) h = (Math.imul(h, 31) + c.charCodeAt(i)) >>> 0;
+    return h % GROUP_COLORS.length;
+  }
+  return (player?.id ?? 0) % GROUP_COLORS.length;
 }
 
 export function scratchCell(g, player, cellId) {

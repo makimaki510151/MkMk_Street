@@ -190,15 +190,103 @@ button:disabled { opacity: .42; cursor: default; }
 .row-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .seat-row {
   display: grid;
-  grid-template-columns: 14px 1fr auto auto;
+  grid-template-columns: 1fr auto auto;
   gap: 0.5rem;
   align-items: center;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.55rem;
 }
 .seat-swatch {
   width: 12px; height: 12px;
   border-radius: 1px;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
+}
+.seat-color-block {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding-left: 0.1rem;
+}
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+.color-swatch-btn {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 3px;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.16);
+  background: var(--swatch, #888);
+}
+.color-swatch-btn.selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.2);
+}
+.color-swatch-btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+.color-picker.tiny {
+  margin-left: auto;
+  gap: 0.28rem;
+}
+.color-picker.tiny .color-swatch-btn {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.field-label {
+  display: block;
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+.brand-version {
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  opacity: 0.9;
+}
+.order-roll-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.85rem 0 1rem;
+}
+.order-roll-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.03);
+  border-left: 3px solid var(--pc, var(--accent));
+}
+.order-roll-row .or-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--pc, var(--accent));
+}
+.order-roll-row .or-dice {
+  font-family: var(--display);
+  font-size: 1.25rem;
+  min-width: 2rem;
+  text-align: right;
+  color: var(--accent-strong);
+}
+.order-roll-row.pending .or-dice {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.order-roll-row.tied {
+  outline: 1px solid rgba(240, 162, 2, 0.45);
 }
 .seat-name {
   background: var(--bg0);

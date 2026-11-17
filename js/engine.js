@@ -20,7 +20,23 @@ import {
   remainingInvest as remainingInvestOf,
 } from './investLimits.js';
 
-export const PLAYER_COLORS = ['#e85d75', '#3d8bfd', '#f0a202', '#20c997'];
+/** ロビー／席で選べるプレイヤー色（最大4人なので重複なしで十分） */
+export const PLAYER_COLORS = [
+  '#e85d75', // あか
+  '#3d8bfd', // あお
+  '#f0a202', // きいろ
+  '#20c997', // みどり
+  '#fd7e14', // オレンジ
+  '#e64980', // ピンク
+  '#7950f2', // すみれ
+  '#15aabf', // シアン
+  '#868e96', // グレー
+  '#fab005', // ゴールド
+];
+export const PLAYER_COLOR_LABELS = [
+  'あか', 'あお', 'きいろ', 'みどり', 'オレンジ',
+  'ピンク', 'すみれ', 'シアン', 'グレー', 'ゴールド',
+];
 export const PLAYER_NAMES_DEFAULT = ['あか', 'あお', 'きいろ', 'みどり'];
 
 /**
