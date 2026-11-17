@@ -25,8 +25,11 @@ import {
   preTurnSell,
   canSellStockOnTurn,
   previewStockSell,
+  previewStockBuy,
   STOCK_SELL_PRESSURE_MIN,
   STOCK_SELL_B_RATE,
+  STOCK_BUY_BOOST_MIN,
+  STOCK_BUY_B_RATE,
   rollDice,
   advanceMove,
   applyChoice,
@@ -2529,6 +2532,48 @@ describe('MkMk Street engine', () => {
     }
     const pick = cpuPickScratchCell(g, p, open);
     assert.equal(pick, c, 'should extend main diagonal');
+  });
+
+  it('previews stock price rise when buying 10+ shares (not sell drop)', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 112,
+      cash: 50000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    updateAreaStockPrices(g);
+    const oldPrice = g.areas[area].stockPrice;
+    const oldB = g.areas[area].B;
+
+    const small = previewStockBuy(g, area, STOCK_BUY_BOOST_MIN - 1);
+    assert.ok(small);
+    assert.equal(small.rises, false);
+    assert.equal(small.oldPrice, oldPrice);
+    assert.equal(small.newPrice, oldPrice);
+    assert.equal(small.cost, oldPrice * (STOCK_BUY_BOOST_MIN - 1));
+
+    const big = previewStockBuy(g, area, STOCK_BUY_BOOST_MIN);
+    assert.ok(big);
+    assert.equal(big.rises, true);
+    assert.equal(big.oldPrice, oldPrice);
+    assert.equal(big.cost, oldPrice * STOCK_BUY_BOOST_MIN);
+    const expectedB = Math.floor(oldB * STOCK_BUY_B_RATE);
+    assert.ok(big.newPrice >= oldPrice);
+
+    // 売却予想とは別物（大口買いでも drops ではない）
+    const sellLike = previewStockSell(g, area, STOCK_BUY_BOOST_MIN);
+    assert.equal(sellLike.drops, true);
+    assert.notEqual(big.newPrice, sellLike.newPrice);
+
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 0, bankVisit: true, maxBuys: 1 };
+    g.players[0].cash = big.cost + 100;
+    const before = g.areas[area].B;
+    const bought = applyChoice(g, { action: 'buy', area, count: STOCK_BUY_BOOST_MIN });
+    assert.equal(bought.ok, true);
+    assert.equal(g.areas[area].B, expectedB);
+    assert.equal(g.areas[area].B, Math.floor(before * STOCK_BUY_B_RATE));
+    assert.equal(g.areas[area].stockPrice, big.newPrice);
   });
 
   it('previews stock price drop when selling 10+ shares', () => {

@@ -710,6 +710,10 @@ export function refreshGoalPressure(g) {
 export const STOCK_SELL_PRESSURE_MIN = 10;
 /** 売却圧による B 乗率 */
 export const STOCK_SELL_B_RATE = 0.93;
+/** 一度にこの枚数以上買うと相場係数 B が上がる */
+export const STOCK_BUY_BOOST_MIN = 10;
+/** 大口購入時の B 乗率 */
+export const STOCK_BUY_B_RATE = 1.07;
 
 function areaShopAvgPrice(g, area) {
   const shops = getAreaShops(g, area);
@@ -814,6 +818,35 @@ export function previewStockSell(g, area, count) {
     pressureAfter: sim.pressureAfter,
     untilDrop,
     threshold: STOCK_SELL_PRESSURE_MIN,
+  };
+}
+
+/**
+ * 株購入後の株価を予測（支払は現行価格→その後大口なら B 上昇）。
+ * @returns {{ area:number, count:number, cost:number, oldPrice:number, newPrice:number, diff:number, rises:boolean, threshold:number }|null}
+ */
+export function previewStockBuy(g, area, count) {
+  const a = Number(area);
+  const meta = g.areas?.[a];
+  if (!meta) return null;
+  const avg = areaShopAvgPrice(g, a);
+  if (!avg) return null;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const oldPrice = meta.stockPrice || stockPriceFromB(avg, meta.B);
+  const rises = n >= STOCK_BUY_BOOST_MIN;
+  const nextB = rises
+    ? Math.floor((meta.B || 100) * STOCK_BUY_B_RATE)
+    : (meta.B || 100);
+  const newPrice = stockPriceFromB(avg, nextB);
+  return {
+    area: a,
+    count: n,
+    cost: oldPrice * n,
+    oldPrice,
+    newPrice,
+    diff: newPrice - oldPrice,
+    rises,
+    threshold: STOCK_BUY_BOOST_MIN,
   };
 }
 
@@ -2527,8 +2560,8 @@ export function applyChoice(g, choice) {
       bumpStat(p, 'stockBought', count);
       bumpStat(p, 'stockSpent', cost);
       syncStockValueSnap(g, p);
-      if (count >= 10) {
-        g.areas[area].B = Math.floor(g.areas[area].B * 1.07);
+      if (count >= STOCK_BUY_BOOST_MIN) {
+        g.areas[area].B = Math.floor(g.areas[area].B * STOCK_BUY_B_RATE);
       }
       updateAreaStockPrices(g);
       addLog(g, `${p.name} が A${area}株×${count} 購入（${cost}G）`, 'stock');

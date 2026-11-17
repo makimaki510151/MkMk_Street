@@ -23,6 +23,7 @@ import {
   recordNudgeStats,
   updateAreaStockPrices,
   previewStockSell,
+  previewStockBuy,
   STOCK_SELL_PRESSURE_MIN,
   getLiquidatableValue,
   calcToll,
@@ -5504,7 +5505,7 @@ function showChoiceModal(g) {
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
         <button class="btn primary" id="m-stock-confirm">この枚数で買う</button>
         ${broker ? '<button class="btn ghost" id="m-stock-sell" hidden>この枚数で売る</button>' : ''}
-        <div id="stock-sell-preview" class="sell-preview" hidden></div>
+        <div id="stock-trade-preview" class="sell-preview" hidden></div>
       </div>`;
     $('#btn-end-choice').hidden = true;
     $('#btn-skip-choice').hidden = false;
@@ -5514,21 +5515,40 @@ function showChoiceModal(g) {
 
     let selected = null;
     bindAreaHighlight(body);
-    const syncStockSellPreview = () => {
-      const preview = $('#stock-sell-preview');
-      const sellBtn = $('#m-stock-sell');
+    /** 購入可能なら購入後株価予想、売却のみのときだけ売却予想 */
+    const syncStockTradePreview = () => {
+      const preview = $('#stock-trade-preview');
       if (!preview) return;
-      if (selected == null || sellBtn?.hidden) {
+      if (selected == null) {
         preview.hidden = true;
         preview.textContent = '';
         return;
       }
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
+      const maxBuy = Number(card?.dataset.maxBuy) || 0;
       const have = Number(card?.dataset.have) || 0;
-      const count = Math.max(1, Math.min(have, Number($('#m-stock-count')?.value) || 1));
-      preview.hidden = false;
-      preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
-      preview.innerHTML = formatStockSellPreview(g, selected, count);
+      const raw = Number($('#m-stock-count')?.value) || 1;
+      const buyBtn = $('#m-stock-confirm');
+      const sellBtn = $('#m-stock-sell');
+      const canBuy = buyBtn && !buyBtn.hidden && maxBuy >= 1;
+      const canSell = sellBtn && !sellBtn.hidden && have >= 1;
+      if (canBuy) {
+        const count = Math.max(1, Math.min(maxBuy, raw));
+        const prev = previewStockBuy(g, selected, count);
+        preview.hidden = false;
+        preview.className = `sell-preview${prev?.rises ? ' rise' : ''}`;
+        preview.innerHTML = formatStockBuyPreview(g, selected, count);
+        return;
+      }
+      if (canSell) {
+        const count = Math.max(1, Math.min(have, raw));
+        preview.hidden = false;
+        preview.className = `sell-preview${previewStockSell(g, selected, count)?.drops ? ' drop' : ''}`;
+        preview.innerHTML = formatStockSellPreview(g, selected, count);
+        return;
+      }
+      preview.hidden = true;
+      preview.textContent = '';
     };
     body.querySelectorAll('.stock-card').forEach((btn) => {
       btn.onclick = () => {
@@ -5566,11 +5586,11 @@ function showChoiceModal(g) {
             sellBtn.hidden = true;
           }
         }
-        syncStockSellPreview();
+        syncStockTradePreview();
       };
     });
-    $('#m-stock-count')?.addEventListener('input', syncStockSellPreview);
-    $('#m-stock-count')?.addEventListener('change', syncStockSellPreview);
+    $('#m-stock-count')?.addEventListener('input', syncStockTradePreview);
+    $('#m-stock-count')?.addEventListener('change', syncStockTradePreview);
     $('#m-stock-confirm').onclick = () => {
       if (selected == null) return;
       const card = body.querySelector(`.stock-card[data-area="${selected}"]`);
@@ -6288,6 +6308,21 @@ function formatStockSellPreview(g, area, count) {
   }
   const arrow = `${prev.oldPrice}→${prev.newPrice}G（${prev.diff}G）`;
   return `${got} · 売却後の株価 <strong>${arrow}</strong>（圧${times} · ${meter}→${prev.pressureAfter}）`;
+}
+
+/** 株購入の支払額と購入後株価の予測テキスト */
+function formatStockBuyPreview(g, area, count) {
+  const prev = previewStockBuy(g, area, count);
+  if (!prev || prev.count <= 0) return '';
+  const cost = `支払 <strong>${prev.cost.toLocaleString()}G</strong>`;
+  if (!prev.rises) {
+    return `${cost} · 株価変動なし（${prev.threshold}枚未満）`;
+  }
+  if (prev.diff === 0) {
+    return `${cost} · 購入後も株価 ${prev.oldPrice}G`;
+  }
+  const arrow = `${prev.oldPrice}→${prev.newPrice}G（+${prev.diff}G）`;
+  return `${cost} · 購入後の株価 <strong>${arrow}</strong>（${prev.threshold}枚以上で上昇）`;
 }
 
 function escapeHtml(s) {
