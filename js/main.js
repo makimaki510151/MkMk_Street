@@ -3425,7 +3425,16 @@ function refreshGameUI() {
       atGoal ? '<span class="pc-flag goal" title="総資産が目標以上 — 銀行停止／通過で勝利">目標到達</span>' : '',
       p.lucky ? '<span class="pc-flag lucky" title="他者の買い物料の20%を銀行から受取（次の自分の番まで）">★ラッキー</span>' : '',
       p.flags?.investCoupon ? '<span class="pc-flag invest-half" title="次の自分店への増資が半額">増資半額</span>' : '',
-      p.flags?.fiveBuyCoupon ? '<span class="pc-flag coupon" title="次の店奪取が3倍買いになる">3倍クーポン</span>' : '',
+      (() => {
+        const m = Number(p.flags?.takeoverMulti);
+        if (Number.isFinite(m) && m >= 2 && m <= 4) {
+          return `<span class="pc-flag coupon" title="次の店奪取が${m}倍買いになる">${m}倍クーポン</span>`;
+        }
+        if (p.flags?.fiveBuyCoupon) {
+          return '<span class="pc-flag coupon" title="次の店奪取が3倍買いになる">3倍クーポン</span>';
+        }
+        return '';
+      })(),
       p.flags?.tollShield ? '<span class="pc-flag" title="次の買い物料を無効化">通行守り</span>' : '',
       p.resting ? '<span class="pc-flag">休み</span>' : '',
       p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
@@ -3607,6 +3616,8 @@ function pendingStatusLabel(pend) {
     case 'buy_shop': return 'お店を購入するか選択中';
     case 'invest': return '増資を検討中';
     case 'pick_invest': return 'イベント増資する店を選択中';
+    case 'force_sell_shop': return '強制売却する店を選択中';
+    case 'any_shop_buy': return `${pend.multi || 6}倍の指名買収を検討中`;
     case 'five_buy': return '5倍買いを検討中';
     case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
@@ -4734,6 +4745,85 @@ function showChoiceModal(g) {
     return;
   }
 
+  if (pend.type === 'force_sell_shop') {
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    title.textContent = '強制売却：1店舗売る';
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const got = Math.floor(sq.price * 0.5);
+      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      return `<button type="button" class="btn pick-invest-shop force-sell-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <span class="pick-invest-gain">売却 +${got.toLocaleString()}G</span>
+        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G（半額で換金）</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">お店を <strong>1店舗</strong> 売却する義務が発生しました</p>
+        <p class="hint">売却する店を選んでください（価格の半額が手元に戻ります）</p>
+      </div>
+      <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+    $$('.force-sell-shop').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'sell', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) {
+      skip.textContent = 'おまかせで売却';
+      skip.disabled = false;
+    }
+    return;
+  }
+
+  if (pend.type === 'any_shop_buy') {
+    const multi = pend.multi || 6;
+    const p = g.players[pend.playerId];
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
+    title.textContent = `指名買収：${multi}倍で買う`;
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const owner = g.players[sq.owner];
+      const price = sq.price * multi;
+      const can = getLiquidatableValue(g, p) >= price;
+      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      return `<button type="button" class="btn pick-invest-shop any-shop-buy" data-shop="${sq.id}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <span class="pick-invest-gain">${price.toLocaleString()}G</span>
+        <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(area)} · 店価 ${sq.price.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">好きな相手の店を <strong>${multi}倍</strong> で買収できます</p>
+        <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G — 不足時は調達に進めます</p>
+      </div>
+      <div class="pick-invest-list">${rows || '<p class="hint">相手の店がありません</p>'}</div>`;
+    $$('.any-shop-buy').forEach((btn) => {
+      btn.onclick = () => {
+        if (btn.disabled) return;
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'buy', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) {
+      skip.textContent = '見送る';
+      skip.disabled = false;
+    }
+    return;
+  }
+
   if (pend.type === 'five_buy') {
     const sq = getNode(g, pend.shopId);
     const owner = g.players[sq.owner];
@@ -4768,6 +4858,7 @@ function showChoiceModal(g) {
     const reasonLabel = {
       toll: '買い物料の支払い後',
       five_buy: '5倍買いのため',
+      any_shop_buy: '指名買収のため',
       buy_shop: 'お店購入のため',
       invest: '増資のため',
     }[pend.reason] || '資金調達';
@@ -4798,9 +4889,10 @@ function showChoiceModal(g) {
     }).join('');
     const canContinue = (p?.cash || 0) >= target;
     const mustPay = pend.resume?.type === 'after_toll' || pend.reason === 'toll';
-    const canExec = canContinue && pend.resume && ['five_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
+    const canExec = canContinue && pend.resume && ['five_buy', 'any_shop_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
     const execLabel = {
       five_buy: '調達完了 — 5倍買いする',
+      any_shop_buy: '調達完了 — 指名買収する',
       buy_shop: '調達完了 — 購入する',
       invest: '調達完了 — 増資する',
     }[pend.resume?.type] || '調達完了 — 実行する';

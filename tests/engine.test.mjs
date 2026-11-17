@@ -938,14 +938,25 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('all_cash'), 'expected all-player cash events');
     assert.ok(kinds.has('minigame'), 'expected minigame events');
     assert.ok(kinds.has('seize_mono_shop'), 'expected monopoly-break seize events');
-    assert.ok(kinds.has('five_buy_coupon'), 'expected cheap takeover coupon events');
+    assert.ok(
+      kinds.has('takeover_coupon') || kinds.has('five_buy_coupon'),
+      'expected cheap takeover coupon events',
+    );
+    assert.ok(kinds.has('slash_rival_shops'), 'expected rival shop markdown events');
+    assert.ok(kinds.has('slash_own_shops'), 'expected own shop markdown events');
+    assert.ok(kinds.has('any_shop_buy'), 'expected any-shop N× buy events');
+    assert.ok(kinds.has('force_sell_shop'), 'expected forced shop-sale events');
     assert.ok(kinds.has('swap_all_pos'), 'expected all-position shuffle events');
     assert.ok(kinds.has('scatter_all'), 'expected scatter-all warp events');
     assert.ok(kinds.has('gather_all'), 'expected gather-all warp events');
     const allCash = EVENT_CATALOG.filter((e) => e.effect === 'all_cash').length;
     const minis = EVENT_CATALOG.filter((e) => e.effect === 'minigame').length;
-    assert.ok(allCash >= 10, `expected many all_cash events, got ${allCash}`);
+    const takeover = EVENT_CATALOG.filter((e) => e.effect === 'takeover_coupon');
+    assert.ok(takeover.some((e) => e.multi === 3), 'expected 3× takeover coupons');
+    assert.ok(takeover.some((e) => e.multi === 4), 'expected 4× takeover coupons');
+    assert.ok(allCash >= 6, `expected several all_cash events, got ${allCash}`);
     assert.ok(minis >= 8, `expected many minigame events, got ${minis}`);
+    assert.ok(kinds.size >= 30, `expected richer unique effects, got ${kinds.size}`);
     const miniGames = new Set(
       EVENT_CATALOG.filter((e) => e.effect === 'minigame').map((e) => e.game)
     );
@@ -1756,6 +1767,125 @@ describe('MkMk Street engine', () => {
     assert.equal(b.price, priceBefore + amount);
     assert.equal(b.extraInvest, amount);
     assert.equal(a.extraInvest || 0, 0);
+  });
+
+  it('slash_rival_shops lowers rival shop values; slash_own_shops hurts own shops', () => {
+    const rivalId = EVENT_CATALOG.findIndex((e) => e.effect === 'slash_rival_shops');
+    const ownId = EVENT_CATALOG.findIndex((e) => e.effect === 'slash_own_shops');
+    assert.ok(rivalId >= 0 && ownId >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 201,
+      cash: 3000,
+    });
+    const shops = g.map.filter((n) => n.type === 'shop');
+    const rivalShop = shops[0];
+    const ownShop = shops[1];
+    rivalShop.owner = 1;
+    rivalShop.extraInvest = 120;
+    rivalShop.price = rivalShop.basePrice + 120;
+    ownShop.owner = 0;
+    ownShop.extraInvest = 100;
+    ownShop.price = ownShop.basePrice + 100;
+
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = rivalId + 1;
+    cell.scratched = false;
+    const beforeRival = rivalShop.price;
+    const r1 = scratchCell(g, g.players[0], 0);
+    assert.equal(r1.ok, true);
+    assert.ok(rivalShop.price < beforeRival, 'rival shop should drop');
+
+    const cell2 = g.sharedEventTable.cells[1];
+    cell2.eventId = ownId + 1;
+    cell2.scratched = false;
+    const beforeOwn = ownShop.price;
+    const r2 = scratchCell(g, g.players[0], 1);
+    assert.equal(r2.ok, true);
+    assert.ok(ownShop.price < beforeOwn, 'own shop should drop');
+  });
+
+  it('takeover_coupon grants 3× or 4× five-buy rights', () => {
+    const three = EVENT_CATALOG.find((e) => e.effect === 'takeover_coupon' && e.multi === 3);
+    const four = EVENT_CATALOG.find((e) => e.effect === 'takeover_coupon' && e.multi === 4);
+    assert.ok(three && four);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 202,
+      cash: 3000,
+    });
+    const p = g.players[0];
+    const c3 = g.sharedEventTable.cells[0];
+    c3.eventId = three.id;
+    c3.scratched = false;
+    scratchCell(g, p, 0);
+    assert.equal(p.flags.takeoverMulti, 3);
+    assert.equal(p.flags.fiveBuyCoupon, true);
+
+    p.flags.takeoverMulti = null;
+    p.flags.fiveBuyCoupon = false;
+    const c4 = g.sharedEventTable.cells[1];
+    c4.eventId = four.id;
+    c4.scratched = false;
+    scratchCell(g, p, 1);
+    assert.equal(p.flags.takeoverMulti, 4);
+  });
+
+  it('any_shop_buy opens a pick-to-seize pending at 6×', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'any_shop_buy');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 203,
+      cash: 20000,
+    });
+    const target = g.map.find((n) => n.type === 'shop');
+    target.owner = 1;
+    target.extraInvest = 0;
+    target.price = target.basePrice;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.anyShopBuy, true);
+    assert.equal(g.pending?.type, 'any_shop_buy');
+    assert.equal(g.pending.multi, 6);
+    const price = target.price * 6;
+    const bought = applyChoice(g, { action: 'buy', shopId: target.id });
+    assert.equal(bought.ok, true);
+    assert.equal(target.owner, 0);
+    assert.ok(g.players[0].cash <= 20000 - price + 1);
+  });
+
+  it('force_sell_shop requires selling one owned shop', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'force_sell_shop');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 204,
+      cash: 3000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    shop.extraInvest = 0;
+    shop.price = shop.basePrice;
+    const cashBefore = g.players[0].cash;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.forceSell, true);
+    assert.equal(g.pending?.type, 'force_sell_shop');
+    const sold = applyChoice(g, { action: 'sell', shopId: shop.id });
+    assert.equal(sold.ok, true);
+    assert.equal(shop.owner, -1);
+    assert.ok(g.players[0].cash >= cashBefore + Math.floor(shop.basePrice * 0.5) - 1);
   });
 
   it('scratch paints cell with opener player color', () => {

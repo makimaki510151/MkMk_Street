@@ -1902,7 +1902,16 @@ function payToll(g, payer, sq) {
 }
 
 function fiveBuyMultiplier(p) {
-  return p?.flags?.fiveBuyCoupon ? 3 : 5;
+  const m = Number(p?.flags?.takeoverMulti);
+  if (Number.isFinite(m) && m >= 2 && m <= 4) return Math.floor(m);
+  if (p?.flags?.fiveBuyCoupon) return 3;
+  return 5;
+}
+
+function clearTakeoverCoupon(p) {
+  if (!p?.flags) return;
+  p.flags.fiveBuyCoupon = false;
+  p.flags.takeoverMulti = null;
 }
 
 function offerFiveBuyOrEnd(g, payer, sq, toll) {
@@ -2044,6 +2053,16 @@ function resumeAfterRaiseFunds(g, p, resume) {
       price: resume.price,
       multi: resume.multi || 5,
       toll: resume.toll,
+    };
+    return;
+  }
+  if (resume.type === 'any_shop_buy') {
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'any_shop_buy',
+      playerId: p.id,
+      multi: resume.multi || 6,
+      shopIds: [resume.shopId],
     };
     return;
   }
@@ -2197,8 +2216,8 @@ export function applyChoice(g, choice) {
         const owner = g.players[sq.owner];
         const prevOwnerId = sq.owner;
         const area = sq.area;
-        const usedCoupon = !!p.flags.fiveBuyCoupon && multi < 5;
-        if (usedCoupon) p.flags.fiveBuyCoupon = false;
+        const usedCoupon = multi < 5 && (!!p.flags.fiveBuyCoupon || !!p.flags.takeoverMulti);
+        if (usedCoupon) clearTakeoverCoupon(p);
         p.cash -= price;
         if (owner) owner.cash += Math.floor(price * 0.6);
         sq.owner = p.id;
@@ -2284,6 +2303,15 @@ export function applyChoice(g, choice) {
           toll: resume.toll,
         };
         return applyChoice(g, { action: 'buy' });
+      }
+      if (resume?.type === 'any_shop_buy' && choice.execute) {
+        g.pending = {
+          type: 'any_shop_buy',
+          playerId: p.id,
+          multi: resume.multi || 6,
+          shopIds: [resume.shopId],
+        };
+        return applyChoice(g, { action: 'buy', shopId: resume.shopId });
       }
       if (resume?.type === 'buy_shop' && choice.execute) {
         g.pending = {
@@ -2423,6 +2451,12 @@ export function applyChoice(g, choice) {
       messages: result.messages || [],
       warps: result.warps || [],
     };
+    if (maybeOpenForceSell(g, p)) {
+      return { ok: true, ...matchPayload, forceSell: true, state: serializeState(g) };
+    }
+    if (maybeOpenAnyShopBuy(g, p)) {
+      return { ok: true, ...matchPayload, anyShopBuy: true, state: serializeState(g) };
+    }
     if (maybeOpenPickInvest(g, p)) {
       return { ok: true, ...matchPayload, pickInvest: true, state: serializeState(g) };
     }
@@ -2436,6 +2470,104 @@ export function applyChoice(g, choice) {
     }
     endTurn(g);
     return { ok: true, ...matchPayload, state: serializeState(g) };
+  }
+
+  if (pending.type === 'force_sell_shop') {
+    const allowed = new Set(pending.shopIds || []);
+    let shopId = Number(choice.shopId);
+    if (choice.action === 'skip' || !Number.isFinite(shopId)) {
+      // おまかせ：安い店から処分
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id
+        && (!allowed.size || allowed.has(s.id)));
+      shops.sort((a, b) => a.price - b.price);
+      shopId = shops[0]?.id;
+    }
+    if (!Number.isFinite(shopId) || (allowed.size && !allowed.has(shopId))) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    const sold = sellShopForCash(g, p, shopId);
+    if (!sold.ok) return { ok: false, error: sold.error };
+    g.pending = null;
+    if (p.flags.extraRoll) {
+      p.flags.extraRoll = false;
+      g.phase = 'await_roll';
+      return { ok: true, forceSell: true, shopId, state: serializeState(g) };
+    }
+    endTurn(g);
+    return {
+      ok: true,
+      forceSell: true,
+      shopId,
+      ...(sold.monopolyBreak ? { monopolyBreak: sold.monopolyBreak } : {}),
+      state: serializeState(g),
+    };
+  }
+
+  if (pending.type === 'any_shop_buy') {
+    const multi = pending.multi || 6;
+    if (choice.action === 'skip') {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action !== 'buy' && choice.action !== 'pick') {
+      return { ok: false, error: 'bad_choice' };
+    }
+    const sq = getNode(g, Number(choice.shopId));
+    const allowed = pending.shopIds || [];
+    if (!sq || sq.type !== 'shop' || sq.owner < 0 || sq.owner === p.id) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    if (allowed.length && !allowed.includes(sq.id)) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    const price = sq.price * multi;
+    if (getLiquidatableValue(g, p) < price) {
+      return { ok: false, error: 'insufficient' };
+    }
+    if (p.cash < price) {
+      openRaiseFunds(g, p, {
+        targetCash: price,
+        reason: 'any_shop_buy',
+        resume: {
+          type: 'any_shop_buy',
+          shopId: sq.id,
+          price,
+          multi,
+        },
+      });
+      return { ok: true, needFunds: true, state: serializeState(g) };
+    }
+    const owner = g.players[sq.owner];
+    const prevOwnerId = sq.owner;
+    const area = sq.area;
+    p.cash -= price;
+    if (owner) owner.cash += Math.floor(price * 0.6);
+    sq.owner = p.id;
+    sq.extraInvest = 0;
+    sq.price = sq.basePrice;
+    bumpStat(p, 'shopsStolen', 1);
+    let monopolyBreak = null;
+    if (prevOwnerId >= 0 && prevOwnerId !== p.id) {
+      monopolyBreak = applyMonopolyBreak(g, prevOwnerId, area);
+    }
+    if (!monopolyBreak) updateAreaStockPrices(g);
+    addLog(g, `${p.name} が${multi}倍買いで「${sq.label}」を指名買収！`, 'shop');
+    const mono = tryGrantMonopolyBonus(g, p, area);
+    g.pending = null;
+    endTurn(g);
+    return {
+      ok: true,
+      fiveBuy: true,
+      fiveBuyShop: sq.label,
+      fiveBuyMulti: multi,
+      fiveBuyPlayerId: p.id,
+      fiveBuyCoupon: false,
+      anyShopBuy: true,
+      ...(monopolyBreak ? { monopolyBreak } : {}),
+      ...(mono || {}),
+      state: serializeState(g),
+    };
   }
 
   if (pending.type === 'pick_invest') {
@@ -2502,6 +2634,41 @@ function maybeOpenPickInvest(g, p) {
     shopIds: shops.map((s) => s.id),
   };
   addLog(g, `${p.name} は増資するお店を選ぶ（+${g.pending.amount}G）`, 'shop');
+  return true;
+}
+
+/** 強制売却：自分の店を1軒売らなければならない */
+function maybeOpenForceSell(g, p) {
+  if (!p.flags?.pendingForceSell) return false;
+  p.flags.pendingForceSell = false;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+  if (!shops.length) return false;
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'force_sell_shop',
+    playerId: p.id,
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} はお店を1店舗売却しなければならない`, 'event');
+  return true;
+}
+
+/** 好きな相手店を N 倍で買う権利 */
+function maybeOpenAnyShopBuy(g, p) {
+  const info = p.flags?.pendingAnyShopBuy;
+  if (!info) return false;
+  p.flags.pendingAnyShopBuy = null;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id);
+  if (!shops.length) return false;
+  const multi = Math.max(5, Math.min(8, Number(info.multi) || 6));
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'any_shop_buy',
+    playerId: p.id,
+    multi,
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} は好きな相手の店を${multi}倍で買える`, 'event');
   return true;
 }
 
@@ -3541,6 +3708,52 @@ export function cpuAct(g) {
       const best = cpuPickInvestShop(g, p, ids, traits, { preferId: null, requireRem: false });
       return applyChoice(g, { action: 'invest', shopId: best });
     }
+    if (pend.type === 'force_sell_shop') {
+      const focus = cpuFocusAreas(g, p, traits);
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.id);
+      const shops = ids.map((id) => getNode(g, id)).filter((s) => s && s.owner === p.id);
+      shops.sort((a, b) => {
+        const fa = focus.includes(a.area) ? 1 : 0;
+        const fb = focus.includes(b.area) ? 1 : 0;
+        if (fa !== fb) return fa - fb;
+        const ca = getPlayerAreaCount(g, p.id, a.area);
+        const cb = getPlayerAreaCount(g, p.id, b.area);
+        return ca - cb || a.price - b.price;
+      });
+      const target = shops[0];
+      if (!target) return applyChoice(g, { action: 'skip' });
+      return applyChoice(g, { action: 'sell', shopId: target.id });
+    }
+    if (pend.type === 'any_shop_buy') {
+      const multi = pend.multi || 6;
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id).map((s) => s.id);
+      let best = null;
+      let bestScore = -Infinity;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq || sq.owner < 0 || sq.owner === p.id) continue;
+        const price = sq.price * multi;
+        if (!cpuCanAffordSpend(g, p, price) || getLiquidatableValue(g, p) < price) continue;
+        const areaSize = getAreaShops(g, sq.area).length;
+        const ownerCnt = getPlayerAreaCount(g, sq.owner, sq.area);
+        const myCnt = getPlayerAreaCount(g, p.id, sq.area);
+        let score = myCnt * traits.ownArea;
+        if (ownerCnt >= areaSize) score += 8;
+        if (myCnt >= areaSize - 1) score += 6;
+        score += (pend.toll || 0) / 100;
+        score += cpuNoise(g, p, id + 61) * 0.3;
+        if (score > bestScore) {
+          bestScore = score;
+          best = sq;
+        }
+      }
+      if (!best) return applyChoice(g, { action: 'skip' });
+      return applyChoice(g, { action: 'buy', shopId: best.id });
+    }
     if (pend.type === 'five_buy') {
       const buy = cpuShouldFiveBuy(g, p, pend, traits);
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
@@ -3548,7 +3761,7 @@ export function cpuAct(g) {
     if (pend.type === 'raise_funds') {
       const target = Number(pend.targetCash) || 0;
       const resume = pend.resume;
-      const optional = !!(resume && ['five_buy', 'buy_shop', 'invest'].includes(resume.type));
+      const optional = !!(resume && ['five_buy', 'any_shop_buy', 'buy_shop', 'invest'].includes(resume.type));
       const urgent = !optional; // 通行料など必須負債は資産を惜しまず換金
       cpuRaiseFunds(g, p, target, traits, { urgent });
       if (p.cash >= target) {
@@ -3557,7 +3770,7 @@ export function cpuAct(g) {
         if (optional && resume?.type === 'invest') {
           const pay = Number(resume.amount) || target;
           exec = cpuCanAffordSpend(g, p, pay);
-        } else if (optional && (resume?.type === 'buy_shop' || resume?.type === 'five_buy')) {
+        } else if (optional && (resume?.type === 'buy_shop' || resume?.type === 'five_buy' || resume?.type === 'any_shop_buy')) {
           const pay = Number(resume.price) || target;
           exec = cpuCanAffordSpend(g, p, pay);
         }
