@@ -5463,7 +5463,7 @@ function showChoiceModal(g) {
       ? (pend.resumeMove ? '銀行通過 — 株を1種類購入' : '銀行 — 株を1種類購入')
       : '証券マス — 株を1種類購入';
     $('#modal-card').classList.add('stock-modal');
-    // 盤面の店にエリア番号を出し、ホバー/選択でハイライト
+    // 盤面は通常表示のまま。ホバー/選択したエリアの店だけハイライト
     app.renderer?.setStockHighlight(null, true);
     applyModalMode();
 
@@ -5494,7 +5494,7 @@ function showChoiceModal(g) {
     }).join('');
 
     body.innerHTML = `
-      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のエリア店が光ります。</p>
+      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のそのエリアの店が光ります（マス表記は通常のまま）。</p>
       <div class="stock-grid">${cards}</div>
       <div id="stock-buy-panel" class="stock-buy-panel" hidden>
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
