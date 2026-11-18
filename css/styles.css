@@ -288,6 +288,31 @@ button:disabled { opacity: .42; cursor: default; }
 .order-roll-row.tied {
   outline: 1px solid rgba(240, 162, 2, 0.45);
 }
+.order-roll-row.ranked {
+  grid-template-columns: 2rem 10px 1fr auto;
+}
+.order-roll-row .or-rank {
+  font-family: var(--display);
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-align: right;
+}
+.order-roll-row.ranked.first .or-rank {
+  color: var(--accent-strong);
+}
+.order-roll-result {
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.order-roll-result strong {
+  color: var(--accent-strong);
+}
 .seat-name {
   background: var(--bg0);
   border: 1px solid var(--line);

@@ -1479,6 +1479,8 @@ function beginOrderRoll({ players, goal, mapId, mode }) {
     rolls: {},
     pending: list.map((p) => p.key),
     round: 1,
+    awaitingConfirm: false,
+    finalOrder: null,
     goal,
     mapId,
     mode,
@@ -1505,6 +1507,8 @@ function serializeOrderRoll() {
     rolls: o.rolls,
     pending: o.pending,
     round: o.round,
+    awaitingConfirm: !!o.awaitingConfirm,
+    finalOrder: o.finalOrder || null,
     goal: o.goal,
     mapId: o.mapId,
   };
@@ -1516,6 +1520,8 @@ function applyOrderRollSync(data) {
     rolls: data.rolls || {},
     pending: data.pending || [],
     round: data.round || 1,
+    awaitingConfirm: !!data.awaitingConfirm,
+    finalOrder: Array.isArray(data.finalOrder) ? data.finalOrder : null,
     goal: data.goal,
     mapId: data.mapId,
     mode: 'guest',
@@ -1530,8 +1536,19 @@ function showOrderRollScreen() {
   if (!btn) return;
   btn.onclick = () => {
     audio.sfx.click();
+    const o = app.orderRoll;
+    if (o?.awaitingConfirm) {
+      confirmOrderRollStart();
+      return;
+    }
     claimOrderRoll();
   };
+}
+
+function orderRollCanConfirm() {
+  const o = app.orderRoll;
+  if (!o?.awaitingConfirm) return false;
+  return o.mode === 'host' || o.mode === 'local';
 }
 
 function renderOrderRollUi() {
@@ -1540,40 +1557,87 @@ function renderOrderRollUi() {
   const list = $('#order-roll-list');
   const status = $('#order-roll-status');
   const hint = $('#order-roll-hint');
+  const resultEl = $('#order-roll-result');
   const btn = $('#btn-order-roll');
   const myKey = orderRollMyKey();
   const pendingSet = new Set(o.pending || []);
+  const awaiting = !!o.awaitingConfirm && Array.isArray(o.finalOrder) && o.finalOrder.length;
   if (hint) {
-    hint.textContent = o.round > 1
-      ? `同じ出目の人だけ振り直し（${o.round}回目）。1〜100・大きいほど先手。スペースでも振れます。`
-      : '1〜100の出目が大きいほど先手。同じ出目の人だけ振り直します。スペースでも振れます。';
+    if (awaiting) {
+      hint.textContent = '出目がそろいました。下の順番を確認してください。';
+    } else {
+      hint.textContent = o.round > 1
+        ? `同じ出目の人だけ振り直し（${o.round}回目）。1〜100・大きいほど先手。スペースでも振れます。`
+        : '1〜100の出目が大きいほど先手。同じ出目の人だけ振り直します。スペースでも振れます。';
+    }
   }
   if (list) {
-    list.innerHTML = o.players.map((p) => {
+    const byKey = new Map(o.players.map((p) => [p.key, p]));
+    const rows = awaiting
+      ? o.finalOrder.map((key, i) => ({ p: byKey.get(key), rank: i + 1 })).filter((r) => r.p)
+      : o.players.map((p) => ({ p, rank: 0 }));
+    list.innerHTML = rows.map(({ p, rank }) => {
       const rolled = Number.isFinite(o.rolls[p.key]);
-      const waiting = pendingSet.has(p.key);
+      const waiting = !awaiting && pendingSet.has(p.key);
       const cls = [
         'order-roll-row',
+        awaiting ? 'ranked' : '',
+        awaiting && rank === 1 ? 'first' : '',
         waiting ? 'pending' : '',
         waiting && o.round > 1 ? 'tied' : '',
       ].filter(Boolean).join(' ');
       const dice = rolled ? String(o.rolls[p.key]) : (waiting ? '待ち' : '—');
+      const rankHtml = awaiting
+        ? `<span class="or-rank">${rank}位</span>`
+        : '';
       return `<div class="${cls}" style="--pc:${p.color || PLAYER_COLORS[0]}">
+        ${rankHtml}
         <span class="or-dot"></span>
         <span>${escapeHtml(p.name)}${p.isCPU ? '（CPU）' : ''}${p.key === myKey ? '（あなた）' : ''}</span>
         <span class="or-dice">${escapeHtml(dice)}</span>
       </div>`;
     }).join('');
   }
-  const canRoll = !!myKey && pendingSet.has(myKey) && !o.players.find((p) => p.key === myKey)?.isCPU;
+  if (resultEl) {
+    if (awaiting) {
+      const byKey = new Map(o.players.map((p) => [p.key, p]));
+      const names = o.finalOrder
+        .map((key) => byKey.get(key))
+        .filter(Boolean)
+        .map((p, i) => `${i + 1}位 ${p.name}${p.isCPU ? '（CPU）' : ''}`);
+      resultEl.hidden = false;
+      resultEl.innerHTML = `<strong>手番順</strong>：${names.map(escapeHtml).join(' → ')}`;
+    } else {
+      resultEl.hidden = true;
+      resultEl.textContent = '';
+    }
+  }
+  const canRoll = !awaiting
+    && !!myKey
+    && pendingSet.has(myKey)
+    && !o.players.find((p) => p.key === myKey)?.isCPU;
+  const canConfirm = orderRollCanConfirm();
   if (btn) {
-    btn.disabled = !canRoll;
-    btn.textContent = o.round > 1 ? 'もう一度振る' : 'サイコロを振る';
+    if (awaiting) {
+      btn.disabled = !canConfirm;
+      btn.textContent = canConfirm ? 'この順番で開始' : 'ホストの開始待ち';
+    } else {
+      btn.disabled = !canRoll;
+      btn.textContent = o.round > 1 ? 'もう一度振る' : 'サイコロを振る';
+    }
   }
   if (status) {
-    if (!pendingSet.size) status.textContent = '結果を確定しています…';
-    else if (canRoll) status.textContent = 'あなたの番です。サイコロを振ってください';
-    else status.textContent = '他のプレイヤーの出目を待っています…';
+    if (awaiting) {
+      status.textContent = canConfirm
+        ? '順番を確認して「この順番で開始」を押してください（スペースでも可）'
+        : 'ホストが開始するまでお待ちください…';
+    } else if (!pendingSet.size) {
+      status.textContent = '結果を集計しています…';
+    } else if (canRoll) {
+      status.textContent = 'あなたの番です。サイコロを振ってください';
+    } else {
+      status.textContent = '他のプレイヤーの出目を待っています…';
+    }
   }
 }
 
@@ -1647,6 +1711,8 @@ function finishOrderRollRound() {
   if (!o) return;
   const result = evaluateOrderRolls(o.players, o.rolls);
   if (!result.done) {
+    o.awaitingConfirm = false;
+    o.finalOrder = null;
     o.pending = result.rerollKeys;
     o.round += 1;
     for (const k of result.rerollKeys) delete o.rolls[k];
@@ -1656,7 +1722,19 @@ function finishOrderRollRound() {
     scheduleOrderRollCpus();
     return;
   }
-  const ordered = result.order.map((key) => o.players.find((p) => p.key === key)).filter(Boolean);
+  o.pending = [];
+  o.awaitingConfirm = true;
+  o.finalOrder = result.order.slice();
+  renderOrderRollUi();
+  broadcastOrderRollSync();
+  toast('順番が決まりました');
+}
+
+function confirmOrderRollStart() {
+  const o = app.orderRoll;
+  if (!o?.awaitingConfirm || !Array.isArray(o.finalOrder) || !o.finalOrder.length) return;
+  if (!orderRollCanConfirm()) return;
+  const ordered = o.finalOrder.map((key) => o.players.find((p) => p.key === key)).filter(Boolean);
   const players = ordered.map((p) => ({
     peerId: p.peerId,
     name: p.name,
