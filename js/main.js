@@ -1993,6 +1993,29 @@ function maybeDemoLanding() {
     refreshGameUI();
     return;
   }
+  if (demo === 'trade' || demo === 'trade-offer') {
+    const shops = app.game.map.filter((s) => s.type === 'shop');
+    const mine = shops.filter((_, i) => i % 2 === 0).slice(0, 2);
+    const theirs = shops.filter((_, i) => i % 2 === 1).slice(0, 2);
+    for (const sq of mine) sq.owner = p.id;
+    const other = app.game.players.find((pl) => pl.id !== p.id) || app.game.players[1];
+    for (const sq of theirs) sq.owner = other.id;
+    p.cash = Math.max(p.cash, 3000);
+    other.cash = Math.max(other.cash, 3000);
+    app.game.phase = 'await_choice';
+    app.game.pending = {
+      type: 'shop_trade_offer',
+      playerId: p.id,
+      fromId: other.id,
+      giveShopIds: theirs.map((s) => s.id),
+      takeShopIds: mine.map((s) => s.id),
+      cashDelta: 120,
+      counterCashDelta: 120,
+    };
+    app.game.move = null;
+    refreshGameUI();
+    return;
+  }
   if (demo === 'results') {
     seedResultsDemo(app.game);
     refreshGameUI();
@@ -5579,7 +5602,7 @@ function showChoiceModal(g) {
         <span class="hint">${sq.price.toLocaleString()}G・A${sq.area}</span>
       </button>`;
     body.innerHTML = `
-      <p class="hint">渡す店と受け取る店を選び、差額を確認して提案します。相手は承認か拒否のみです。</p>
+      <p class="hint">渡す店と受け取る店を選び、差額を確認して提案します。相手は承認・拒否のほか、差額を変えて逆交渉できます。</p>
       <div class="trade-section">
         <h4>相手</h4>
         <div class="trade-targets">
@@ -5647,10 +5670,14 @@ function showChoiceModal(g) {
     const me = g.players[pend.playerId];
     title.textContent = '物件取引の提案';
     $('#modal-card').classList.add('wide');
-    $('#btn-skip-choice').textContent = '拒否する';
+    // モーダル内に拒否があるのでフッタの「拒否する」は出さない（二重表示防止）
+    $('#btn-skip-choice').hidden = true;
     const giveValue = sumShopPrices(g, pend.giveShopIds);
     const takeValue = sumShopPrices(g, pend.takeShopIds);
     const cashDelta = Math.floor(Number(pend.cashDelta) || 0);
+    const counterCash = pend.counterCashDelta != null
+      ? Math.floor(Number(pend.counterCashDelta) || 0)
+      : cashDelta;
     const listShops = (ids) => (ids || []).map((id) => {
       const sq = getNode(g, id);
       if (!sq) return '';
@@ -5659,6 +5686,11 @@ function showChoiceModal(g) {
     let cashLine = '現金のやりとりなし';
     if (cashDelta > 0) cashLine = `${escapeHtml(from?.name || '相手')} があなたへ ${cashDelta.toLocaleString()}G 支払い`;
     else if (cashDelta < 0) cashLine = `あなたが ${escapeHtml(from?.name || '相手')} へ ${Math.abs(cashDelta).toLocaleString()}G 支払い`;
+    const counterLead = counterCash === 0
+      ? '逆交渉：現金のやりとりなし'
+      : (counterCash > 0
+        ? `逆交渉：相手があなたへ ${counterCash.toLocaleString()}G`
+        : `逆交渉：あなたが相手へ ${Math.abs(counterCash).toLocaleString()}G`);
     body.innerHTML = `
       <p class="modal-lead">${escapeHtml(from?.name || '相手')} からの提案です</p>
       <div class="trade-cols">
@@ -5671,14 +5703,34 @@ function showChoiceModal(g) {
           <ul class="trade-summary">${listShops(pend.takeShopIds) || '<li class="hint">なし</li>'}</ul>
         </div>
       </div>
-      <p>${cashLine}</p>
-      <p class="hint">所持金 ${Number(me?.cash || 0).toLocaleString()}G ／ 逆提案はできません</p>
+      <p><strong>提案の差額：</strong>${cashLine}</p>
+      <div class="trade-section">
+        <h4>逆交渉の差額</h4>
+        <p class="hint">正の値＝相手があなたに支払う。承認は元の提案額のまま、逆交渉だけ下書き額を使います。</p>
+        <label class="field">差額（G）
+          <input type="number" id="trade-counter-cash" value="${counterCash}" step="10" />
+        </label>
+        <p class="modal-lead">${counterLead}</p>
+      </div>
+      <p class="hint">所持金 ${Number(me?.cash || 0).toLocaleString()}G</p>
       <div class="modal-actions">
         <button class="btn primary" id="m-trade-accept">承認する</button>
+        <button class="btn" id="m-trade-counter">この差額で逆交渉</button>
         <button class="btn danger ghost" id="m-trade-reject">拒否する</button>
       </div>`;
+    const counterInput = $('#trade-counter-cash');
+    if (counterInput) {
+      const commitCounterCash = () => {
+        sendAction({ type: 'choice', choice: { action: 'set_cash', cashDelta: Number(counterInput.value) || 0 } });
+      };
+      counterInput.addEventListener('change', commitCounterCash);
+    }
     $('#m-trade-accept').onclick = () => {
       sendAction({ type: 'choice', choice: { action: 'accept' } });
+    };
+    $('#m-trade-counter').onclick = () => {
+      const draft = Number($('#trade-counter-cash')?.value || 0);
+      sendAction({ type: 'choice', choice: { action: 'counter', cashDelta: draft } });
     };
     $('#m-trade-reject').onclick = () => {
       audio.sfx.cancel();

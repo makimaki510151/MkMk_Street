@@ -3059,6 +3059,57 @@ describe('MkMk Street engine', () => {
     assert.equal(bShop.owner, 0);
   });
 
+  it('allows counter-offer with edited cash on shop trade', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    const aShop = shops[0];
+    const bShop = shops[1];
+    aShop.owner = 0;
+    bShop.owner = 1;
+    aShop.price = 200;
+    bShop.price = 300;
+    g.players[0].cash = 4000;
+    g.players[1].cash = 4000;
+    g.phase = 'await_roll';
+    g.currentPlayerIdx = 0;
+
+    openShopTradeCompose(g, 0);
+    applyChoice(g, { action: 'set_target', targetId: 1 });
+    applyChoice(g, { action: 'toggle_give', shopId: aShop.id });
+    applyChoice(g, { action: 'toggle_take', shopId: bShop.id });
+    applyChoice(g, { action: 'set_cash', cashDelta: 40 });
+    assert.equal(applyChoice(g, { action: 'propose' }).ok, true);
+    assert.equal(g.pending.type, 'shop_trade_offer');
+    assert.equal(g.pending.playerId, 1);
+    assert.equal(g.pending.cashDelta, 40);
+    assert.equal(g.pending.counterCashDelta, 40);
+
+    // B edits draft cash then counters: wants A to pay 80 instead
+    assert.equal(applyChoice(g, { action: 'set_cash', cashDelta: 80 }).ok, true);
+    assert.equal(g.pending.cashDelta, 40, 'original offer cash stays for accept');
+    assert.equal(g.pending.counterCashDelta, 80);
+    const countered = applyChoice(g, { action: 'counter', cashDelta: 80 });
+    assert.equal(countered.ok, true);
+    assert.equal(g.pending.type, 'shop_trade_offer');
+    assert.equal(g.pending.playerId, 0);
+    assert.equal(g.pending.fromId, 1);
+    assert.deepEqual(g.pending.giveShopIds, [bShop.id]);
+    assert.deepEqual(g.pending.takeShopIds, [aShop.id]);
+    assert.equal(g.pending.cashDelta, -80);
+
+    const cashA = g.players[0].cash;
+    const cashB = g.players[1].cash;
+    assert.equal(applyChoice(g, { action: 'accept' }).ok, true);
+    assert.equal(aShop.owner, 1);
+    assert.equal(bShop.owner, 0);
+    // cashDelta -80 with from=B to=A → A pays B 80
+    assert.equal(g.players[0].cash, cashA - 80);
+    assert.equal(g.players[1].cash, cashB + 80);
+  });
+
   it('executeShopTrade requires at least one shop each side', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],

@@ -3060,6 +3060,7 @@ export function applyChoice(g, choice) {
         giveShopIds,
         takeShopIds,
         cashDelta,
+        counterCashDelta: cashDelta,
       };
       addLog(g, `${p.name} が ${target.name} に物件取引を持ちかけた`, 'shop');
       return { ok: true, tradeOffered: true, state: serializeState(g) };
@@ -3074,6 +3075,42 @@ export function applyChoice(g, choice) {
       g.pending = null;
       g.phase = 'await_roll';
       return { ok: true, tradeRejected: true, state: serializeState(g) };
+    }
+    if (choice?.action === 'set_cash') {
+      // 逆交渉用の下書き差額（提案本体の cashDelta は承認時に使う）
+      pending.counterCashDelta = Math.floor(Number(choice.cashDelta) || 0);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice?.action === 'counter') {
+      if (!from || from.bankrupt) {
+        g.pending = null;
+        g.phase = 'await_roll';
+        return { ok: false, error: 'bad_player' };
+      }
+      const giveShopIds = [...(pending.takeShopIds || [])];
+      const takeShopIds = [...(pending.giveShopIds || [])];
+      // 表示上の正＝相手が支払う → 自分が提案者になると符号を反転
+      const draft = choice.cashDelta != null
+        ? choice.cashDelta
+        : (pending.counterCashDelta != null ? pending.counterCashDelta : pending.cashDelta);
+      const cashDelta = -Math.floor(Number(draft) || 0);
+      const check = validateShopTradeSides(g, p.id, pending.fromId, giveShopIds, takeShopIds);
+      if (!check.ok) return check;
+      const fromPay = Math.max(0, cashDelta);
+      const toPay = Math.max(0, -cashDelta);
+      if (p.cash < fromPay) return { ok: false, error: 'proposer_cash' };
+      if (from.cash < toPay) return { ok: false, error: 'target_cash' };
+      g.pending = {
+        type: 'shop_trade_offer',
+        playerId: pending.fromId,
+        fromId: p.id,
+        giveShopIds,
+        takeShopIds,
+        cashDelta,
+        counterCashDelta: cashDelta,
+      };
+      addLog(g, `${p.name} が ${from.name} に物件の逆交渉を申し込んだ`, 'shop');
+      return { ok: true, tradeCountered: true, state: serializeState(g) };
     }
     if (choice?.action === 'accept') {
       if (!from || from.bankrupt) {
