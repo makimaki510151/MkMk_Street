@@ -18,6 +18,12 @@ export const AREA_META = {
   11: { name: 'がけした', color: '#3a6a72', pattern: 'stripe', patternInk: '#6f9aa3' },
   12: { name: '潮風通り', color: '#4f6d8c', pattern: 'check', patternInk: '#8aa3bd' },
   13: { name: '底の灯', color: '#3f6f7e', pattern: 'dots', patternInk: '#7aa3b0' },
+  14: { name: '人差し指', color: '#4a7088', pattern: 'grid', patternInk: '#7ea3b6' },
+  15: { name: 'こぶし脇', color: '#3e6280', pattern: 'diamond', patternInk: '#7496b0' },
+  16: { name: '第一関節', color: '#456a78', pattern: 'check', patternInk: '#7a9eab' },
+  17: { name: '指先通り', color: '#3d5f86', pattern: 'stripe', patternInk: '#7394b8' },
+  18: { name: '親指の先', color: '#4b678a', pattern: 'dots', patternInk: '#839ebc' },
+  19: { name: '親指の腹', color: '#395f70', pattern: 'grid', patternInk: '#6f95a4' },
 };
 
 /** 1グループ（株エリア）あたりのお店数の上限 */
@@ -739,6 +745,211 @@ export function buildBin() {
   });
 }
 
+/**
+ * マップ案「サムズアップ」：親指を立てた形（21×18）。
+ * 凡例: 銀銀行 / Ａ〜Ｓ店 / 削スクラッチ / スロット / 株 / ララッキー / イイベント / 再もう一回 / ♠♥♦♣
+ */
+export function buildThumbsUp() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　　　　イＲＲ　　　',
+    '　　　　　　　　　　　　　　　Ｒ　Ｒ　　　',
+    '　　　　　　　　　　　　　　　Ｒ　♣ＱＱＱ',
+    '　　　　　　　　　　　　　　　ス　　　　Ｑ',
+    '　　　　　　　　　　　　　　　Ｓ　　　　Ｐ',
+    '　　　　　　　　　　　　　　　Ｓ　　　　Ｐ',
+    '　　　　　　　　　　　　　　　Ｓ　　　　株',
+    '　　　　　　　　　　　　　　　Ｓ　　　　Ｐ',
+    'ＢＡＡＡＡ銀ＪＪＪＪ削ＬＬＬＬ再　　　　Ｐ',
+    'Ｂ　　　　　　　　　Ｉ　　　　Ｍ　　　ＯＯ',
+    'Ｂ　　　　　　　　　Ｉ　　　　Ｍ　　ＯＯ　',
+    'Ｂ　　　　　　　　　Ｉ　　　　Ｍ　　♠　　',
+    'イＣＣＣＣ♦　　　　Ｉ　　　　Ｍ　ＮＮ　　',
+    'Ｅ　　　　Ｄ　　　　ラＫＫＫＫイＮＮ　　　',
+    'Ｅ　　　　Ｄ　　　　Ｈ　　　　　　　　　　',
+    'Ｅ　　　　Ｄ　　　　Ｈ　　　　　　　　　　',
+    'Ｅ　　　　Ｄ　　　　Ｈ　　　　　　　　　　',
+    '♥ＦＦＦＦスＧＧＧＧＨ　　　　　　　　　　',
+  ];
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5, Ｆ: 6, Ｇ: 7,
+    Ｈ: 8, Ｉ: 9, Ｊ: 10, Ｋ: 11, Ｌ: 12, Ｍ: 13,
+    Ｎ: 14, Ｏ: 15, Ｐ: 16, Ｑ: 17, Ｒ: 18, Ｓ: 19,
+  };
+  const shopNames = {
+    1: ['拍手屋', 'メガホン堂', 'フラッグ屋', 'ビブス屋'],
+    2: ['手首カフェ', 'サポーター屋', 'アームバンド', 'リストラップ'],
+    3: ['グッジョブ食堂', 'ハイタッチ屋', '握手の店', '握手みやげ'],
+    4: ['掌の茶屋', 'フィンガーフード', '親指パン', 'ピースサンド'],
+    5: ['手のひら食堂', 'グローブ屋', 'ミット屋', '掌ヒット屋'],
+    6: ['手首マーケット', 'カフ屋', 'ボタン屋', '袖口みやげ'],
+    7: ['こぶし広場屋台', 'ガッツポーズ屋', '気合入れ', '気合丼'],
+    8: ['小指通り食堂', 'ピンキー屋', '指輪屋', 'ネイル屋'],
+    9: ['中指の交差点', 'シグナル屋', '指差し看板', '道標カフェ'],
+    10: ['人差し指横丁', 'ポイント屋', '案内所', '地図屋'],
+    11: ['薬指通り', 'リング工房', '宝石屋', '煌めき屋'],
+    12: ['関節マーケット', 'ヒンジ屋', 'ばね屋', '可動みやげ'],
+    13: ['手の甲ギャラリー', 'ナックル屋', 'プロテクター', '拳みやげ'],
+    14: ['第二関節屋台', 'ジョイント茶屋', '曲げ伸ばし屋', 'ストレッチ屋'],
+    15: ['こぶし脇食堂', 'サイドポケット', '脇役みやげ', '隠し味屋'],
+    16: ['第一関節ブティック', 'ナックルリング', '指サック屋', 'グリップ屋'],
+    17: ['指先ブティック', 'タッチ屋', 'センサー屋', '先端みやげ'],
+    18: ['親指の先ホテル', 'サムズアップ屋', 'いいね屋', '頂点カフェ', '頂上手みやげ'],
+    19: ['親指の腹食堂', '腹巻き屋', 'パッド屋', 'むっちりパン'],
+  };
+  const shopPrice = {
+    1: [300, 260, 220, 340],
+    2: [240, 200, 180, 280],
+    3: [230, 190, 170, 270],
+    4: [210, 180, 160, 250],
+    5: [200, 170, 150, 240],
+    6: [190, 160, 140, 230],
+    7: [200, 170, 150, 240],
+    8: [210, 180, 160, 250],
+    9: [250, 210, 190, 290],
+    10: [280, 240, 210, 320],
+    11: [260, 220, 200, 300],
+    12: [270, 230, 200, 310],
+    13: [250, 210, 190, 290],
+    14: [240, 200, 180, 280],
+    15: [260, 220, 200, 300],
+    16: [300, 260, 230, 340],
+    17: [320, 280, 250, 360],
+    18: [380, 340, 300, 420, 360],
+    19: [310, 270, 240, 350],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+
+  let bank = null;
+  let slotCount = 0;
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        const area = areaFromChar[ch];
+        const i = shopIdx[area]++;
+        const names = shopNames[area];
+        const prices = shopPrice[area];
+        put(col, row, N('shop', {
+          label: names[i % names.length],
+          area,
+          basePrice: prices[i % prices.length],
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '銀') {
+        bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+        continue;
+      }
+      if (ch === '♠') {
+        put(col, row, N('mark', { label: '♠', mark: 0, col, row }));
+        continue;
+      }
+      if (ch === '♥') {
+        put(col, row, N('mark', { label: '♥', mark: 1, col, row }));
+        continue;
+      }
+      if (ch === '♦') {
+        put(col, row, N('mark', { label: '♦', mark: 2, col, row }));
+        continue;
+      }
+      if (ch === '♣') {
+        put(col, row, N('mark', { label: '♣', mark: 3, col, row }));
+        continue;
+      }
+      if (ch === '削') {
+        put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+        continue;
+      }
+      if (ch === 'ス') {
+        slotCount += 1;
+        put(col, row, N('minigame', {
+          label: slotCount === 1 ? 'スロット' : 'スロットⅡ',
+          game: 'slot',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '株') {
+        put(col, row, N('stockbroker', { label: '証券', col, row }));
+        continue;
+      }
+      if (ch === 'ラ') {
+        put(col, row, N('lucky', { label: '★', col, row }));
+        continue;
+      }
+      if (ch === 'イ') {
+        put(col, row, N('event', { label: 'イベント', col, row }));
+        continue;
+      }
+      if (ch === '再') {
+        put(col, row, N('rollon', { label: 'もう一回', col, row }));
+        continue;
+      }
+      throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
+    }
+  }
+
+  if (!bank) throw new Error('サムズアップマップに銀行がありません');
+
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
+      for (const [dc, dr] of dirs) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        link([a, b]);
+      }
+    }
+  }
+
+  return packBoard(nodes, bank, 21, 18, {
+    mapId: 'thumbs_up',
+    mapName: 'サムズアップ',
+    goal: 18000,
+    initialCash: 1400,
+    areaOverrides: {
+      1: { name: '拍手横丁' },
+      2: { name: '手首坂' },
+      3: { name: 'ハイタッチ通り' },
+      4: { name: '掌の小路' },
+      5: { name: '手のひら通り' },
+      6: { name: '手首マーケット' },
+      7: { name: 'こぶし広場' },
+      8: { name: '小指通り' },
+      9: { name: '中指交差点' },
+      10: { name: '人差し指横丁' },
+      11: { name: '薬指通り' },
+      12: { name: '関節マーケット' },
+      13: { name: '手の甲ギャラリー' },
+      14: { name: '第二関節' },
+      15: { name: 'こぶし脇' },
+      16: { name: '第一関節' },
+      17: { name: '指先通り' },
+      18: { name: '親指の先' },
+      19: { name: '親指の腹' },
+    },
+  });
+}
+
 /** 選択可能なマップ一覧 */
 export const MAP_CATALOG = [
   {
@@ -772,6 +983,14 @@ export const MAP_CATALOG = [
     defaultGoal: 16000,
     defaultCash: 1500,
     build: buildBin,
+  },
+  {
+    id: 'thumbs_up',
+    name: 'サムズアップ',
+    blurb: '親指を立てた形。銀行から指先・手首へ長く分岐する大会戦マップ',
+    defaultGoal: 18000,
+    defaultCash: 1400,
+    build: buildThumbsUp,
   },
 ];
 

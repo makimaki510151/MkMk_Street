@@ -1830,6 +1830,7 @@ function startLocal(seats) {
   const mapFromDemo = demo === 'map-cliff' ? 'cliff_isle'
     : demo === 'map-shell' ? 'shell_harbor'
       : demo === 'map-bin' ? 'bin'
+      : demo === 'map-thumbs-up' ? 'thumbs_up'
         : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);

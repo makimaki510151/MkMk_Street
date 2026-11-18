@@ -131,12 +131,13 @@ describe('MkMk Street engine', () => {
   });
 
   it('offers multiple maps including a detached island board', () => {
-    assert.ok(MAP_CATALOG.length >= 4);
+    assert.ok(MAP_CATALOG.length >= 5);
     const ids = new Set(MAP_CATALOG.map((m) => m.id));
     assert.ok(ids.has('central_cross'));
     assert.ok(ids.has('shell_harbor'));
     assert.ok(ids.has('cliff_isle'));
     assert.ok(ids.has('bin'));
+    assert.ok(ids.has('thumbs_up'));
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -494,6 +495,36 @@ describe('MkMk Street engine', () => {
     const bank = board.nodes.find((n) => n.type === 'bank');
     assert.equal(bank?.col, 4);
     assert.equal(bank?.row, 0);
+  });
+
+  it('builds the thumbs-up map with 19 areas and no dead ends', () => {
+    const board = buildBoard('thumbs_up');
+    assert.equal(board.mapId, 'thumbs_up');
+    assert.equal(board.mapName, 'サムズアップ');
+    assert.equal(board.cols, 21);
+    assert.equal(board.rows, 18);
+    assert.equal(Object.keys(board.areas).length, 19);
+    for (const a of Object.keys(board.areas).map(Number)) {
+      const shops = board.nodes.filter((n) => n.type === 'shop' && n.area === a);
+      assert.ok(shops.length >= 4 && shops.length <= 5, `area ${a}: ${shops.length}`);
+    }
+    assert.equal(
+      board.nodes.filter((n) => n.type === 'shop' && n.area === 18).length,
+      5,
+      'thumb tip area has 5 shops',
+    );
+    assert.ok(board.nodes.some((n) => n.type === 'lucky'));
+    assert.ok(board.nodes.some((n) => n.type === 'rollon'));
+    assert.ok(board.nodes.some((n) => n.type === 'scratch'));
+    assert.ok(board.nodes.filter((n) => n.type === 'minigame').length >= 2);
+    assert.ok(board.nodes.filter((n) => n.type === 'event').length >= 3);
+    assert.equal(board.nodes.filter((n) => n.type === 'mark').length, 4);
+    const bank = board.nodes.find((n) => n.type === 'bank');
+    assert.equal(bank?.col, 5);
+    assert.equal(bank?.row, 8);
+    for (const n of board.nodes) {
+      assert.ok((n.nexts?.length || 0) >= 2, `${n.type}:${n.label} deg=${n.nexts?.length || 0}`);
+    }
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {
