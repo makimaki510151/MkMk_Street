@@ -1104,12 +1104,12 @@ describe('MkMk Street engine', () => {
       EVENT_CATALOG.filter((e) => e.effect === 'minigame').map((e) => e.game)
     );
     assert.ok(miniGames.size >= 8, `expected distinct minigame rules, got ${[...miniGames]}`);
-    assert.ok(miniGames.has('dice_parity'));
-    assert.ok(miniGames.has('dice_band'));
-    assert.ok(miniGames.has('card_duel'));
-    assert.ok(miniGames.has('coin_double'));
-    assert.ok(miniGames.has('coin_party'));
-    assert.ok(miniGames.has('neon_slot'));
+    assert.ok(miniGames.has('dice_battle'));
+    assert.ok(miniGames.has('horse_race'));
+    assert.ok(miniGames.has('rps_duel'));
+    assert.ok(miniGames.has('roulette'));
+    assert.ok(miniGames.has('heist'));
+    assert.ok(miniGames.has('balloon_dash'));
   });
 
   it('keeps lucky status until the start of the next own turn', () => {
@@ -1903,25 +1903,27 @@ describe('MkMk Street engine', () => {
       return r;
     };
 
-    const parity = run('dice_parity', '賽のカーニバル', { action: 'pick', value: 'odd' });
-    assert.ok(parity.reveal.outcome.roll >= 1 && parity.reveal.outcome.roll <= 6);
+    const battle = run('dice_battle', 'ダイスバトル', { action: 'pick', value: 'rush' });
+    assert.ok(battle.reveal.outcome.youTotal >= 2);
+    assert.ok(battle.reveal.outcome.foeTotal >= 2);
 
-    const band = run('dice_band', 'フォーチュンダイス', { action: 'pick', value: 'mid' });
-    assert.ok(band.reveal.outcome.band);
+    const race = run('horse_race', 'ミニ競馬', { action: 'pick', value: 1 });
+    assert.ok(race.reveal.outcome.place >= 1 && race.reveal.outcome.place <= 4);
+    assert.equal(race.reveal.outcome.order.length, 4);
 
-    const card = run('card_duel', 'カードハイロー', { action: 'pick', value: 'high' });
-    assert.ok(card.reveal.outcome.first >= 1 && card.reveal.outcome.second >= 1);
+    const rps = run('rps_duel', 'じゃんけん勝負', { action: 'pick', value: 'rock' });
+    assert.ok(['rock', 'paper', 'scissors'].includes(rps.reveal.outcome.foe));
 
-    const dub = run('coin_double', 'ラッキーフリップ', { action: 'pick', value: 'heads' });
-    assert.equal(dub.reveal.outcome.faces.length, 2);
+    const roulette = run('roulette', 'ルーレット', { action: 'pick', value: 'red' });
+    assert.ok(roulette.reveal.outcome.spin >= 0 && roulette.reveal.outcome.spin <= 36);
+    assert.ok(['red', 'black', 'green'].includes(roulette.reveal.outcome.color));
 
-    const party = run('coin_party', 'パーティーコイン', { action: 'pick', value: 'tails' });
-    assert.ok(party.reveal.outcome.face);
+    const heist = run('heist', '金庫破り', { action: 'pick', value: 'normal' });
+    assert.equal(typeof heist.reveal.outcome.success, 'boolean');
 
-    const neon = run('neon_slot', 'ネオンスロット', { action: 'spin' });
-    assert.equal(neon.reveal.outcome.symbols.length, 5);
-    assert.ok(neon.reveal.outcome.payline >= 1);
-    assert.ok(['jackpot', 'quad', 'triple', 'pair', 'miss'].includes(neon.reveal.tier));
+    const balloon = run('balloon_dash', 'バルーンチャレンジ', { action: 'pick', value: 5 });
+    assert.equal(balloon.reveal.outcome.pumps, 5);
+    assert.ok(balloon.reveal.outcome.popAt >= 2);
   });
 
   it('pick_invest event lets player choose a shop to boost', () => {

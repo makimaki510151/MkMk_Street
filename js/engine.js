@@ -3231,56 +3231,88 @@ function resolveMinigame(g, p, pending, choice) {
       payoutAll(g, 25, messages);
     }
     detail = `予想 ${pick} → 出目 ${roll}`;
-  } else if (game === 'dice_parity') {
-    // 賽のカーニバル：奇数／偶数
-    pick = choice.value === 'even' ? 'even' : 'odd';
-    const roll = Math.floor(rngNext(g) * 6) + 1;
-    const parity = roll % 2 === 0 ? 'even' : 'odd';
-    outcome.roll = roll;
+  } else if (game === 'dice_battle') {
+    // ダイスバトル：攻め(2d6)／守り(1d6+3) vs ハウス2d6
+    pick = choice.value === 'guard' ? 'guard' : 'rush';
+    const youA = Math.floor(rngNext(g) * 6) + 1;
+    const youB = pick === 'rush' ? Math.floor(rngNext(g) * 6) + 1 : 0;
+    const youTotal = pick === 'rush' ? youA + youB : youA + 3;
+    const foeA = Math.floor(rngNext(g) * 6) + 1;
+    const foeB = Math.floor(rngNext(g) * 6) + 1;
+    const foeTotal = foeA + foeB;
     outcome.pick = pick;
-    outcome.parity = parity;
-    const pickLabel = pick === 'even' ? '偶数' : '奇数';
-    if (pick === parity) {
+    outcome.youDice = pick === 'rush' ? [youA, youB] : [youA];
+    outcome.youBonus = pick === 'guard' ? 3 : 0;
+    outcome.youTotal = youTotal;
+    outcome.foeDice = [foeA, foeB];
+    outcome.foeTotal = foeTotal;
+    const style = pick === 'rush' ? '攻め' : '守り';
+    if (youTotal > foeTotal) {
       win = true;
       tier = 'win';
-      title = 'カーニバル当たり！';
-      const prize = lvPrize(180);
+      title = 'バトル勝利！';
+      const prize = lvPrize(pick === 'rush' ? 260 : 190);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${pickLabel}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 50, messages);
+      messages.push(`${style} ${youTotal} vs ${foeTotal} → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 55, messages);
+    } else if (youTotal === foeTotal) {
+      win = true;
+      tier = 'near';
+      title = '引き分け！';
+      const prize = lvPrize(90);
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`同点 ${youTotal} → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 40, messages);
     } else {
       tier = 'miss';
-      title = 'カーニバル外れ…';
-      messages.push(`${pickLabel}外れ…出目${roll}`);
+      title = 'バトル敗北…';
+      messages.push(`${style} ${youTotal} vs ${foeTotal}`);
       payoutAll(g, 28, messages);
     }
-    detail = `予想 ${pickLabel} → 出目 ${roll}`;
-  } else if (game === 'dice_band') {
-    // フォーチュンダイス：小(1-2)／中(3-4)／大(5-6)
-    pick = ['low', 'mid', 'high'].includes(choice.value) ? choice.value : 'mid';
-    const roll = Math.floor(rngNext(g) * 6) + 1;
-    const band = roll <= 2 ? 'low' : roll <= 4 ? 'mid' : 'high';
-    outcome.roll = roll;
-    outcome.pick = pick;
-    outcome.band = band;
-    const bandLabel = { low: '小(1-2)', mid: '中(3-4)', high: '大(5-6)' };
-    if (pick === band) {
+    detail = `${style} ${youTotal} vs ハウス ${foeTotal}`;
+  } else if (game === 'horse_race') {
+    // ミニ競馬：4頭から1頭を選んで着順を競う
+    const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
+    const idx = Math.max(0, Math.min(3, Number(choice.value)));
+    pick = idx;
+    const scores = horses.map((_, i) => ({
+      i,
+      score: rngNext(g) * 0.85 + rngNext(g) * 0.4 + (i === idx ? 0.08 : 0),
+    }));
+    scores.sort((a, b) => b.score - a.score);
+    const place = scores.findIndex((s) => s.i === idx) + 1;
+    outcome.horses = horses;
+    outcome.pick = idx;
+    outcome.order = scores.map((s) => s.i);
+    outcome.place = place;
+    outcome.scores = scores.map((s) => Math.round(s.score * 1000) / 1000);
+    if (place === 1) {
       win = true;
-      tier = 'win';
-      title = 'フォーチュン！';
-      const prize = lvPrize(275);
+      tier = 'jackpot';
+      title = '優勝！';
+      const prize = lvPrize(380);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`${bandLabel[pick]}正解！出目${roll} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 65, messages);
+      messages.push(`${horses[idx]} が1着！ → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 80, messages);
+    } else if (place === 2) {
+      win = true;
+      tier = 'win';
+      title = '2着入賞！';
+      const prize = lvPrize(160);
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`${horses[idx]} が2着 → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 45, messages);
     } else {
       tier = 'miss';
-      title = 'フォーチュン外れ…';
-      messages.push(`予想${bandLabel[pick]} → 出目${roll}（${bandLabel[band]}）`);
+      title = `${place}着…`;
+      messages.push(`${horses[idx]} は${place}着`);
       payoutAll(g, 30, messages);
     }
-    detail = `予想 ${bandLabel[pick]} → 出目 ${roll}`;
+    detail = `${horses[idx]} → ${place}着（順: ${scores.map((s) => horses[s.i]).join('→')}）`;
   } else if (game === 'high_low') {
     pick = choice.value === 'high' ? 'high' : 'low';
     const secret = Math.floor(rngNext(g) * 10) + 1; // 1-10
@@ -3305,43 +3337,40 @@ function resolveMinigame(g, p, pending, choice) {
       payoutAll(g, 35, messages);
     }
     detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'} → ${secret}`;
-  } else if (game === 'card_duel') {
-    // カードハイロー：1枚目のあと、2枚目が高いか低いか
-    pick = choice.value === 'high' ? 'high' : 'low';
-    const first = Math.floor(rngNext(g) * 13) + 1;
-    const second = Math.floor(rngNext(g) * 13) + 1;
-    outcome.first = first;
-    outcome.second = second;
+  } else if (game === 'rps_duel') {
+    // じゃんけん勝負
+    const opts = ['rock', 'paper', 'scissors'];
+    pick = opts.includes(choice.value) ? choice.value : 'rock';
+    const foe = opts[Math.floor(rngNext(g) * 3)];
     outcome.pick = pick;
-    if (second === first) {
+    outcome.foe = foe;
+    const beats = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
+    const labels = { rock: 'グー', paper: 'パー', scissors: 'チョキ' };
+    if (pick === foe) {
+      win = true;
       tier = 'near';
-      title = '引き分け！';
-      const prize = 70 + p.level * 10;
+      title = 'あいこ！';
+      const prize = 75 + p.level * 12;
       prizeWon = prize;
       p.cash += prize;
-      win = true;
-      messages.push(`同値 ${first}=${second} → +${prize}G`);
+      messages.push(`あいこ（${labels[pick]}）→ +${prize}G`);
       payoutAll(g, 40, messages);
+    } else if (beats[pick] === foe) {
+      win = true;
+      tier = 'win';
+      title = 'じゃんけん勝ち！';
+      const prize = 200 + p.level * 28;
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`${labels[pick]} vs ${labels[foe]} → +${prize}G`);
+      payoutAll(g, 60, messages);
     } else {
-      const isHigh = second > first;
-      const ok = (pick === 'high' && isHigh) || (pick === 'low' && !isHigh);
-      if (ok) {
-        win = true;
-        tier = 'win';
-        title = 'カード勝ち！';
-        const prize = 210 + p.level * 32;
-        prizeWon = prize;
-        p.cash += prize;
-        messages.push(`${first}→${second} 正解 → +${prize}G`);
-        payoutAll(g, 70, messages);
-      } else {
-        tier = 'miss';
-        title = 'カード負け…';
-        messages.push(`${first}→${second} 外れ`);
-        payoutAll(g, 32, messages);
-      }
+      tier = 'miss';
+      title = 'じゃんけん負け…';
+      messages.push(`${labels[pick]} vs ${labels[foe]}`);
+      payoutAll(g, 30, messages);
     }
-    detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'}：${first} → ${second}`;
+    detail = `${labels[pick]} vs ${labels[foe]}`;
   } else if (game === 'coin') {
     pick = choice.value === 'tails' ? 'tails' : 'heads';
     const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
@@ -3365,67 +3394,70 @@ function resolveMinigame(g, p, pending, choice) {
       payoutAll(g, 30, messages);
     }
     detail = `予想 ${pickLabel} → ${faceLabel}`;
-  } else if (game === 'coin_double') {
-    // ラッキーフリップ：同じ面を2回連続で当てる（1回一致は小さめ）
-    pick = choice.value === 'tails' ? 'tails' : 'heads';
-    const faces = [
-      rngNext(g) < 0.5 ? 'heads' : 'tails',
-      rngNext(g) < 0.5 ? 'heads' : 'tails',
-    ];
-    const matches = faces.filter((f) => f === pick).length;
-    outcome.faces = faces;
+  } else if (game === 'roulette') {
+    // ルーレット：赤／黒／緑(0)
+    pick = ['red', 'black', 'green'].includes(choice.value) ? choice.value : 'red';
+    const spin = Math.floor(rngNext(g) * 37); // 0-36
+    const color = spin === 0 ? 'green' : (spin % 2 === 0 ? 'black' : 'red');
     outcome.pick = pick;
-    const faceLabels = faces.map((f) => (f === 'heads' ? 'おもて' : 'うら'));
-    const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
-    if (matches === 2) {
+    outcome.spin = spin;
+    outcome.color = color;
+    const colorLabel = { red: '赤', black: '黒', green: '緑(0)' };
+    if (pick === 'green' && color === 'green') {
       win = true;
       tier = 'jackpot';
-      title = 'ダブルラッキー！';
-      const prize = 320 + p.level * 45;
+      title = 'ゼロ的中！';
+      const prize = lvPrize(900);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`2回とも${pickLabel}！ → +${prize}G`);
-      payoutAll(g, 90, messages);
-    } else if (matches === 1) {
-      win = true;
-      tier = 'near';
-      title = 'ワンヒット！';
-      const prize = 80 + p.level * 12;
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`1回一致（${faceLabels.join('・')}）→ +${prize}G`);
-      payoutAll(g, 40, messages);
-    } else {
-      tier = 'miss';
-      title = 'フリップ外れ…';
-      messages.push(`両方外れ（${faceLabels.join('・')}）`);
-      payoutAll(g, 25, messages);
-    }
-    detail = `予想 ${pickLabel} → ${faceLabels.join(' / ')}`;
-  } else if (game === 'coin_party') {
-    // パーティーコイン：本人賞は控えめ、参加賞を厚めに
-    pick = choice.value === 'tails' ? 'tails' : 'heads';
-    const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
-    const faceLabel = face === 'heads' ? 'おもて' : 'うら';
-    const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
-    outcome.face = face;
-    outcome.pick = pick;
-    if (pick === face) {
+      messages.push(`0的中！ → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 120, messages);
+    } else if (pick === color) {
       win = true;
       tier = 'win';
-      title = 'パーティー成功！';
-      const prize = 110 + p.level * 16;
+      title = 'ルーレット当たり！';
+      const prize = lvPrize(210);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`当たり！${faceLabel} → 本人+${prize}G`);
-      payoutAll(g, 110, messages);
+      messages.push(`${colorLabel[color]}${spin} → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 55, messages);
     } else {
       tier = 'miss';
-      title = 'パーティー外れ…';
-      messages.push(`ハズレ…${faceLabel}`);
-      payoutAll(g, 45, messages);
+      title = 'ルーレット外れ…';
+      messages.push(`予想${colorLabel[pick]} → ${colorLabel[color]}${spin}`);
+      payoutAll(g, 28, messages);
     }
-    detail = `予想 ${pickLabel} → ${faceLabel}`;
+    detail = `予想 ${colorLabel[pick]} → ${colorLabel[color]} ${spin}`;
+  } else if (game === 'heist') {
+    // 金庫破り（非対称リスク）：用心／普通／大胆
+    pick = ['safe', 'normal', 'bold'].includes(choice.value) ? choice.value : 'normal';
+    const table = {
+      safe: { chance: 0.82, prize: 120, bust: 0, party: 35 },
+      normal: { chance: 0.55, prize: 240, bust: 0, party: 50 },
+      bold: { chance: 0.28, prize: 520, bust: 0, party: 90 },
+    };
+    const cfg = table[pick];
+    const success = rngNext(g) < cfg.chance;
+    outcome.pick = pick;
+    outcome.success = success;
+    outcome.chance = cfg.chance;
+    const riskLabel = { safe: '用心', normal: '普通', bold: '大胆' }[pick];
+    if (success) {
+      win = true;
+      tier = pick === 'bold' ? 'jackpot' : 'win';
+      title = '金庫オープン！';
+      const prize = lvPrize(cfg.prize);
+      prizeWon = prize;
+      p.cash += prize;
+      messages.push(`${riskLabel}成功 → +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, cfg.party, messages);
+    } else {
+      tier = 'miss';
+      title = '警備に捕まった…';
+      messages.push(`${riskLabel}失敗（本人はゼロ、みんなに慰労）`);
+      payoutAll(g, Math.floor(cfg.party * 0.7), messages);
+    }
+    detail = `${riskLabel}（成功率${Math.round(cfg.chance * 100)}%）→ ${success ? '成功' : '失敗'}`;
   } else if (game === 'slot') {
     const syms = ['★', '♪', 'G', '♦', '♣'];
     const reels = [];
@@ -3507,65 +3539,31 @@ function resolveMinigame(g, p, pending, choice) {
       payoutAll(g, 22, messages);
     }
     detail = line;
-  } else if (game === 'neon_slot') {
-    // ネオンスロット：左からの連続揃い（ペイライン）で判定
-    const syms = ['⚡', '◆', '●', '▲', '★'];
-    const reels = [];
-    for (let i = 0; i < 5; i++) {
-      reels.push(syms[Math.floor(rngNext(g) * syms.length)]);
-    }
-    const line = reels.join('');
-    let run = 1;
-    for (let i = 1; i < reels.length; i++) {
-      if (reels[i] === reels[0]) run += 1;
-      else break;
-    }
-    outcome.symbols = reels;
-    outcome.hitIndices = Array.from({ length: run }, (_, i) => i);
-    outcome.payline = run;
-    if (run >= 5) {
+  } else if (game === 'balloon_dash') {
+    // バルーンチャレンジ：ポンプ回数が多いほど高配当だが割れる
+    const pumps = [3, 5, 7].includes(Number(choice.value)) ? Number(choice.value) : 5;
+    pick = pumps;
+    const popAt = 2 + Math.floor(rngNext(g) * 7); // 2..8
+    const popped = pumps >= popAt;
+    outcome.pumps = pumps;
+    outcome.popAt = popAt;
+    outcome.popped = popped;
+    if (!popped) {
       win = true;
-      tier = 'jackpot';
-      title = 'ネオンジャックポット！';
-      const prize = lvPrize(1130);
+      tier = pumps >= 7 ? 'jackpot' : pumps >= 5 ? 'win' : 'near';
+      title = 'バルーン成功！';
+      const prize = lvPrize(55 * pumps);
       prizeWon = prize;
       p.cash += prize;
-      messages.push(`左から5連続 ${line}！ → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 200, messages);
-    } else if (run >= 4) {
-      win = true;
-      tier = 'quad';
-      title = 'ネオン4連続！';
-      const prize = lvPrize(550);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`左から4連続 ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 110, messages);
-    } else if (run >= 3) {
-      win = true;
-      tier = 'triple';
-      title = 'ネオン3連続！';
-      const prize = lvPrize(235);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`左から3連続 ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 60, messages);
-    } else if (run >= 2) {
-      win = true;
-      tier = 'pair';
-      title = 'ネオン2連続！';
-      const prize = lvPrize(80);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`左から2連続 ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 32, messages);
+      messages.push(`${pumps}回ポンプ成功（限界${popAt}）→ +${prize}G（×Lv${p.level}）`);
+      payoutAll(g, 20 + pumps * 6, messages);
     } else {
       tier = 'miss';
-      title = 'ネオン消灯…';
-      messages.push(`連続なし ${line}`);
-      payoutAll(g, 24, messages);
+      title = 'パンッ！';
+      messages.push(`${pumps}回目で破裂（限界${popAt}）`);
+      payoutAll(g, 26, messages);
     }
-    detail = line;
+    detail = `${pumps}ポンプ / 限界 ${popAt} → ${popped ? '破裂' : '成功'}`;
   } else {
     tier = 'miss';
     title = '参加賞';
@@ -4340,18 +4338,38 @@ export function cpuAct(g) {
           : 1 + Math.floor(n(502) * 6);
         return applyChoice(g, { action: 'pick', value: pick });
       }
-      if (pend.game === 'dice_parity') {
-        return applyChoice(g, { action: 'pick', value: n(503) < 0.5 ? 'odd' : 'even' });
+      if (pend.game === 'dice_battle') {
+        return applyChoice(g, { action: 'pick', value: n(503) < 0.55 ? 'rush' : 'guard' });
       }
-      if (pend.game === 'dice_band') {
-        const bands = ['low', 'mid', 'high'];
-        return applyChoice(g, { action: 'pick', value: bands[Math.floor(n(504) * 3)] });
+      if (pend.game === 'horse_race') {
+        return applyChoice(g, { action: 'pick', value: Math.floor(n(504) * 4) });
       }
-      if (pend.game === 'high_low' || pend.game === 'card_duel') {
+      if (pend.game === 'high_low') {
         return applyChoice(g, { action: 'pick', value: n(505) < 0.5 ? 'low' : 'high' });
       }
-      if (pend.game === 'coin' || pend.game === 'coin_double' || pend.game === 'coin_party') {
-        return applyChoice(g, { action: 'pick', value: n(506) < 0.5 ? 'heads' : 'tails' });
+      if (pend.game === 'rps_duel') {
+        const hands = ['rock', 'paper', 'scissors'];
+        return applyChoice(g, { action: 'pick', value: hands[Math.floor(n(506) * 3)] });
+      }
+      if (pend.game === 'coin') {
+        return applyChoice(g, { action: 'pick', value: n(507) < 0.5 ? 'heads' : 'tails' });
+      }
+      if (pend.game === 'roulette') {
+        const colors = ['red', 'black', 'green'];
+        // 緑は低確率で選ぶ（期待値偏りを抑える）
+        const roll = n(508);
+        const pick = roll < 0.08 ? 'green' : (roll < 0.54 ? 'red' : 'black');
+        return applyChoice(g, { action: 'pick', value: pick });
+      }
+      if (pend.game === 'heist') {
+        const risks = ['safe', 'normal', 'bold'];
+        const bias = traits.key === 'gambler' ? 2 : traits.key === 'tycoon' ? 0 : 1;
+        const idx = Math.max(0, Math.min(2, bias + Math.floor(n(509) * 2) - (n(510) < 0.5 ? 0 : 1)));
+        return applyChoice(g, { action: 'pick', value: risks[idx] });
+      }
+      if (pend.game === 'balloon_dash') {
+        const pumps = traits.key === 'gambler' ? [5, 7, 7] : traits.key === 'tycoon' ? [3, 3, 5] : [3, 5, 7];
+        return applyChoice(g, { action: 'pick', value: pumps[Math.floor(n(511) * 3)] });
       }
       return applyChoice(g, { action: 'spin' });
     }

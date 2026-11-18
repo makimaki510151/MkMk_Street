@@ -2910,6 +2910,297 @@ body.your-turn #btn-roll:not(:disabled) {
   100% { transform: rotateY(180deg) scaleY(1); }
 }
 
+/* dice battle */
+.mg-battle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.mg-battle-side {
+  text-align: center;
+  min-width: 110px;
+}
+.mg-battle-side small {
+  display: block;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+.mg-battle-side.foe small { color: #ffb4a8; }
+.mg-battle-dice {
+  display: flex;
+  gap: 0.3rem;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.mg-battle-die {
+  width: 44px;
+  height: 44px;
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+  font-family: var(--display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  background: linear-gradient(160deg, #ffe8c8, #d4783a);
+  color: #2a1400;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+}
+.mg-battle-side.foe .mg-battle-die {
+  background: linear-gradient(160deg, #d8e0ff, #5a6ab8);
+  color: #0e1430;
+}
+.mg-battle-die.rolling { animation: diceTumble 0.12s linear infinite; }
+.mg-battle-die.landed { animation: dicePop .4s ease; }
+.mg-battle-bonus {
+  font-weight: 800;
+  color: #9ef0c8;
+  font-size: 0.95rem;
+}
+.mg-battle-total {
+  font-family: var(--display);
+  font-size: 1.5rem;
+  color: #fff8e0;
+}
+.mg-battle-vs {
+  font-family: var(--display);
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 1.15rem;
+}
+
+/* horse race */
+.mg-race {
+  width: min(340px, 88vw);
+  display: grid;
+  gap: 0.35rem;
+}
+.mg-race-lane {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr 2.2rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+.mg-race-lane.picked .mg-race-name { color: #ffe08a; }
+.mg-race-lane.winner .mg-race-place { color: #9ef0c8; font-weight: 800; }
+.mg-race-name {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--ink);
+  text-align: right;
+}
+.mg-race-track {
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1a2a18, #3a5a28 40%, #1a2a18);
+  border: 1px solid rgba(158, 240, 200, 0.35);
+  position: relative;
+  overflow: hidden;
+}
+.mg-race-horse {
+  position: absolute;
+  top: 50%;
+  left: var(--dist, 8%);
+  transform: translate(-50%, -50%);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #fff8e0;
+  background: #3a2400;
+  border: 1px solid #ffe08a;
+  border-radius: 3px;
+  padding: 0 0.25rem;
+  transition: left 0.08s linear;
+}
+.mg-race-place {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* rock-paper-scissors */
+.mg-rps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+}
+.mg-rps-hand {
+  text-align: center;
+}
+.mg-rps-hand small {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.mg-rps-glyph {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-family: var(--display);
+  font-size: 1.55rem;
+  font-weight: 700;
+  background: linear-gradient(160deg, #2a1830, #6a3060);
+  color: #ffe0f0;
+  border: 2px solid rgba(255, 180, 220, 0.45);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4);
+}
+.mg-rps-hand.foe .mg-rps-glyph {
+  background: linear-gradient(160deg, #182830, #306060);
+  color: #e0fff8;
+  border-color: rgba(160, 240, 220, 0.45);
+}
+.mg-rps-glyph.shake { animation: diceTumble 0.12s linear infinite; }
+.mg-rps-glyph.landed { animation: dicePop .4s ease; }
+.mg-rps-vs {
+  font-family: var(--display);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* roulette */
+.mg-roulette-wheel {
+  width: 120px;
+  height: 120px;
+  margin: 0 auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    conic-gradient(
+      #c62828 0deg 20deg, #111 20deg 40deg,
+      #c62828 40deg 60deg, #111 60deg 80deg,
+      #c62828 80deg 100deg, #111 100deg 120deg,
+      #c62828 120deg 140deg, #111 140deg 160deg,
+      #c62828 160deg 180deg, #111 180deg 200deg,
+      #c62828 200deg 220deg, #111 220deg 240deg,
+      #c62828 240deg 260deg, #111 260deg 280deg,
+      #c62828 280deg 300deg, #111 300deg 320deg,
+      #2e7d32 320deg 340deg, #111 340deg 360deg
+    );
+  border: 4px solid #ffe08a;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.45);
+}
+.mg-roulette-wheel.spinning {
+  animation: mgRouletteSpin 0.35s linear infinite;
+}
+.mg-roulette-wheel.landed { animation: dicePop .4s ease; }
+.mg-roulette-wheel.color-red { box-shadow: 0 0 0 4px #c62828, 0 14px 36px rgba(0,0,0,0.45); }
+.mg-roulette-wheel.color-black { box-shadow: 0 0 0 4px #eee, 0 14px 36px rgba(0,0,0,0.45); }
+.mg-roulette-wheel.color-green { box-shadow: 0 0 0 4px #2e7d32, 0 14px 36px rgba(0,0,0,0.45); }
+.mg-roulette-ball {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 700;
+  background: #fff8e0;
+  color: #1a1200;
+  border: 2px solid rgba(0,0,0,0.25);
+}
+.mg-roulette-ball[data-color="red"] { background: #ffcdd2; color: #7f0000; }
+.mg-roulette-ball[data-color="black"] { background: #263238; color: #eceff1; }
+.mg-roulette-ball[data-color="green"] { background: #c8e6c9; color: #1b5e20; }
+@keyframes mgRouletteSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* heist vault */
+.mg-vault {
+  width: 110px;
+  height: 110px;
+  margin: 0 auto;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(160deg, #3a3a42, #1a1a20 55%, #4a4a52);
+  border: 3px solid #9e9e9e;
+  box-shadow: inset 0 0 0 6px rgba(0,0,0,0.35), 0 14px 32px rgba(0,0,0,0.45);
+}
+.mg-vault.cracking { animation: mgVaultShake 0.18s linear infinite; }
+.mg-vault.open {
+  border-color: #9ef0c8;
+  background: linear-gradient(160deg, #1a3a28, #0a2018 55%, #2a5a38);
+}
+.mg-vault.alarm {
+  border-color: #ff8a80;
+  background: linear-gradient(160deg, #4a1a1a, #200808 55%, #5a2828);
+  animation: mgVaultAlarm 0.35s ease infinite alternate;
+}
+.mg-vault-dial {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #ffe08a;
+  background: radial-gradient(circle at 40% 35%, #6a6a72, #2a2a30);
+  border: 2px solid #bdbdbd;
+  transition: transform 0.1s linear;
+}
+@keyframes mgVaultShake {
+  0% { transform: translateX(-2px); }
+  50% { transform: translateX(2px); }
+  100% { transform: translateX(-2px); }
+}
+@keyframes mgVaultAlarm {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.25); }
+}
+
+/* balloon dash */
+.mg-balloon-wrap {
+  text-align: center;
+}
+.mg-balloon {
+  width: calc(56px * var(--size, 1));
+  height: calc(72px * var(--size, 1));
+  margin: 0 auto 0.4rem;
+  border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%;
+  background: radial-gradient(circle at 35% 30%, #ffd6e8, #e04080 55%, #8a2048);
+  border: 2px solid rgba(255, 200, 220, 0.55);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4);
+  transition: width 0.14s ease, height 0.14s ease;
+  position: relative;
+}
+.mg-balloon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  width: 2px;
+  height: 14px;
+  background: #ffe08a;
+  transform: translateX(-50%);
+}
+.mg-balloon.safe {
+  background: radial-gradient(circle at 35% 30%, #d6ffe8, #40c080 55%, #206048);
+  animation: dicePop .4s ease;
+}
+.mg-balloon.popped {
+  width: 88px;
+  height: 48px;
+  border-radius: 8px;
+  background: radial-gradient(circle at 50% 50%, #ffecb3, #ff7043 60%, #bf360c);
+  animation: mgBalloonPop .35s ease;
+}
+.mg-balloon.popped::after { display: none; }
+@keyframes mgBalloonPop {
+  0% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.95; }
+}
+
 @media (max-width: 900px) {
   .mg-slot-5 {
     gap: 0.22rem;

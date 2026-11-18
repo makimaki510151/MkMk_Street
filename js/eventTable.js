@@ -242,18 +242,18 @@ function buildCatalog() {
     ['rank_celebration', '階級のお祝い', 60, 30],
   ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'all_cash' }));
 
-  // ── ミニゲーム ───────────────────────────────────────────
+  // ── ミニゲーム（それぞれ別ルール・別演出） ───────────────
   [
     ['mini_dice', 'サイコロ当て', 'guess_dice'],
     ['mini_highlow', 'ハイ＆ロー', 'high_low'],
     ['mini_coin', 'コイントス', 'coin'],
     ['mini_slot', 'ファイブスロット', 'slot'],
-    ['dice_carnival', '賽のカーニバル', 'dice_parity'],
-    ['lucky_flip', 'ラッキーフリップ', 'coin_double'],
-    ['card_highlow', 'カードハイロー', 'card_duel'],
-    ['neon_slot', 'ネオンスロット', 'neon_slot'],
-    ['fortune_dice', 'フォーチュンダイス', 'dice_band'],
-    ['party_coin', 'パーティーコイン', 'coin_party'],
+    ['dice_battle', 'ダイスバトル', 'dice_battle'],
+    ['horse_race', 'ミニ競馬', 'horse_race'],
+    ['rps_duel', 'じゃんけん勝負', 'rps_duel'],
+    ['roulette', 'ルーレット', 'roulette'],
+    ['heist', '金庫破り', 'heist'],
+    ['balloon_dash', 'バルーンチャレンジ', 'balloon_dash'],
   ].forEach(([k, l, game]) => push(k, l, { effect: 'minigame', game }));
 
   // ── 相手・分配・移動 ─────────────────────────────────────
