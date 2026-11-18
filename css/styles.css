@@ -2100,7 +2100,17 @@ body.your-turn #btn-roll:not(:disabled) {
   gap: 0.5rem;
 }
 .modal-tools { display: flex; gap: 0.3rem; }
-.modal-card.wide { width: min(520px, 100%); }
+.modal-card.wide {
+  width: min(520px, calc(100vw - 320px));
+  max-height: min(70vh, 640px);
+}
+#modal .modal-card.wide .modal-actions {
+  position: sticky;
+  bottom: -0.2rem;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, transparent, var(--surface) 28%);
+  z-index: 2;
+}
 .modal-card h3 { font-family: var(--display); color: var(--accent); font-size: 1.05rem; }
 .modal-lead { font-size: 1.05rem; }
 .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
