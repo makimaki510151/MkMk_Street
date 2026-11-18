@@ -131,11 +131,12 @@ describe('MkMk Street engine', () => {
   });
 
   it('offers multiple maps including a detached island board', () => {
-    assert.ok(MAP_CATALOG.length >= 3);
+    assert.ok(MAP_CATALOG.length >= 4);
     const ids = new Set(MAP_CATALOG.map((m) => m.id));
     assert.ok(ids.has('central_cross'));
     assert.ok(ids.has('shell_harbor'));
     assert.ok(ids.has('cliff_isle'));
+    assert.ok(ids.has('bin'));
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -470,6 +471,29 @@ describe('MkMk Street engine', () => {
     const rimAdj = (n) => (n.nexts || []).filter((id) => rimIds.has(id));
     const rimEnds = rimOnly.filter((n) => rimAdj(n).length <= 1);
     assert.ok(rimEnds.length >= 4, `expected rim gaps to break the outer loop, ends=${rimEnds.length}`);
+  });
+
+  it('builds the bottle-shaped bin map with warps and 13 areas', () => {
+    const board = buildBoard('bin');
+    assert.equal(board.mapId, 'bin');
+    assert.equal(board.mapName, '瓶');
+    assert.equal(board.cols, 9);
+    assert.equal(board.rows, 14);
+    assert.equal(Object.keys(board.areas).length, 13);
+    for (const a of Object.keys(board.areas).map(Number)) {
+      const shops = board.nodes.filter((n) => n.type === 'shop' && n.area === a);
+      assert.equal(shops.length, 4, `area ${a}`);
+    }
+    const warps = board.nodes.filter((n) => n.type === 'warp');
+    assert.equal(warps.length, 2);
+    assert.equal(warps[0].warpTo, warps[1].id);
+    assert.equal(warps[1].warpTo, warps[0].id);
+    assert.ok(board.nodes.some((n) => n.type === 'suit_fill'));
+    assert.ok(board.nodes.some((n) => n.type === 'lucky'));
+    assert.ok(board.nodes.filter((n) => n.type === 'minigame').length >= 2);
+    const bank = board.nodes.find((n) => n.type === 'bank');
+    assert.equal(bank?.col, 4);
+    assert.equal(bank?.row, 0);
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {

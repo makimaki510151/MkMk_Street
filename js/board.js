@@ -17,6 +17,7 @@ export const AREA_META = {
   10: { name: '駅前', color: '#4d5f8a', pattern: 'diamond', patternInk: '#8796bc' },
   11: { name: 'がけした', color: '#3a6a72', pattern: 'stripe', patternInk: '#6f9aa3' },
   12: { name: '潮風通り', color: '#4f6d8c', pattern: 'check', patternInk: '#8aa3bd' },
+  13: { name: '底の灯', color: '#3f6f7e', pattern: 'dots', patternInk: '#7aa3b0' },
 };
 
 /** 1グループ（株エリア）あたりのお店数の上限 */
@@ -541,6 +542,203 @@ export function buildCliffIsle() {
   });
 }
 
+/**
+ * マップ案「瓶」：縦長のボトル形（9×14）。首に銀行、胴に分岐、底にワープ往復。
+ * 凡例: 銀銀行 / Ａ〜Ｍ店 / 削スクラッチ / スロット / 株 / ララッキー / イイベント / ワワイルド / 転ワープ / ♠♥♦♣
+ */
+export function buildBin() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　スＡＡ銀ＢＢ削　',
+    '　Ａ　　　　　Ｂ　',
+    '　Ａ　　　　　Ｂ　',
+    '　ラＣ　　　Ｄイ　',
+    '　　Ｃ　　　Ｄ　　',
+    '　ＥＣＣ♦ＤＤＦ　',
+    '　Ｅ　　　　　Ｆ　',
+    'ＧＧＥＥ♥ＦＦＨＨ',
+    'Ｇ　　　　　　　Ｈ',
+    'Ｇ　ＬＬワＭＭ　Ｈ',
+    '♠　株　　　ス　♣',
+    'Ｉ　ＬＬ転ＭＭ　Ｊ',
+    'Ｉ　　　　　　　Ｊ',
+    'ＩＩＫＫ転ＫＫＪＪ',
+  ];
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5, Ｆ: 6, Ｇ: 7,
+    Ｈ: 8, Ｉ: 9, Ｊ: 10, Ｋ: 11, Ｌ: 12, Ｍ: 13,
+  };
+  const shopNames = {
+    1: ['コルク屋', '封ろう屋', '栓みがき', 'ボトルキャップ'],
+    2: ['リボン屋', 'ラベル印刷', '封緘堂', 'ネック飾り'],
+    3: ['首もと茶屋', 'グラス磨き', '雫カフェ', '蒸気スタンド'],
+    4: ['肩口みやげ', 'ビーカー屋', '計量屋', '実験道具'],
+    5: ['ラベル左食堂', 'インク屋', '貼紙屋', '筆文字屋'],
+    6: ['ラベル右食堂', 'スタンプ屋', '箔押し', 'シール屋'],
+    7: ['胴の左岸屋台', '炭酸水', 'シロップ屋', '氷屋'],
+    8: ['胴の右岸屋台', '麦芽屋', '酵母屋', '樽の店'],
+    9: ['底左の灯台屋', '灯油屋', '錨のみやげ', '潮風食堂'],
+    10: ['底右の灯台屋', '漁具屋', '貝がら屋', '塩屋'],
+    11: ['底中央マーケット', '瓶詰屋', '保存食', '倉庫カフェ'],
+    12: ['中胴ギャラリー', '硝子工房', 'ステンド屋', '切子屋'],
+    13: ['中胴アトリエ', '絵具屋', 'フレーム屋', '写真屋'],
+  };
+  const shopPrice = {
+    1: [320, 280, 240, 360],
+    2: [300, 260, 220, 340],
+    3: [210, 180, 160, 250],
+    4: [200, 170, 150, 240],
+    5: [190, 160, 140, 230],
+    6: [190, 160, 140, 230],
+    7: [180, 150, 130, 220],
+    8: [180, 150, 130, 220],
+    9: [260, 220, 200, 300],
+    10: [260, 220, 200, 300],
+    11: [280, 240, 210, 330],
+    12: [230, 190, 170, 270],
+    13: [230, 190, 170, 270],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+
+  /** @type {object[]} */
+  const warps = [];
+  let bank = null;
+  let slotCount = 0;
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        const area = areaFromChar[ch];
+        const i = shopIdx[area]++;
+        const names = shopNames[area];
+        const prices = shopPrice[area];
+        put(col, row, N('shop', {
+          label: names[i % names.length],
+          area,
+          basePrice: prices[i % prices.length],
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '銀') {
+        bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+        continue;
+      }
+      if (ch === '♠') {
+        put(col, row, N('mark', { label: '♠', mark: 0, col, row }));
+        continue;
+      }
+      if (ch === '♥') {
+        put(col, row, N('mark', { label: '♥', mark: 1, col, row }));
+        continue;
+      }
+      if (ch === '♦') {
+        put(col, row, N('mark', { label: '♦', mark: 2, col, row }));
+        continue;
+      }
+      if (ch === '♣') {
+        put(col, row, N('mark', { label: '♣', mark: 3, col, row }));
+        continue;
+      }
+      if (ch === '削') {
+        put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+        continue;
+      }
+      if (ch === 'ス') {
+        slotCount += 1;
+        put(col, row, N('minigame', {
+          label: slotCount === 1 ? 'スロット' : 'スロットⅡ',
+          game: 'slot',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '株') {
+        put(col, row, N('stockbroker', { label: '証券', col, row }));
+        continue;
+      }
+      if (ch === 'ラ') {
+        put(col, row, N('lucky', { label: '★', col, row }));
+        continue;
+      }
+      if (ch === 'イ') {
+        put(col, row, N('event', { label: 'イベント', col, row }));
+        continue;
+      }
+      if (ch === 'ワ') {
+        put(col, row, N('suit_fill', { label: 'ワイルド', col, row }));
+        continue;
+      }
+      if (ch === '転') {
+        const w = put(col, row, N('warp', {
+          label: warps.length ? '瓶底ワープ' : '胴ワープ',
+          col,
+          row,
+        }));
+        warps.push(w);
+        continue;
+      }
+      throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
+    }
+  }
+
+  if (!bank) throw new Error('瓶マップに銀行がありません');
+  if (warps.length >= 2) {
+    warps[0].warpTo = warps[1].id;
+    warps[1].warpTo = warps[0].id;
+  }
+
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
+      for (const [dc, dr] of dirs) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        link([a, b]);
+      }
+    }
+  }
+
+  return packBoard(nodes, bank, 9, 14, {
+    mapId: 'bin',
+    mapName: '瓶',
+    goal: 16000,
+    initialCash: 1500,
+    areaOverrides: {
+      1: { name: 'コルク通り' },
+      2: { name: '封ろう通り' },
+      3: { name: '首もと坂' },
+      4: { name: '肩口通り' },
+      5: { name: 'ラベル左' },
+      6: { name: 'ラベル右' },
+      7: { name: '胴の左岸' },
+      8: { name: '胴の右岸' },
+      9: { name: '底左の灯' },
+      10: { name: '底右の灯' },
+      11: { name: '瓶底マーケット' },
+      12: { name: '硝子ギャラリー' },
+      13: { name: '中胴アトリエ' },
+    },
+  });
+}
+
 /** 選択可能なマップ一覧 */
 export const MAP_CATALOG = [
   {
@@ -566,6 +764,14 @@ export const MAP_CATALOG = [
     defaultGoal: 14000,
     defaultCash: 1600,
     build: buildCliffIsle,
+  },
+  {
+    id: 'bin',
+    name: '瓶',
+    blurb: '縦長のボトル形。首の銀行から胴・底へ分岐し、底のワープで往復',
+    defaultGoal: 16000,
+    defaultCash: 1500,
+    build: buildBin,
   },
 ];
 
