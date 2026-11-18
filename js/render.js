@@ -34,6 +34,12 @@ const MINIGAME_ICON = {
   high_low: '高',
   coin: '貨',
   slot: 'ス',
+  dice_battle: '戦',
+  horse_race: '馬',
+  rps_duel: '拳',
+  roulette: '輪',
+  heist: '金庫',
+  balloon_dash: '球',
 };
 
 /** 盤面まわりのUI（検査パネル・分岐レール・フィード等）を避ける余白 */

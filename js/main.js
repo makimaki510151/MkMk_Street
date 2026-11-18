@@ -3500,18 +3500,26 @@ async function playMinigameReveal(reveal) {
   audio.sfx.minigameDrum();
 
   const game = reveal.game || 'slot';
-  if (game === 'slot' || game === 'neon_slot') {
+  if (game === 'slot') {
     await animateSlotReveal(body, reveal);
-  } else if (game === 'guess_dice' || game === 'dice_parity' || game === 'dice_band') {
+  } else if (game === 'guess_dice') {
     await animateDiceGuessReveal(body, reveal);
+  } else if (game === 'dice_battle') {
+    await animateDiceBattleReveal(body, reveal);
+  } else if (game === 'horse_race') {
+    await animateHorseRaceReveal(body, reveal);
   } else if (game === 'high_low') {
     await animateHighLowReveal(body, reveal);
-  } else if (game === 'card_duel') {
-    await animateCardDuelReveal(body, reveal);
-  } else if (game === 'coin' || game === 'coin_party') {
+  } else if (game === 'rps_duel') {
+    await animateRpsDuelReveal(body, reveal);
+  } else if (game === 'coin') {
     await animateCoinReveal(body, reveal);
-  } else if (game === 'coin_double') {
-    await animateCoinDoubleReveal(body, reveal);
+  } else if (game === 'roulette') {
+    await animateRouletteReveal(body, reveal);
+  } else if (game === 'heist') {
+    await animateHeistReveal(body, reveal);
+  } else if (game === 'balloon_dash') {
+    await animateBalloonDashReveal(body, reveal);
   } else {
     body.innerHTML = `<div class="mg-hl-card landed">?</div>`;
     await wait(400);
@@ -3591,14 +3599,7 @@ async function animateSlotReveal(body, reveal) {
 }
 
 async function animateDiceGuessReveal(body, reveal) {
-  const rawPick = reveal.outcome?.pick ?? reveal.pick ?? '?';
-  const pickLabel = ({
-    odd: '奇数',
-    even: '偶数',
-    low: '小',
-    mid: '中',
-    high: '大',
-  })[rawPick] || String(rawPick);
+  const pickLabel = String(reveal.outcome?.pick ?? reveal.pick ?? '?');
   const roll = reveal.outcome?.roll ?? 1;
   body.innerHTML = `
     <div class="mg-dice-row">
@@ -3617,6 +3618,242 @@ async function animateDiceGuessReveal(body, reveal) {
   die.classList.remove('rolling');
   die.classList.add('landed');
   audio.sfx.diceLand(roll);
+  await wait(450);
+}
+
+async function animateDiceBattleReveal(body, reveal) {
+  const o = reveal.outcome || {};
+  const style = o.pick === 'guard' ? '守り' : '攻め';
+  const youDice = Array.isArray(o.youDice) ? o.youDice : [1];
+  const foeDice = Array.isArray(o.foeDice) ? o.foeDice : [1, 1];
+  const youBonus = o.youBonus || 0;
+  body.innerHTML = `
+    <div class="mg-battle">
+      <div class="mg-battle-side">
+        <small>あなた（${style}）</small>
+        <div class="mg-battle-dice" id="mg-you-dice">
+          ${youDice.map(() => '<span class="mg-battle-die rolling">?</span>').join('')}
+          ${youBonus ? `<span class="mg-battle-bonus">+${youBonus}</span>` : ''}
+        </div>
+        <strong class="mg-battle-total" id="mg-you-total">?</strong>
+      </div>
+      <div class="mg-battle-vs">VS</div>
+      <div class="mg-battle-side foe">
+        <small>ハウス</small>
+        <div class="mg-battle-dice" id="mg-foe-dice">
+          ${foeDice.map(() => '<span class="mg-battle-die rolling">?</span>').join('')}
+        </div>
+        <strong class="mg-battle-total" id="mg-foe-total">?</strong>
+      </div>
+    </div>`;
+  const youEls = [...body.querySelectorAll('#mg-you-dice .mg-battle-die')];
+  const foeEls = [...body.querySelectorAll('#mg-foe-dice .mg-battle-die')];
+  audio.sfx.dice();
+  for (let i = 0; i < 10; i++) {
+    youEls.forEach((el) => { el.textContent = String(1 + Math.floor(Math.random() * 6)); });
+    foeEls.forEach((el) => { el.textContent = String(1 + Math.floor(Math.random() * 6)); });
+    await wait(70);
+  }
+  youEls.forEach((el, i) => {
+    el.textContent = String(youDice[i]);
+    el.classList.remove('rolling');
+    el.classList.add('landed');
+  });
+  audio.sfx.diceLand(youDice[0] || 1);
+  await wait(220);
+  foeEls.forEach((el, i) => {
+    el.textContent = String(foeDice[i]);
+    el.classList.remove('rolling');
+    el.classList.add('landed');
+  });
+  audio.sfx.diceLand(foeDice[0] || 1);
+  const youTotal = body.querySelector('#mg-you-total');
+  const foeTotal = body.querySelector('#mg-foe-total');
+  if (youTotal) youTotal.textContent = String(o.youTotal ?? '?');
+  if (foeTotal) foeTotal.textContent = String(o.foeTotal ?? '?');
+  await wait(450);
+}
+
+async function animateHorseRaceReveal(body, reveal) {
+  const o = reveal.outcome || {};
+  const horses = Array.isArray(o.horses) ? o.horses : ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
+  const order = Array.isArray(o.order) ? o.order : [0, 1, 2, 3];
+  const pick = o.pick ?? 0;
+  body.innerHTML = `
+    <div class="mg-race">
+      ${horses.map((name, i) => `
+        <div class="mg-race-lane ${i === pick ? 'picked' : ''}" data-i="${i}">
+          <span class="mg-race-name">${name}</span>
+          <div class="mg-race-track"><span class="mg-race-horse" style="--dist:8%">馬</span></div>
+          <span class="mg-race-place"></span>
+        </div>`).join('')}
+    </div>`;
+  const lanes = [...body.querySelectorAll('.mg-race-lane')];
+  audio.sfx.minigameDrum();
+  // 順位の逆から距離を割り当て（1着が最右）
+  const distByIdx = {};
+  order.forEach((horseIdx, place) => {
+    distByIdx[horseIdx] = 22 + (3 - place) * 22;
+  });
+  for (let step = 0; step < 12; step++) {
+    lanes.forEach((lane) => {
+      const i = Number(lane.dataset.i);
+      const horse = lane.querySelector('.mg-race-horse');
+      const jitter = 6 + Math.random() * 18;
+      const target = distByIdx[i] ?? 40;
+      const progress = Math.min(target, 10 + step * (target / 11) + (Math.random() - 0.5) * jitter * 0.3);
+      if (horse) horse.style.setProperty('--dist', `${progress}%`);
+    });
+    await wait(90);
+  }
+  lanes.forEach((lane) => {
+    const i = Number(lane.dataset.i);
+    const horse = lane.querySelector('.mg-race-horse');
+    const placeEl = lane.querySelector('.mg-race-place');
+    const place = order.indexOf(i) + 1;
+    if (horse) horse.style.setProperty('--dist', `${distByIdx[i]}%`);
+    if (placeEl) placeEl.textContent = `${place}着`;
+    if (place === 1) lane.classList.add('winner');
+  });
+  audio.sfx.slotWin(order[0] === pick);
+  await wait(500);
+}
+
+async function animateRpsDuelReveal(body, reveal) {
+  const labels = { rock: 'グー', paper: 'パー', scissors: 'チョキ' };
+  const pick = reveal.outcome?.pick || 'rock';
+  const foe = reveal.outcome?.foe || 'rock';
+  body.innerHTML = `
+    <div class="mg-rps">
+      <div class="mg-rps-hand you"><span class="mg-rps-glyph shake">?</span><small>あなた</small></div>
+      <div class="mg-rps-vs">VS</div>
+      <div class="mg-rps-hand foe"><span class="mg-rps-glyph shake">?</span><small>あいて</small></div>
+    </div>`;
+  const youG = body.querySelector('.mg-rps-hand.you .mg-rps-glyph');
+  const foeG = body.querySelector('.mg-rps-hand.foe .mg-rps-glyph');
+  const cycle = ['rock', 'paper', 'scissors'];
+  audio.sfx.minigameDrum();
+  for (let i = 0; i < 9; i++) {
+    const c = cycle[i % 3];
+    if (youG) youG.textContent = labels[c];
+    if (foeG) foeG.textContent = labels[cycle[(i + 1) % 3]];
+    await wait(100);
+  }
+  if (youG) {
+    youG.textContent = labels[pick];
+    youG.classList.remove('shake');
+    youG.classList.add('landed');
+  }
+  if (foeG) {
+    foeG.textContent = labels[foe];
+    foeG.classList.remove('shake');
+    foeG.classList.add('landed');
+  }
+  const band = document.createElement('div');
+  band.className = 'mg-hl-band';
+  band.textContent = `${labels[pick]} vs ${labels[foe]}`;
+  body.appendChild(band);
+  audio.sfx.buy();
+  await wait(450);
+}
+
+async function animateRouletteReveal(body, reveal) {
+  const spin = reveal.outcome?.spin ?? 0;
+  const color = reveal.outcome?.color || 'red';
+  const pick = reveal.outcome?.pick || 'red';
+  const colorLabel = { red: '赤', black: '黒', green: '緑' };
+  body.innerHTML = `
+    <div class="mg-roulette">
+      <div class="mg-roulette-wheel spinning" id="mg-wheel">
+        <span class="mg-roulette-ball" id="mg-ball">?</span>
+      </div>
+      <div class="mg-hl-band">予想：${colorLabel[pick] || pick}</div>
+    </div>`;
+  const ball = body.querySelector('#mg-ball');
+  const wheel = body.querySelector('#mg-wheel');
+  audio.sfx.slotSpin();
+  for (let i = 0; i < 14; i++) {
+    const n = Math.floor(Math.random() * 37);
+    if (ball) {
+      ball.textContent = String(n);
+      ball.dataset.color = n === 0 ? 'green' : (n % 2 === 0 ? 'black' : 'red');
+    }
+    await wait(70);
+  }
+  if (ball) {
+    ball.textContent = String(spin);
+    ball.dataset.color = color;
+  }
+  if (wheel) {
+    wheel.classList.remove('spinning');
+    wheel.classList.add('landed', `color-${color}`);
+  }
+  const band = body.querySelector('.mg-hl-band');
+  if (band) band.textContent = `${colorLabel[color]}${spin}`;
+  audio.sfx.slotStop();
+  await wait(450);
+}
+
+async function animateHeistReveal(body, reveal) {
+  const success = !!reveal.outcome?.success;
+  const pick = reveal.outcome?.pick || 'normal';
+  const riskLabel = { safe: '用心', normal: '普通', bold: '大胆' }[pick] || pick;
+  body.innerHTML = `
+    <div class="mg-heist">
+      <div class="mg-vault cracking" id="mg-vault">
+        <span class="mg-vault-dial">●</span>
+      </div>
+      <div class="mg-hl-band">${riskLabel}作戦…</div>
+    </div>`;
+  const vault = body.querySelector('#mg-vault');
+  const dial = body.querySelector('.mg-vault-dial');
+  audio.sfx.minigameDrum();
+  for (let i = 0; i < 8; i++) {
+    if (dial) dial.style.transform = `rotate(${i * 45}deg)`;
+    audio.sfx.buy();
+    await wait(110);
+  }
+  if (vault) {
+    vault.classList.remove('cracking');
+    vault.classList.add(success ? 'open' : 'alarm');
+  }
+  if (dial) dial.textContent = success ? 'OPEN' : 'NG';
+  const band = body.querySelector('.mg-hl-band');
+  if (band) band.textContent = success ? '金庫オープン！' : '警報！捕まった…';
+  if (success) audio.sfx.slotWin(pick === 'bold');
+  else audio.sfx.buy();
+  await wait(500);
+}
+
+async function animateBalloonDashReveal(body, reveal) {
+  const pumps = reveal.outcome?.pumps ?? 5;
+  const popped = !!reveal.outcome?.popped;
+  const popAt = reveal.outcome?.popAt ?? pumps;
+  body.innerHTML = `
+    <div class="mg-balloon-wrap">
+      <div class="mg-balloon" id="mg-balloon" style="--size:1"></div>
+      <div class="mg-hl-band">ポンプ 0 / ${pumps}</div>
+    </div>`;
+  const balloon = body.querySelector('#mg-balloon');
+  const band = body.querySelector('.mg-hl-band');
+  audio.sfx.minigameDrum();
+  const steps = popped ? popAt : pumps;
+  for (let i = 1; i <= steps; i++) {
+    const size = 0.85 + i * 0.22;
+    if (balloon) balloon.style.setProperty('--size', String(size));
+    if (band) band.textContent = `ポンプ ${i} / ${pumps}`;
+    audio.sfx.coinFlip();
+    await wait(160);
+  }
+  if (popped) {
+    if (balloon) balloon.classList.add('popped');
+    if (band) band.textContent = `パンッ！（限界 ${popAt}）`;
+    audio.sfx.buy();
+  } else {
+    if (balloon) balloon.classList.add('safe');
+    if (band) band.textContent = `成功！限界は ${popAt}`;
+    audio.sfx.slotWin(pumps >= 7);
+  }
   await wait(450);
 }
 
@@ -3665,62 +3902,6 @@ async function animateCoinReveal(body, reveal) {
   coin.classList.remove('flipping');
   coin.classList.add('landed');
   audio.sfx.coinLand();
-  await wait(450);
-}
-
-async function animateCoinDoubleReveal(body, reveal) {
-  const faces = Array.isArray(reveal.outcome?.faces)
-    ? reveal.outcome.faces
-    : ['heads', 'tails'];
-  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'tails' ? 'うら' : 'おもて';
-  body.innerHTML = `
-    <div>
-      <div class="mg-dice-row">
-        <div class="mg-coin flipping" data-i="0">？</div>
-        <div class="mg-coin flipping" data-i="1">？</div>
-      </div>
-      <div class="mg-hl-band">予想：${pickLabel}×2</div>
-    </div>`;
-  const coins = [...body.querySelectorAll('.mg-coin')];
-  const labels = ['おもて', 'うら'];
-  for (let i = 0; i < 10; i++) {
-    coins.forEach((c) => { c.textContent = labels[i % 2]; });
-    audio.sfx.coinFlip();
-    await wait(85);
-  }
-  for (let i = 0; i < coins.length; i++) {
-    const faceLabel = faces[i] === 'tails' ? 'うら' : 'おもて';
-    coins[i].textContent = faceLabel;
-    coins[i].classList.remove('flipping');
-    coins[i].classList.add('landed');
-    audio.sfx.coinLand();
-    await wait(220);
-  }
-  await wait(300);
-}
-
-async function animateCardDuelReveal(body, reveal) {
-  const first = reveal.outcome?.first ?? 1;
-  const second = reveal.outcome?.second ?? 1;
-  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'high' ? 'ハイ' : 'ロー';
-  body.innerHTML = `
-    <div class="mg-dice-row">
-      <div class="mg-dice-col"><small>1枚目</small><div class="mg-hl-card landed" id="mg-card-a">${first}</div></div>
-      <div class="mg-vs">→</div>
-      <div class="mg-dice-col"><small>2枚目</small><div class="mg-hl-card spinning" id="mg-card-b">?</div></div>
-    </div>
-    <div class="mg-hl-band">予想：${pickLabel}</div>`;
-  const cardB = body.querySelector('#mg-card-b');
-  audio.sfx.minigameDrum();
-  const start = performance.now();
-  while (performance.now() - start < 900) {
-    cardB.textContent = String(1 + Math.floor(Math.random() * 13));
-    await wait(65);
-  }
-  cardB.textContent = String(second);
-  cardB.classList.remove('spinning');
-  cardB.classList.add('landed');
-  audio.sfx.diceLand(Math.min(6, second));
   await wait(450);
 }
 
@@ -6134,28 +6315,30 @@ function showChoiceModal(g) {
           sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.pick) } });
         };
       });
-    } else if (game === 'dice_parity') {
+    } else if (game === 'dice_battle') {
       body.innerHTML = `
-        <p class="modal-lead">出目は奇数？ 偶数？</p>
-        <p class="hint">賽のカーニバル！当たれば報酬。外れても全員に参加賞。</p>
+        <p class="modal-lead">ハウスとダイスバトル！</p>
+        <p class="hint">攻めは2d6、守りは1d6+3。ハウスの2d6を上回れば勝ち。外れても参加賞。</p>
         <div class="modal-actions">
-          <button class="btn primary" id="m-odd">奇数（1・3・5）</button>
-          <button class="btn" id="m-even">偶数（2・4・6）</button>
+          <button class="btn primary" id="m-rush">攻め（2d6）</button>
+          <button class="btn" id="m-guard">守り（1d6+3）</button>
         </div>`;
-      $('#m-odd').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'odd' } }); };
-      $('#m-even').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'even' } }); };
-    } else if (game === 'dice_band') {
+      $('#m-rush').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'rush' } }); };
+      $('#m-guard').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'guard' } }); };
+    } else if (game === 'horse_race') {
+      const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
       body.innerHTML = `
-        <p class="modal-lead">出目の帯を当てよう！</p>
-        <p class="hint">フォーチュンダイス：小・中・大の3択。外れても全員に参加賞。</p>
-        <div class="modal-actions">
-          <button class="btn primary" id="m-band-low">小（1-2）</button>
-          <button class="btn primary" id="m-band-mid">中（3-4）</button>
-          <button class="btn primary" id="m-band-high">大（5-6）</button>
+        <p class="modal-lead">ミニ競馬！乗る馬を選ぼう</p>
+        <p class="hint">1着は高額、2着も入賞。3着以下でも参加賞あり。</p>
+        <div class="mini-pick-grid">
+          ${horses.map((name, i) => `<button type="button" class="btn primary mini-pick" data-pick="${i}">${name}</button>`).join('')}
         </div>`;
-      $('#m-band-low').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
-      $('#m-band-mid').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'mid' } }); };
-      $('#m-band-high').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
+      body.querySelectorAll('[data-pick]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.pick) } });
+        };
+      });
     } else if (game === 'high_low') {
       body.innerHTML = `
         <p class="modal-lead">次の数字はハイ？ ロー？</p>
@@ -6166,47 +6349,64 @@ function showChoiceModal(g) {
         </div>`;
       $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
-    } else if (game === 'card_duel') {
+    } else if (game === 'rps_duel') {
       body.innerHTML = `
-        <p class="modal-lead">次のカードは高い？ 低い？</p>
-        <p class="hint">1〜13のカードを2枚。1枚目のあと、2枚目の高低を予想（同値は引き分け賞）。</p>
+        <p class="modal-lead">じゃんけん勝負！</p>
+        <p class="hint">勝ちで本賞、あいこは引き分け賞。負けても参加賞あり。</p>
         <div class="modal-actions">
-          <button class="btn primary" id="m-hi">ハイ（より高い）</button>
-          <button class="btn" id="m-lo">ロー（より低い）</button>
+          <button class="btn primary" id="m-rock">グー</button>
+          <button class="btn primary" id="m-paper">パー</button>
+          <button class="btn primary" id="m-scissors">チョキ</button>
         </div>`;
-      $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
-      $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
-    } else if (game === 'coin' || game === 'coin_party') {
-      const party = game === 'coin_party';
+      $('#m-rock').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'rock' } }); };
+      $('#m-paper').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'paper' } }); };
+      $('#m-scissors').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'scissors' } }); };
+    } else if (game === 'coin') {
       body.innerHTML = `
-        <p class="modal-lead">${party ? 'みんなでコイン予想！' : 'コインの裏表を予想！'}</p>
-        <p class="hint">${party
-          ? '当たると本人賞は控えめ、全員の参加賞が厚め。外れても参加賞あり。'
-          : '当たればボーナス。外れても全員に参加賞。'}</p>
-        <div class="modal-actions">
-          <button class="btn primary" id="m-heads">おもて</button>
-          <button class="btn" id="m-tails">うら</button>
-        </div>`;
-      $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
-      $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
-    } else if (game === 'coin_double') {
-      body.innerHTML = `
-        <p class="modal-lead">同じ面を2回当てよう！</p>
-        <p class="hint">ラッキーフリップ：2枚とも一致で高額、1枚一致でも小賞。外れても参加賞。</p>
+        <p class="modal-lead">コインの裏表を予想！</p>
+        <p class="hint">当たればボーナス。外れても全員に参加賞。</p>
         <div class="modal-actions">
           <button class="btn primary" id="m-heads">おもて</button>
           <button class="btn" id="m-tails">うら</button>
         </div>`;
       $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
-    } else if (game === 'neon_slot') {
+    } else if (game === 'roulette') {
       body.innerHTML = `
-        <p class="modal-lead">ネオンペイラインを回そう！</p>
-        <p class="hint">左端からの連続揃いだけで判定。5連続は特大ジャックポット。</p>
+        <p class="modal-lead">ルーレットに賭けよう！</p>
+        <p class="hint">赤／黒は通常配当、緑(0)は大当り。外れても参加賞。</p>
         <div class="modal-actions">
-          <button class="btn primary large" id="m-spin">回す！</button>
+          <button class="btn primary" id="m-red">赤</button>
+          <button class="btn" id="m-black">黒</button>
+          <button class="btn" id="m-green">緑(0)</button>
         </div>`;
-      $('#m-spin').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'spin' } }); };
+      $('#m-red').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'red' } }); };
+      $('#m-black').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'black' } }); };
+      $('#m-green').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'green' } }); };
+    } else if (game === 'heist') {
+      body.innerHTML = `
+        <p class="modal-lead">金庫破り（非対称リスク）</p>
+        <p class="hint">用心は成功しやすいが少額。大胆は高配当だが失敗しやすい。失敗時もみんなに慰労金。</p>
+        <div class="modal-actions">
+          <button class="btn" id="m-safe">用心（高確率）</button>
+          <button class="btn primary" id="m-normal">普通</button>
+          <button class="btn" id="m-bold">大胆（高配当）</button>
+        </div>`;
+      $('#m-safe').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'safe' } }); };
+      $('#m-normal').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'normal' } }); };
+      $('#m-bold').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'bold' } }); };
+    } else if (game === 'balloon_dash') {
+      body.innerHTML = `
+        <p class="modal-lead">バルーンチャレンジ！</p>
+        <p class="hint">ポンプ回数が多いほど高配当。限界を超えると破裂して本人ゼロ。参加賞あり。</p>
+        <div class="modal-actions">
+          <button class="btn" id="m-p3">3回（安全寄り）</button>
+          <button class="btn primary" id="m-p5">5回</button>
+          <button class="btn" id="m-p7">7回（高配当）</button>
+        </div>`;
+      $('#m-p3').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 3 } }); };
+      $('#m-p5').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 5 } }); };
+      $('#m-p7').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 7 } }); };
     } else {
       body.innerHTML = `
         <p class="modal-lead">スロットを回そう！</p>
