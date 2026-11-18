@@ -4,6 +4,8 @@ import {
   tiedRollKeys,
   evaluateOrderRolls,
   rollOrderDie,
+  reclaimOrderRollPlayer,
+  markOrderRollPlayerLeft,
   ORDER_DIE_MIN,
   ORDER_DIE_MAX,
 } from '../js/orderRoll.js';
@@ -72,5 +74,27 @@ describe('order roll & lobby helpers', () => {
     assert.equal(lobby[0].color, PLAYER_COLORS[5]);
     assert.notEqual(lobby[1].color, lobby[0].color);
     assert.equal(lobby[2].color, PLAYER_COLORS[7]);
+  });
+
+  it('keeps order-roll keys when a guest reconnects under a new peerId', () => {
+    const orderRoll = {
+      players: [
+        { key: 'old-peer', peerId: 'old-peer', name: 'あか', isCPU: false },
+        { key: 'host', peerId: 'host', name: 'ホスト', isCPU: false },
+      ],
+      pending: ['old-peer'],
+      rolls: {},
+    };
+    const left = markOrderRollPlayerLeft(orderRoll, 'old-peer');
+    assert.equal(left?.name, 'あか');
+    assert.equal(left.disconnected, true);
+    assert.equal(left.peerId, null);
+    assert.equal(left.key, 'old-peer');
+
+    const back = reclaimOrderRollPlayer(orderRoll, { name: 'あか', peerId: 'new-peer' });
+    assert.equal(back?.key, 'old-peer');
+    assert.equal(back.peerId, 'new-peer');
+    assert.equal(back.disconnected, false);
+    assert.deepEqual(orderRoll.pending, ['old-peer']);
   });
 });

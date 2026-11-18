@@ -60,7 +60,12 @@ import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
 import { APP_VERSION } from './version.js';
-import { evaluateOrderRolls, rollOrderDie } from './orderRoll.js';
+import {
+  evaluateOrderRolls,
+  rollOrderDie,
+  reclaimOrderRollPlayer,
+  markOrderRollPlayerLeft,
+} from './orderRoll.js';
 import { isLocalPlayer, isMyTurnSeat } from './turnOwner.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -1087,6 +1092,25 @@ function handleNetEvent({ from, data }) {
         return;
       }
       if (app.orderRoll) {
+        const peerId = data.peerId || from;
+        const reclaimed = reclaimOrderRollPlayer(app.orderRoll, {
+          name: data.name,
+          peerId,
+        });
+        if (reclaimed) {
+          reclaimOrPushLobbyPlayer(from, data);
+          resyncLobbyColors();
+          renderLobbyPlayers();
+          app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+          app.net.sendTo(from, {
+            type: 'order_roll_sync',
+            ...serializeOrderRoll(),
+          });
+          broadcastOrderRollSync();
+          renderOrderRollUi();
+          toast(`${reclaimed.name} が順番決めに復帰`);
+          return;
+        }
         app.net.sendTo(from, { type: 'game_already' });
         return;
       }
@@ -1155,13 +1179,13 @@ function handleNetEvent({ from, data }) {
     }
     if (data.type === 'peer_left') {
       if (app.orderRoll) {
-        app.orderRoll = null;
-        toast('順番決め中に切断がありました。ロビーに戻ります');
-        showScreen('screen-lobby');
-        app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
-        renderLobbyPlayers();
-        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
-        app.net.broadcast({ type: 'order_roll_abort' });
+        const left = markOrderRollPlayerLeft(app.orderRoll, data.peerId);
+        if (left) {
+          toast(`${left.name} が切断（再接続待ち）`);
+          broadcastOrderRollSync();
+          renderOrderRollUi();
+          scheduleOrderRollDisconnectRecovery(left.key);
+        }
         return;
       }
       if (!app.game) {
@@ -1260,6 +1284,8 @@ function handleNetEvent({ from, data }) {
     }
     if (data.type === 'reject') {
       toast(data.reason || '操作が拒否されました');
+      // hideModal 後の拒否で選択UIが消えたままになるのを防ぐ
+      refreshGameUI();
     }
   }
 }
@@ -1503,7 +1529,14 @@ function broadcastOrderRollSync() {
 function serializeOrderRoll() {
   const o = app.orderRoll;
   return {
-    players: o.players,
+    players: (o.players || []).map((p) => ({
+      key: p.key,
+      peerId: p.peerId,
+      name: p.name,
+      color: p.color,
+      isCPU: !!p.isCPU,
+      disconnected: !!p.disconnected,
+    })),
     rolls: o.rolls,
     pending: o.pending,
     round: o.round,
@@ -1593,7 +1626,7 @@ function renderOrderRollUi() {
       return `<div class="${cls}" style="--pc:${p.color || PLAYER_COLORS[0]}">
         ${rankHtml}
         <span class="or-dot"></span>
-        <span>${escapeHtml(p.name)}${p.isCPU ? '（CPU）' : ''}${p.key === myKey ? '（あなた）' : ''}</span>
+        <span>${escapeHtml(p.name)}${p.isCPU ? '（CPU）' : ''}${p.disconnected ? '（切断）' : ''}${p.key === myKey ? '（あなた）' : ''}</span>
         <span class="or-dice">${escapeHtml(dice)}</span>
       </div>`;
     }).join('');
@@ -1661,7 +1694,11 @@ function claimOrderRoll() {
   const myKey = orderRollMyKey();
   if (!myKey || !(o.pending || []).includes(myKey)) return;
   if (o.mode === 'guest') {
-    app.net?.sendToHost({ type: 'order_roll_claim', peerId: app.net.peerId });
+    const sent = app.net?.sendToHost({ type: 'order_roll_claim', peerId: app.net.peerId });
+    if (!sent) {
+      toast('ホストに届きませんでした。再接続を試してください');
+      renderOrderRollUi();
+    }
     return;
   }
   // host / local: 自分で確定
@@ -1704,6 +1741,21 @@ function scheduleOrderRollCpus() {
       resolveOrderRollClaim(p.key);
     }, 350 + i * 280);
   });
+}
+
+/** 順番決め中に切断したプレイヤーが戻らないとき、出目待ちなら代行で振る */
+function scheduleOrderRollDisconnectRecovery(key) {
+  if (!key) return;
+  setTimeout(() => {
+    const o = app.orderRoll;
+    if (!o || o.mode === 'guest') return;
+    const p = o.players.find((x) => x.key === key);
+    if (!p?.disconnected) return;
+    if (o.awaitingConfirm) return;
+    if (!(o.pending || []).includes(key)) return;
+    toast(`${p.name} が戻らないため代行で振ります`);
+    resolveOrderRollClaim(key);
+  }, 15000);
 }
 
 function finishOrderRollRound() {
@@ -2689,9 +2741,9 @@ function bindBoardZoomControls(canvas) {
 
 /** ゲストが局所解放したとき、ホスト側の残留告知も捨てさせる */
 function requestHostEventFlashFlush() {
-  if (app.mode !== 'guest' || !app.net) return;
+  if (app.mode !== 'guest' || !app.net) return false;
   const throughLogKey = app.game?.logs?.[0] ? logKey(app.game.logs[0]) : null;
-  app.net.sendToHost({
+  return !!app.net.sendToHost({
     type: 'event_flash_flush',
     seat: app.localSeat,
     throughLogKey,
@@ -2774,7 +2826,11 @@ function sendAction(action) {
   }
   if (app.mode === 'guest') {
     noteActionActor(app.localSeat);
-    app.net.sendToHost({ type: 'action', action, seat: app.localSeat });
+    const sent = app.net.sendToHost({ type: 'action', action, seat: app.localSeat });
+    if (!sent) {
+      toast('ホストに届きませんでした。再接続を試してください');
+      refreshGameUI();
+    }
     return;
   }
   applyLocalAction(action);
@@ -3651,16 +3707,16 @@ async function handleHostAction(from, data) {
     app.busy = false;
   } else if (app.busy || isEventUiBlocking()) {
     // 料金確認がホストにだけ残っているとクライアントの進行を拒否してしまう → 残留なら解放
-    if (isEventUiBlocking() && !app.busy && app.game) {
+    if (isEventUiBlocking() && app.game) {
       reconcileStaleEventFlash(app.game);
     }
     if (app.busy || isEventUiBlocking()) {
       // 手番プレイヤーのサイコロなら、確認担当が自分でない残留告知を捨てて受理
+      // （告知中は busy=true になり得るので !busy 条件は付けない）
       if (action?.type === 'roll'
         && app.game?.phase === 'await_roll'
         && app.game.currentPlayerIdx === seat
-        && isEventUiBlocking()
-        && !app.busy) {
+        && isEventUiBlocking()) {
         const readerId = app.eventFlashReaderId;
         if (readerId == null || readerId !== seat) {
           flushEventFlashImmediate();
@@ -3715,6 +3771,7 @@ async function handleHostAction(from, data) {
     if (!result.ok) {
       if (result.state) app.game = restoreState(result.state);
       app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
+      syncState();
       refreshGameUI();
       return;
     }
@@ -5029,7 +5086,12 @@ function dismissEventFlash({ remote = false, force = false } = {}) {
       btn.disabled = true;
       btn.textContent = '同期中…';
     }
-    app.net.sendToHost({ type: 'event_flash_dismiss', seat: app.localSeat });
+    const sent = app.net.sendToHost({ type: 'event_flash_dismiss', seat: app.localSeat });
+    if (!sent) {
+      toast('ホストに届きませんでした。再接続を試してください');
+      dismissEventFlash({ remote: true });
+      return;
+    }
     clearTimeout(app.eventFlashDismissWait);
     app.eventFlashDismissWait = setTimeout(() => {
       app.eventFlashDismissWait = null;

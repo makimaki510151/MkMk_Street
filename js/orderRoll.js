@@ -67,3 +67,35 @@ export function rollOrderDie(rng = Math.random) {
   const u = Math.max(0, Math.min(0.999999, n));
   return ORDER_DIE_MIN + Math.floor(u * (ORDER_DIE_MAX - ORDER_DIE_MIN + 1));
 }
+
+/**
+ * 順番決め中の切断プレイヤーを名前／peerId で復帰させる。
+ * key は変えない（出目・pending の対応を壊さない）。
+ * @returns {object|null} 復帰したプレイヤー
+ */
+export function reclaimOrderRollPlayer(orderRoll, { name, peerId } = {}) {
+  if (!orderRoll?.players?.length || !peerId) return null;
+  const nm = String(name || '').trim();
+  const byPeer = orderRoll.players.find((p) => p.peerId === peerId);
+  const byName = nm
+    ? orderRoll.players.find((p) => !p.isCPU && p.name === nm)
+    : null;
+  const pl = byPeer || byName;
+  if (!pl || pl.isCPU) return null;
+  pl.peerId = peerId;
+  pl.disconnected = false;
+  return pl;
+}
+
+/**
+ * 順番決め中の切断を記録（セッションは継続）。
+ * @returns {object|null}
+ */
+export function markOrderRollPlayerLeft(orderRoll, peerId) {
+  if (!orderRoll?.players?.length || !peerId) return null;
+  const pl = orderRoll.players.find((p) => p.peerId === peerId);
+  if (!pl || pl.isCPU) return null;
+  pl.disconnected = true;
+  pl.peerId = null;
+  return pl;
+}
