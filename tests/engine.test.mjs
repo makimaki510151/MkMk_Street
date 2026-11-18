@@ -93,6 +93,7 @@ import {
   EVENT_COUNT,
   applyAllCash,
   scratchCell,
+  findRivalMonopolies,
   collectWarpSquareRewards,
   playerColorIndex,
   MATCH_BONUS_PER,
@@ -1201,31 +1202,79 @@ describe('MkMk Street engine', () => {
     assert.ok(g.logs.some((l) => /ラッキー/.test(l.text) && /20%/.test(l.text)));
   });
 
+  it('findRivalMonopolies matches hasAreaMonopoly and ignores partial ownership', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 19,
+      cash: 2000,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = getAreaShops(g, area);
+    assert.ok(shops.length >= 3);
+
+    assert.deepEqual(findRivalMonopolies(g, 0), []);
+
+    for (const sq of shops) sq.owner = 1;
+    assert.equal(hasAreaMonopoly(g, 1, area), true);
+    const found = findRivalMonopolies(g, 0);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].area, area);
+    assert.equal(found[0].ownerId, 1);
+    // 自分の独占はライバル扱いにしない
+    assert.deepEqual(findRivalMonopolies(g, 1), []);
+
+    shops[0].owner = -1;
+    assert.equal(hasAreaMonopoly(g, 1, area), false);
+    assert.equal(findRivalMonopolies(g, 0).some((m) => m.area === area), false);
+  });
+
   it('seize_mono_shop breaks a rival monopoly', () => {
     const seizeId = EVENT_CATALOG.findIndex((e) => e.effect === 'seize_mono_shop');
     assert.ok(seizeId >= 0);
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 21,
-      cash: 2000,
+      cash: 20000,
     });
     const area = Number(Object.keys(g.areas)[0]);
     const shops = getAreaShops(g, area);
     assert.ok(shops.length >= 2);
-    for (const sq of shops) sq.owner = 1;
+    for (const sq of shops) {
+      sq.owner = 1;
+      sq.basePrice = 8000;
+      sq.extraInvest = 4000;
+      sq.price = 12000;
+    }
     g.players[1].flags.monopolyBonusClaimed = { [area]: true };
+    g.areas[area].B = 200;
+    updateAreaStockPrices(g);
+    const priceBefore = g.areas[area].stockPrice;
     assert.equal(hasAreaMonopoly(g, 1, area), true);
 
+    // スクラッチ選択経路経由で独占崩壊ペナルティまで適用されること
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'scratch',
+      playerId: 0,
+      openIds: [0],
+    };
     const cell = g.sharedEventTable.cells[0];
     cell.eventId = seizeId + 1;
     cell.label = EVENT_CATALOG[seizeId].label;
     cell.scratched = false;
-    const r = scratchCell(g, g.players[0], 0);
+    const r = applyChoice(g, { action: 'scratch', cellId: 0 });
     assert.equal(r.ok, true);
     assert.equal(hasAreaMonopoly(g, 1, area), false);
     const taken = shops.filter((s) => s.owner === 0);
     assert.equal(taken.length, 1);
     assert.ok(r.messages.some((m) => /奪取/.test(m)));
+    assert.ok(r.monopolyBreak?.broken, 'scratch seize should apply monopoly break');
+    assert.ok(
+      g.areas[area].stockPrice < priceBefore,
+      `stock should crash on scratch seize: ${g.areas[area].stockPrice} >= ${priceBefore}`,
+    );
+    assert.equal(g.players[1].flags.monopolyBonusClaimed?.[area], undefined);
   });
 
   it('scales level-up bonus by promotion target level only (same for all players)', () => {

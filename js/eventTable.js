@@ -478,17 +478,22 @@ export function scratchCell(g, player, cellId) {
   };
 }
 
-/** 自分以外が独占しているエリア一覧 */
-function findRivalMonopolies(g, playerId) {
+/**
+ * 自分以外が独占しているエリア一覧。
+ * エンジンの hasAreaMonopoly と同じ定義：エリア内の全店が同一オーナー。
+ */
+export function findRivalMonopolies(g, playerId) {
   /** @type {{ area: number, ownerId: number, shops: object[], name: string }[]} */
   const out = [];
+  const pid = Number(playerId);
   for (const a of Object.keys(g.areas || {}).map(Number)) {
-    const shops = g.map.filter((s) => s.type === 'shop' && s.area === a);
+    const shops = g.map.filter((s) => s.type === 'shop' && Number(s.area) === a);
     if (!shops.length) continue;
-    const owners = [...new Set(shops.map((s) => s.owner))];
-    if (owners.length !== 1) continue;
-    const oid = owners[0];
-    if (oid < 0 || oid === playerId) continue;
+    const oid = Number(shops[0].owner);
+    if (!(oid >= 0) || oid === pid) continue;
+    if (g.players[oid]?.bankrupt) continue;
+    // 全軒同一オーナー（空き混じり・分割所有は独占にしない）
+    if (!shops.every((s) => Number(s.owner) === oid)) continue;
     out.push({
       area: a,
       ownerId: oid,
@@ -499,18 +504,25 @@ function findRivalMonopolies(g, playerId) {
   return out;
 }
 
-function clearMonoFlag(g, pid, area) {
-  const p = g.players[pid];
-  if (p?.flags?.monopolyBonusClaimed) delete p.flags.monopolyBonusClaimed[area];
-}
-
 function refreshAreaStockPrice(g, area) {
   const meta = g.areas[area];
   if (!meta) return;
-  const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+  const shops = g.map.filter((s) => s.type === 'shop' && Number(s.area) === area);
   if (!shops.length) return;
   const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
   meta.stockPrice = Math.max(1, Math.floor((avg / 65536) * (meta.B || 100)));
+}
+
+/** スクラッチ後にエンジン側で処理する副作用（循環 import 回避） */
+function queueScratchSideEffect(g, effect) {
+  if (!g.scratchSideEffects) g.scratchSideEffects = [];
+  g.scratchSideEffects.push(effect);
+}
+
+export function takeScratchSideEffects(g) {
+  const list = g.scratchSideEffects ? [...g.scratchSideEffects] : [];
+  g.scratchSideEffects = null;
+  return list;
 }
 
 function grantLuckyStatus(player, messages) {
@@ -766,13 +778,13 @@ function applyEventDef(g, player, def, messages) {
       }
       const mono = pickRandom(monos);
       const sq = pickRandom(mono.shops);
-      const prevId = sq.owner;
+      const prevId = Number(sq.owner);
       const prev = g.players[prevId];
       sq.owner = player.id;
       sq.extraInvest = 0;
       sq.price = sq.basePrice;
-      clearMonoFlag(g, prevId, mono.area);
-      refreshAreaStockPrice(g, mono.area);
+      // 5倍買い／取引と同じ独占崩壊ペナルティをエンジン側で適用
+      queueScratchSideEffect(g, { type: 'monopolyBreak', pid: prevId, area: mono.area });
       messages.push(`${prev?.name || '相手'}の独占「${mono.name}」から「${sq.label}」を奪取！`);
       break;
     }
