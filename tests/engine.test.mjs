@@ -43,6 +43,9 @@ import {
   gameResultsExportToText,
   gameResultsExportToCsv,
   gameResultsExportFilename,
+  parseGameResultsExport,
+  resultsFromExportPayload,
+  GAME_RESULTS_SCHEMA,
   createEmptyStats,
   ensureStats,
   recordNudgeStats,
@@ -2944,6 +2947,21 @@ describe('MkMk Street engine', () => {
     const fname = gameResultsExportFilename(exported, 'json');
     assert.match(fname, /^mkmk-street-central_cross-T12-/);
     assert.match(fname, /\.json$/);
+
+    const roundTrip = parseGameResultsExport(JSON.stringify(exported));
+    assert.equal(roundTrip.ok, true);
+    assert.equal(roundTrip.payload.schema, GAME_RESULTS_SCHEMA);
+    const viewed = resultsFromExportPayload(roundTrip.payload);
+    assert.equal(viewed.winnerId, results.winnerId);
+    assert.equal(viewed.ranking.length, results.ranking.length);
+    assert.equal(viewed.ranking[0].assets.total, results.ranking[0].assets.total);
+    assert.ok(viewed.maxTotal >= viewed.ranking[0].assets.total);
+    assert.equal(viewed.meta.mapId, 'central_cross');
+
+    const bad = parseGameResultsExport('{nope');
+    assert.equal(bad.ok, false);
+    const empty = parseGameResultsExport({ schema: GAME_RESULTS_SCHEMA, ranking: [] });
+    assert.equal(empty.ok, false);
   });
 
   it('tracks stock return from price changes and worth history snapshots', () => {

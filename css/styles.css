@@ -450,6 +450,81 @@ button:disabled { opacity: .42; cursor: default; }
 }
 .howto strong { color: var(--ink); }
 .hint { font-size: 0.78rem; color: var(--muted); }
+.hint.is-error { color: var(--danger); }
+
+.results-archive {
+  max-width: min(52rem, 100%);
+  max-height: min(88vh, 56rem);
+}
+.results-archive-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.results-archive-file {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.results-archive textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 7rem;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.results-archive-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.45rem 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+.results-archive-summary span {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.results-archive-summary b {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.archive-results-body.results-body {
+  flex: none;
+  min-height: 14rem;
+  max-height: min(48vh, 34rem);
+  overflow: auto;
+  border: 1px solid var(--line);
+  padding: 0.65rem;
+  background: color-mix(in srgb, var(--bg0) 55%, transparent);
+}
+.archive-results-body .results-panes {
+  flex: none;
+  overflow: visible;
+}
+.results-archive-json {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  background: var(--bg0);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(42vh, 28rem);
+  overflow: auto;
+}
 
 /* ===== GAME SHELL ===== */
 #screen-game {
