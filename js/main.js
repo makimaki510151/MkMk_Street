@@ -56,6 +56,11 @@ import {
 import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
+  pendingFingerprint,
+  snapshotEditableFields,
+  restoreEditableFields,
+} from './formDrafts.js';
+import {
   GROUP_COLORS,
   TABLE_SIZE,
   COLOR_LABELS,
@@ -144,6 +149,8 @@ const app = {
   lastResultsExport: null,
   /** @type {ReturnType<typeof formatGameResultsExport>|null} */
   archivePayload: null,
+  /** 選択モーダル再描画抑制用（数値入力中の巻き戻り防止） */
+  modalPendingKey: null,
 };
 
 const LAST_RESULTS_KEY = 'mkmk-street-last-results';
@@ -2485,7 +2492,8 @@ function deliverNudge({ fromSeat, targetSeat, fromName }) {
   if (!target || target.isCPU) return;
   if (app.game) {
     recordNudgeStats(app.game, fromSeat, targetSeat);
-    syncState();
+    // 催促だけで state 同期すると選択中の数値入力が再描画で巻き戻る。
+    // 統計はホストに保持し、次の通常同期／終了時に乗る。
   }
   broadcastFx({
     kind: 'nudge',
@@ -5596,6 +5604,13 @@ function showChoiceModal(g) {
     applyModalMode();
     return;
   }
+  // pending が変わっていなければ作り直さない（催促／state 同期での数値巻き戻り防止）
+  const fp = pendingFingerprint(pend);
+  if (fp && fp === app.modalPendingKey && !modal.hidden && body?.childNodes?.length) {
+    applyModalMode();
+    return;
+  }
+  app.modalPendingKey = fp;
   modal.hidden = false;
   applyModalMode();
   $('#btn-end-choice').hidden = true;
@@ -6517,6 +6532,7 @@ function showChoiceModal(g) {
 
 function hideModal() {
   app.modalActive = false;
+  app.modalPendingKey = null;
   // 選択完了後は次の選択を右下に再表示
   app.modalMode = 'shown';
   $('#modal').hidden = true;
@@ -7055,6 +7071,7 @@ function localHumanSeat(g) {
 
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
+  const drafts = snapshotEditableFields(el);
   const areas = Object.keys(g.areas).map(Number);
   const players = g.players;
   const seat = localHumanSeat(g);
@@ -7174,6 +7191,19 @@ function renderStockPanel(g) {
     input.addEventListener('input', sync);
     input.addEventListener('change', sync);
     sync();
+  });
+
+  // 催促などの再描画で入力中の枚数が初期値に戻らないようにする
+  restoreEditableFields(el, drafts);
+  el.querySelectorAll('input[data-sell-count]').forEach((input) => {
+    const area = Number(input.dataset.sellCount);
+    const have = me?.stocks[area] || 0;
+    const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+    const preview = el.querySelector(`[data-sell-preview="${area}"]`);
+    if (preview) {
+      preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+      preview.innerHTML = formatStockSellPreview(g, area, count);
+    }
   });
 }
 
