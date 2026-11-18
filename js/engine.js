@@ -1307,6 +1307,110 @@ export function gameResultsExportFilename(payload, ext = 'json') {
   return `mkmk-street-${map}-T${payload?.turn || 0}-${stamp}.${ext}`;
 }
 
+export const GAME_RESULTS_SCHEMA = 'mkmk-street-results/v1';
+
+/**
+ * エクスポート JSON（文字列 or オブジェクト）を検証して返す。
+ * @returns {{ ok: true, payload: object } | { ok: false, error: string }}
+ */
+export function parseGameResultsExport(raw) {
+  let data = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text) return { ok: false, error: 'JSONが空です' };
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { ok: false, error: 'JSONの形式が正しくありません' };
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, error: '試合結果オブジェクトではありません' };
+  }
+  if (data.schema && data.schema !== GAME_RESULTS_SCHEMA) {
+    return { ok: false, error: `未対応のスキーマです（${data.schema}）` };
+  }
+  if (!Array.isArray(data.ranking) || !data.ranking.length) {
+    return { ok: false, error: '順位データがありません' };
+  }
+  return { ok: true, payload: data };
+}
+
+/**
+ * エクスポート JSON を結果画面用の results 形へ戻す。
+ * @param {object} payload formatGameResultsExport の戻り
+ */
+export function resultsFromExportPayload(payload) {
+  const ranking = (payload?.ranking || []).map((r, i) => ({
+    rank: Number(r.rank) || i + 1,
+    id: r.id,
+    name: r.name || `P${r.id}`,
+    color: r.color || '#c4a574',
+    bankrupt: !!r.bankrupt,
+    level: Number(r.level) || 1,
+    shopCount: Number(r.shopCount) || 0,
+    monopolyAreas: Number(r.monopolyAreas) || 0,
+    isWinner: !!r.isWinner,
+    assets: {
+      cash: Number(r.assets?.cash) || 0,
+      shopAsset: Number(r.assets?.shopAsset) || 0,
+      stockAsset: Number(r.assets?.stockAsset) || 0,
+      total: Number(r.assets?.total) || 0,
+    },
+    sales: {
+      count: Number(r.sales?.count) || 0,
+      total: Number(r.sales?.total) || 0,
+      average: Number(r.sales?.average) || 0,
+      greatest: Number(r.sales?.greatest) || 0,
+    },
+    payments: {
+      count: Number(r.payments?.count) || 0,
+      total: Number(r.payments?.total) || 0,
+      average: Number(r.payments?.average) || 0,
+      greatest: Number(r.payments?.greatest) || 0,
+    },
+    stockReturn: Number(r.stockReturn) || 0,
+    nextSalary: Number(r.nextSalary) || 0,
+    stats: { ...createEmptyStats(), ...(r.stats || {}) },
+  }));
+  const worthHistory = (payload?.worthHistory || []).map((h) => ({
+    turn: Number(h.turn) || 0,
+    values: { ...(h.values || {}) },
+  }));
+  const maxTotal = Math.max(
+    1,
+    Number(payload?.goal) || 1,
+    ...ranking.map((r) => Math.max(0, r.assets.total)),
+    ...worthHistory.flatMap((h) => Object.values(h.values || {}).map((n) => Math.max(0, Number(n) || 0))),
+  );
+  return {
+    winnerId: payload?.winnerId ?? ranking.find((r) => r.isWinner)?.id ?? null,
+    ranking,
+    awards: (payload?.awards || []).map((a) => ({
+      id: a.id,
+      title: a.title || '',
+      desc: a.desc || '',
+      playerId: a.playerId,
+      playerName: a.playerName || '',
+      playerColor: a.playerColor || '#c4a574',
+      value: Number(a.value) || 0,
+      valueLabel: a.valueLabel || String(a.value ?? ''),
+    })),
+    maxTotal,
+    goal: Number(payload?.goal) || 0,
+    turn: Number(payload?.turn) || 1,
+    startCash: Number(payload?.startCash) || 0,
+    worthHistory,
+    meta: {
+      exportedAt: payload?.exportedAt || null,
+      mapId: payload?.mapId ?? null,
+      mapName: payload?.mapName ?? null,
+      mode: payload?.mode ?? null,
+      schema: payload?.schema || GAME_RESULTS_SCHEMA,
+    },
+  };
+}
+
 /** 店を半分価格で売却したときの合計 */
 export function getShopFireSaleValue(g, p) {
   return g.map

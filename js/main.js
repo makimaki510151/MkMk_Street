@@ -22,6 +22,8 @@ import {
   gameResultsExportToText,
   gameResultsExportToCsv,
   gameResultsExportFilename,
+  parseGameResultsExport,
+  resultsFromExportPayload,
   createEmptyStats,
   ensureStats,
   recordNudgeStats,
@@ -140,7 +142,32 @@ const app = {
   nudgeUiTimer: null,
   /** @type {ReturnType<typeof formatGameResultsExport>|null} */
   lastResultsExport: null,
+  /** @type {ReturnType<typeof formatGameResultsExport>|null} */
+  archivePayload: null,
 };
+
+const LAST_RESULTS_KEY = 'mkmk-street-last-results';
+
+function loadLastResultsExport() {
+  try {
+    const raw = localStorage.getItem(LAST_RESULTS_KEY);
+    if (!raw) return null;
+    const parsed = parseGameResultsExport(raw);
+    return parsed.ok ? parsed.payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastResultsExport(payload) {
+  if (!payload) return;
+  try {
+    localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(payload));
+  } catch {
+    /* quota / private mode */
+  }
+  app.lastResultsExport = payload;
+}
 
 const NUDGE_COOLDOWN_MS = 12000;
 
@@ -712,6 +739,11 @@ function bindTitle() {
   };
   $('#btn-howto').onclick = () => { audio.sfx.click(); showScreen('screen-howto'); };
   $('#btn-howto-back').onclick = () => showScreen('screen-title');
+  $('#btn-results-archive').onclick = () => {
+    audio.sfx.click();
+    openResultsArchive();
+  };
+  bindResultsArchiveUi();
 }
 
 function selectedMapId(rootSel) {
@@ -6540,7 +6572,7 @@ async function copyTextToClipboard(text) {
 }
 
 function bindResultsExportActions(payload) {
-  app.lastResultsExport = payload;
+  saveLastResultsExport(payload);
   const jsonBtn = $('#btn-export-json');
   const csvBtn = $('#btn-export-csv');
   const textBtn = $('#btn-export-text');
@@ -6789,8 +6821,8 @@ function renderResultsAwardsPane(results) {
   ).join('')}</div>`;
 }
 
-function renderResultsBody(results) {
-  const body = $('#results-body');
+function renderResultsBody(results, container = null) {
+  const body = container || $('#results-body');
   if (!body) return;
 
   const tabs = [
@@ -6841,6 +6873,173 @@ function renderResultsBody(results) {
         pane.hidden = !on;
       });
     });
+  });
+}
+
+function setArchiveStatus(msg, isError = false) {
+  const el = $('#archive-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('is-error', !!isError);
+}
+
+function setArchiveViewTab(tab) {
+  const viewBody = $('#archive-results-body');
+  const jsonView = $('#archive-json-view');
+  $$('#archive-view-tabs [data-archive-tab]').forEach((btn) => {
+    const on = btn.dataset.archiveTab === tab;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (viewBody) viewBody.hidden = tab !== 'view' || !app.archivePayload;
+  if (jsonView) jsonView.hidden = tab !== 'json' || !app.archivePayload;
+}
+
+function showArchivePayload(payload, { sourceLabel = '' } = {}) {
+  const parsed = parseGameResultsExport(payload);
+  if (!parsed.ok) {
+    setArchiveStatus(parsed.error, true);
+    return false;
+  }
+  app.archivePayload = parsed.payload;
+  const results = resultsFromExportPayload(parsed.payload);
+  const summary = $('#archive-summary');
+  if (summary) {
+    const map = results.meta.mapName || results.meta.mapId || '—';
+    const when = results.meta.exportedAt
+      ? new Date(results.meta.exportedAt).toLocaleString('ja-JP')
+      : '—';
+    const winner = parsed.payload.winnerName || '（なし）';
+    summary.hidden = false;
+    summary.innerHTML = `
+      <div><span>勝者</span><b>${escapeHtml(winner)}</b></div>
+      <div><span>マップ</span><b>${escapeHtml(String(map))}</b></div>
+      <div><span>ターン</span><b>${escapeHtml(String(results.turn))}</b></div>
+      <div><span>目標</span><b>${escapeHtml(fmtG(results.goal))}</b></div>
+      <div><span>出力</span><b>${escapeHtml(when)}</b></div>
+      ${sourceLabel ? `<div><span>読込</span><b>${escapeHtml(sourceLabel)}</b></div>` : ''}
+    `;
+  }
+  const tabs = $('#archive-view-tabs');
+  if (tabs) tabs.hidden = false;
+  const body = $('#archive-results-body');
+  if (body) {
+    body.hidden = false;
+    renderResultsBody(results, body);
+  }
+  const jsonView = $('#archive-json-view');
+  if (jsonView) {
+    jsonView.textContent = `${JSON.stringify(parsed.payload, null, 2)}\n`;
+  }
+  const copyBtn = $('#btn-archive-copy-json');
+  const dlBtn = $('#btn-archive-download');
+  if (copyBtn) copyBtn.hidden = false;
+  if (dlBtn) dlBtn.hidden = false;
+  setArchiveViewTab('view');
+  setArchiveStatus(sourceLabel ? `${sourceLabel}を表示中` : '結果を表示中');
+  return true;
+}
+
+function openResultsArchive() {
+  showScreen('screen-results-archive');
+  const input = $('#archive-json-input');
+  const cached = app.lastResultsExport || loadLastResultsExport();
+  if (cached) {
+    if (input && !input.value.trim()) {
+      input.value = `${JSON.stringify(cached, null, 2)}\n`;
+    }
+    showArchivePayload(cached, { sourceLabel: '直前の結果' });
+  } else {
+    app.archivePayload = null;
+    const summary = $('#archive-summary');
+    if (summary) summary.hidden = true;
+    const tabs = $('#archive-view-tabs');
+    if (tabs) tabs.hidden = true;
+    const body = $('#archive-results-body');
+    if (body) {
+      body.hidden = true;
+      body.innerHTML = '';
+    }
+    const jsonView = $('#archive-json-view');
+    if (jsonView) {
+      jsonView.hidden = true;
+      jsonView.textContent = '';
+    }
+    const copyBtn = $('#btn-archive-copy-json');
+    const dlBtn = $('#btn-archive-download');
+    if (copyBtn) copyBtn.hidden = true;
+    if (dlBtn) dlBtn.hidden = true;
+    setArchiveStatus('まだ結果がありません。試合終了後に自動保存されます。JSONを貼り付けるかファイルを開けます。');
+  }
+}
+
+function bindResultsArchiveUi() {
+  $('#btn-archive-back')?.addEventListener('click', () => {
+    audio.sfx.click();
+    showScreen('screen-title');
+  });
+  $('#btn-archive-last')?.addEventListener('click', () => {
+    audio.sfx.click();
+    const cached = app.lastResultsExport || loadLastResultsExport();
+    if (!cached) {
+      setArchiveStatus('保存済みの結果がありません', true);
+      return;
+    }
+    const input = $('#archive-json-input');
+    if (input) input.value = `${JSON.stringify(cached, null, 2)}\n`;
+    showArchivePayload(cached, { sourceLabel: '直前の結果' });
+  });
+  $('#btn-archive-parse')?.addEventListener('click', () => {
+    audio.sfx.click();
+    const text = $('#archive-json-input')?.value || '';
+    const parsed = parseGameResultsExport(text);
+    if (!parsed.ok) {
+      setArchiveStatus(parsed.error, true);
+      return;
+    }
+    showArchivePayload(parsed.payload, { sourceLabel: '貼り付け' });
+  });
+  $('#archive-file')?.addEventListener('change', async (ev) => {
+    const file = ev.target?.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    audio.sfx.click();
+    try {
+      const text = await file.text();
+      const parsed = parseGameResultsExport(text);
+      if (!parsed.ok) {
+        setArchiveStatus(parsed.error, true);
+        return;
+      }
+      const input = $('#archive-json-input');
+      if (input) input.value = `${JSON.stringify(parsed.payload, null, 2)}\n`;
+      showArchivePayload(parsed.payload, { sourceLabel: file.name });
+    } catch {
+      setArchiveStatus('ファイルを読めませんでした', true);
+    }
+  });
+  $$('#archive-view-tabs [data-archive-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!app.archivePayload) return;
+      audio.sfx.click();
+      setArchiveViewTab(btn.dataset.archiveTab);
+    });
+  });
+  $('#btn-archive-copy-json')?.addEventListener('click', async () => {
+    if (!app.archivePayload) return;
+    audio.sfx.click();
+    const ok = await copyTextToClipboard(`${JSON.stringify(app.archivePayload, null, 2)}\n`);
+    toast(ok ? 'JSONをコピーしました' : 'コピーに失敗しました');
+  });
+  $('#btn-archive-download')?.addEventListener('click', () => {
+    if (!app.archivePayload) return;
+    audio.sfx.click();
+    downloadTextFile(
+      gameResultsExportFilename(app.archivePayload, 'json'),
+      `${JSON.stringify(app.archivePayload, null, 2)}\n`,
+      'application/json;charset=utf-8',
+    );
+    toast('JSONを保存しました');
   });
 }
 
@@ -7048,7 +7247,56 @@ if (field) {
 
 // ?demo=xxx でローカル4人戦を自動開始（演出確認用）
 const bootDemo = new URLSearchParams(location.search).get('demo');
-if (bootDemo) {
+if (bootDemo === 'results-json') {
+  // タイトルの試合結果ビューアをサンプルJSONで開く
+  const sample = {
+    schema: 'mkmk-street-results/v1',
+    exportedAt: '2026-11-18T12:00:00.000Z',
+    game: 'MkMk Street',
+    mapId: 'central_cross',
+    mapName: '中央クロス',
+    mode: 'local',
+    goal: 10000,
+    turn: 18,
+    startCash: 2000,
+    winnerId: 0,
+    winnerName: 'あか',
+    ranking: [
+      {
+        rank: 1, id: 0, name: 'あか', color: '#e85d75', bankrupt: false, level: 4,
+        shopCount: 7, monopolyAreas: 2, isWinner: true,
+        assets: { cash: 4200, shopAsset: 4800, stockAsset: 900, total: 9900 },
+        sales: { count: 12, total: 6200, average: 516, greatest: 980 },
+        payments: { count: 5, total: 1800, average: 360, greatest: 520 },
+        stockReturn: 640, nextSalary: 1450,
+        stats: { nudgeSent: 5, nudgeReceived: 1 },
+      },
+      {
+        rank: 2, id: 1, name: 'あお', color: '#3d8bfd', bankrupt: false, level: 3,
+        shopCount: 4, monopolyAreas: 0, isWinner: false,
+        assets: { cash: 2800, shopAsset: 2100, stockAsset: 3200, total: 8100 },
+        sales: { count: 8, total: 3100, average: 387, greatest: 610 },
+        payments: { count: 9, total: 2400, average: 266, greatest: 740 },
+        stockReturn: 1280, nextSalary: 1200,
+        stats: { nudgeSent: 2, nudgeReceived: 4 },
+      },
+    ],
+    awards: [
+      {
+        id: 'toll_king', title: '売上王', desc: '買い物料の合計が最多',
+        playerId: 0, playerName: 'あか', playerColor: '#e85d75',
+        value: 6200, valueLabel: '6200G',
+      },
+    ],
+    worthHistory: [
+      { turn: 1, values: { 0: 2000, 1: 2000 } },
+      { turn: 9, values: { 0: 5500, 1: 4800 } },
+      { turn: 18, values: { 0: 9900, 1: 8100 } },
+    ],
+  };
+  saveLastResultsExport(sample);
+  openResultsArchive();
+} else if (bootDemo) {
   app.mode = 'local';
   startLocal([
     { name: 'あか', isCPU: false },
