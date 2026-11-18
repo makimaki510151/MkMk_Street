@@ -12,7 +12,15 @@ import {
   dirLabel,
   getMapDef,
 } from './board.js';
-import { createEventTable, scratchCell, unscratchedIds, applyAllCash, recordWarp, takeWarpFx } from './eventTable.js';
+import {
+  createEventTable,
+  scratchCell,
+  unscratchedIds,
+  applyAllCash,
+  recordWarp,
+  takeWarpFx,
+  takeScratchSideEffects,
+} from './eventTable.js';
 import {
   monopolyRate as monopolyRateOf,
   investMultiByMonopolyRate,
@@ -2818,6 +2826,12 @@ export function applyChoice(g, choice) {
     if (!result.ok) return { ok: false, error: result.error };
     bumpStat(p, 'scratchCount', 1);
     if (result.matchBonus > 0) bumpStat(p, 'matchBonus', result.matchBonus);
+    let monopolyBreak = null;
+    for (const fx of takeScratchSideEffects(g)) {
+      if (fx?.type === 'monopolyBreak') {
+        monopolyBreak = applyMonopolyBreak(g, fx.pid, fx.area) || monopolyBreak;
+      }
+    }
     const msg = result.messages?.join(' / ') || result.cell.label;
     addLog(g, `${p.name} スクラッチ → ${result.cell.label}（${msg}）`, 'event');
     g.pending = null;
@@ -2828,6 +2842,7 @@ export function applyChoice(g, choice) {
       matches: result.matches || [],
       messages: result.messages || [],
       warps: result.warps || [],
+      monopolyBreak,
     };
     if (maybeOpenForceSell(g, p)) {
       return { ok: true, ...matchPayload, forceSell: true, state: serializeState(g) };
