@@ -391,8 +391,8 @@ export function buildShellHarbor() {
  *   ２００４００５
  *   ２００４００５
  *   ダ６６ス６６ク
- * 小島:
- *   削７イ８再 / ７０００８ / 転７ラ８全 / ７０００８ / 再７イ８削
+ * 小島（イベント／ラッキーなし・4列に詰めた外周）:
+ *   削７８再 / ７００８ / 転７８全 / ７００８ / 再７８削
  */
 export function buildCliffIsle() {
   const { nodes, N } = makeNodeFactory();
@@ -480,32 +480,30 @@ export function buildCliffIsle() {
   put(5, 6, shop(6, 5, 6));
   put(6, 6, N('mark', { label: '♣', mark: 3, col: 6, row: 6 }));
 
-  // ── 離れ小島 (cols 8–12, rows 1–5) ──
+  // ── 離れ小島 (cols 8–11, rows 1–5) ──
+  // 旧5列中央のイベント×2・ラッキーを削除し、右半分を1列詰める
   const ox = 8;
   const oy = 1;
   put(ox + 0, oy + 0, N('scratch', { label: 'スクラッチ', col: ox + 0, row: oy + 0 }));
   put(ox + 1, oy + 0, shop(7, ox + 1, oy + 0));
-  put(ox + 2, oy + 0, N('event', { label: 'イベント', col: ox + 2, row: oy + 0 }));
-  put(ox + 3, oy + 0, shop(8, ox + 3, oy + 0));
-  put(ox + 4, oy + 0, N('rollon', { label: 'もう一回', col: ox + 4, row: oy + 0 }));
+  put(ox + 2, oy + 0, shop(8, ox + 2, oy + 0));
+  put(ox + 3, oy + 0, N('rollon', { label: 'もう一回', col: ox + 3, row: oy + 0 }));
 
   put(ox + 0, oy + 1, shop(7, ox + 0, oy + 1));
-  put(ox + 4, oy + 1, shop(8, ox + 4, oy + 1));
+  put(ox + 3, oy + 1, shop(8, ox + 3, oy + 1));
 
   const isleWarp = put(ox + 0, oy + 2, N('warp', { label: '本島ワープ', col: ox + 0, row: oy + 2 }));
   put(ox + 1, oy + 2, shop(7, ox + 1, oy + 2));
-  put(ox + 2, oy + 2, N('lucky', { label: '★', col: ox + 2, row: oy + 2 }));
-  put(ox + 3, oy + 2, shop(8, ox + 3, oy + 2));
-  put(ox + 4, oy + 2, N('suit_fill', { label: 'ワイルド', col: ox + 4, row: oy + 2 }));
+  put(ox + 2, oy + 2, shop(8, ox + 2, oy + 2));
+  put(ox + 3, oy + 2, N('suit_fill', { label: 'ワイルド', col: ox + 3, row: oy + 2 }));
 
   put(ox + 0, oy + 3, shop(7, ox + 0, oy + 3));
-  put(ox + 4, oy + 3, shop(8, ox + 4, oy + 3));
+  put(ox + 3, oy + 3, shop(8, ox + 3, oy + 3));
 
   put(ox + 0, oy + 4, N('rollon', { label: 'もう一回', col: ox + 0, row: oy + 4 }));
   put(ox + 1, oy + 4, shop(7, ox + 1, oy + 4));
-  put(ox + 2, oy + 4, N('event', { label: 'イベント', col: ox + 2, row: oy + 4 }));
-  put(ox + 3, oy + 4, shop(8, ox + 3, oy + 4));
-  put(ox + 4, oy + 4, N('scratch', { label: 'スクラッチ', col: ox + 4, row: oy + 4 }));
+  put(ox + 2, oy + 4, shop(8, ox + 2, oy + 4));
+  put(ox + 3, oy + 4, N('scratch', { label: 'スクラッチ', col: ox + 3, row: oy + 4 }));
 
   mainWarp.warpTo = isleWarp.id;
   isleWarp.warpTo = mainWarp.id;
@@ -525,7 +523,7 @@ export function buildCliffIsle() {
     }
   }
 
-  return packBoard(nodes, bank, 13, 7, {
+  return packBoard(nodes, bank, 12, 7, {
     mapId: 'cliff_isle',
     mapName: 'がけした島',
     goal: 14000,

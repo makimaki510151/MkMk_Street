@@ -189,7 +189,7 @@ describe('MkMk Street engine', () => {
       mapId: 'cliff_isle',
     });
     assert.equal(g.mapId, 'cliff_isle');
-    assert.ok(g.cols >= 13);
+    assert.ok(g.cols >= 12);
 
     // 島は徒歩では到達できない
     const bank = getNode(g, g.startId);
