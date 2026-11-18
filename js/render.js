@@ -3,6 +3,7 @@
 import { AREA_META, SUIT_LABELS } from './board.js';
 import {
   calcToll,
+  getRemainingInvest,
   hasAreaMonopoly,
   getPlayerAreaCount,
   getAreaShops,
@@ -1070,5 +1071,8 @@ export function shopTooltip(g, sq) {
   const tollLabel = sq.owner >= 0
     ? `止まると買い物料 ${toll.toLocaleString()}G`
     : '空き店（買い物料なし）';
-  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}`;
+  const rem = sq.owner >= 0
+    ? ` / 残り増資 ${getRemainingInvest(g, sq).toLocaleString()}G`
+    : '';
+  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}${rem}`;
 }

@@ -2271,7 +2271,9 @@ function updateInspectPanel() {
     const owner = sq.owner >= 0 ? g.players[sq.owner] : null;
     const toll = calcToll(g, sq);
     const closed = !!(owner?.shopsClosed);
-    const areaName = AREA_META[sq.area]?.name || `A${sq.area}`;
+    const areaName = g.areas?.[sq.area]?.name || AREA_META[sq.area]?.name || `A${sq.area}`;
+    const remInvest = getRemainingInvest(g, sq);
+    const maxInvest = getMaxExtraInvest(g, sq);
     let mono = '';
     if (owner) {
       const areaSize = getAreaShops(g, sq.area).length;
@@ -2288,6 +2290,11 @@ function updateInspectPanel() {
     const tollAmount = !owner
       ? '買い物料なし'
       : (closed ? '0G' : `${toll.toLocaleString()}G`);
+    const investLine = !owner
+      ? '残り増資額 —（所有後に枠が開く）'
+      : `残り増資額 ${remInvest.toLocaleString()}G` + (
+        maxInvest > 0 ? ` / 上限 ${maxInvest.toLocaleString()}G` : ''
+      );
     el.innerHTML = `
       <strong>${escapeHtml(sq.label || 'お店')}</strong>
       <span class="inspect-owner" style="--pc:${owner?.color || '#888'}">${
@@ -2298,6 +2305,7 @@ function updateInspectPanel() {
         <span class="it-amount">${tollAmount}</span>
       </span>
       <span class="inspect-sub">価格 ${sq.price.toLocaleString()}G · ${escapeHtml(areaName)}${mono ? ` · ${mono}` : ''}</span>
+      <span class="inspect-sub">${investLine}</span>
     `;
     return;
   }
