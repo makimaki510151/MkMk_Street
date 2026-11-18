@@ -56,6 +56,11 @@ import {
 import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
+  pendingFingerprint,
+  snapshotEditableFields,
+  restoreEditableFields,
+} from './formDrafts.js';
+import {
   GROUP_COLORS,
   TABLE_SIZE,
   COLOR_LABELS,
@@ -144,6 +149,8 @@ const app = {
   lastResultsExport: null,
   /** @type {ReturnType<typeof formatGameResultsExport>|null} */
   archivePayload: null,
+  /** 選択モーダル再描画抑制用（数値入力中の巻き戻り防止） */
+  modalPendingKey: null,
 };
 
 const LAST_RESULTS_KEY = 'mkmk-street-last-results';
@@ -2014,12 +2021,17 @@ function maybeDemoLanding() {
       coin: 'コイントス',
       high_low: 'ハイ＆ロー',
     };
+    const participantIds = app.game.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
+    const ordered = [p.id, ...participantIds.filter((id) => id !== p.id)];
     app.game.phase = 'await_choice';
     app.game.pending = {
       type: 'minigame',
-      playerId: p.id,
+      playerId: ordered[0],
+      starterId: p.id,
       game,
       label: labels[game] || 'ミニゲーム',
+      participantIds: ordered,
+      picks: {},
     };
     app.game.move = null;
     refreshGameUI();
@@ -2485,7 +2497,8 @@ function deliverNudge({ fromSeat, targetSeat, fromName }) {
   if (!target || target.isCPU) return;
   if (app.game) {
     recordNudgeStats(app.game, fromSeat, targetSeat);
-    syncState();
+    // 催促だけで state 同期すると選択中の数値入力が再描画で巻き戻る。
+    // 統計はホストに保持し、次の通常同期／終了時に乗る。
   }
   broadcastFx({
     kind: 'nudge',
@@ -3524,10 +3537,14 @@ async function presentMinigameResult(result) {
   broadcastFx({ kind: 'minigameReveal', reveal });
   await playMinigameReveal(reveal);
   const color = reveal.playerColor || '#ffe08a';
+  const summary = (reveal.results || [])
+    .map((r) => `${r.playerName}: ${r.title}`)
+    .join(' ／ ')
+    || (reveal.messages || result.messages || []).join(' / ');
   enqueueBanner({
     kicker: reveal.label || 'ミニゲーム',
-    title: reveal.title || (reveal.win ? '当たり！' : '結果発表'),
-    detail: (reveal.messages || result.messages || []).join(' / '),
+    title: reveal.results?.length > 1 ? 'みんなの結果' : (reveal.title || (reveal.win ? '当たり！' : '結果発表')),
+    detail: summary,
     kind: 'event',
     color,
     mine: true,
@@ -3536,8 +3553,8 @@ async function presentMinigameResult(result) {
     kind: 'banner',
     payload: {
       kicker: reveal.label || 'ミニゲーム',
-      title: reveal.title || (reveal.win ? '当たり！' : '結果発表'),
-      detail: (reveal.messages || result.messages || []).join(' / '),
+      title: reveal.results?.length > 1 ? 'みんなの結果' : (reveal.title || (reveal.win ? '当たり！' : '結果発表')),
+      detail: summary,
       kind: 'event',
       color,
     },
@@ -3589,8 +3606,20 @@ async function playMinigameReveal(reveal) {
     await wait(400);
   }
 
-  title.textContent = reveal.title || (reveal.win ? '当たり！' : '結果発表');
-  detail.textContent = reveal.detail || (reveal.messages || []).join(' / ');
+  title.textContent = reveal.results?.length > 1
+    ? 'みんなの結果'
+    : (reveal.title || (reveal.win ? '当たり！' : '結果発表'));
+  if (reveal.results?.length) {
+    detail.innerHTML = reveal.results.map((r) =>
+      `<div class="mg-result-row" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
+        <strong>${escapeHtml(r.playerName || '')}</strong>
+        <span>${escapeHtml(r.title || '')}</span>
+        <small>${escapeHtml(r.detail || '')}</small>
+      </div>`
+    ).join('');
+  } else {
+    detail.textContent = reveal.detail || (reveal.messages || []).join(' / ');
+  }
   overlay.classList.add('show-result');
 
   if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
@@ -4564,7 +4593,12 @@ function pendingStatusLabel(pend) {
       ? (pend.resumeMove ? '銀行通過の株購入中' : '銀行で株購入中')
       : '株を取引中';
     case 'scratch': return 'イベント表をスクラッチ中';
-    case 'minigame': return `ミニゲーム「${pend.label || ''}」中`;
+    case 'minigame': {
+      const left = (pend.participantIds || []).filter((id) => (pend.picks || {})[id] == null).length;
+      return left > 1
+        ? `ミニゲーム「${pend.label || ''}」選択中（残り${left}人）`
+        : `ミニゲーム「${pend.label || ''}」中`;
+    }
     case 'level_up': return '昇進を祝っている';
     case 'shop_trade_compose': return '物件取引を作成中';
     case 'shop_trade_offer': return '物件取引の承認待ち';
@@ -5596,6 +5630,13 @@ function showChoiceModal(g) {
     applyModalMode();
     return;
   }
+  // pending が変わっていなければ作り直さない（催促／state 同期での数値巻き戻り防止）
+  const fp = pendingFingerprint(pend);
+  if (fp && fp === app.modalPendingKey && !modal.hidden && body?.childNodes?.length) {
+    applyModalMode();
+    return;
+  }
+  app.modalPendingKey = fp;
   modal.hidden = false;
   applyModalMode();
   $('#btn-end-choice').hidden = true;
@@ -6395,10 +6436,24 @@ function showChoiceModal(g) {
     $('#btn-end-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     const game = pend.game || 'guess_dice';
+    const participants = (pend.participantIds || [pend.playerId]).map((id) => g.players[id]).filter(Boolean);
+    const picks = pend.picks || {};
+    const statusHtml = participants.length
+      ? `<ul class="mg-roster">${participants.map((pl) => {
+        const done = picks[pl.id] != null;
+        const current = pl.id === pend.playerId;
+        return `<li class="${done ? 'done' : ''} ${current ? 'current' : ''}" style="--pc:${pl.color}">
+          <span class="mg-roster-name">${escapeHtml(pl.name)}</span>
+          <span class="mg-roster-state">${done ? '選択済' : (current ? '選択中' : '待ち')}</span>
+        </li>`;
+      }).join('')}</ul>`
+      : '';
+    const partyHint = '全員が選んだあと共通の結果で精算します。最後の人まで選択できます。';
     if (game === 'guess_dice') {
       body.innerHTML = `
-        <p class="modal-lead">出目を当てよう！</p>
-        <p class="hint">ぴったりで高額、おしい（±1）でも報酬。ハズレでも全員に参加賞が出ます。</p>
+        <p class="modal-lead">出目を当てよう！（全員参加）</p>
+        <p class="hint">${partyHint} ぴったりで高額、おしい（±1）でも報酬。ハズレは参加賞。</p>
+        ${statusHtml}
         <div class="mini-pick-grid">
           ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="btn primary mini-pick" data-pick="${n}">${n}</button>`).join('')}
         </div>`;
@@ -6410,8 +6465,9 @@ function showChoiceModal(g) {
       });
     } else if (game === 'dice_battle') {
       body.innerHTML = `
-        <p class="modal-lead">ハウスとダイスバトル！</p>
-        <p class="hint">攻めは2d6、守りは1d6+3。ハウスの2d6を上回れば勝ち。外れても参加賞。</p>
+        <p class="modal-lead">ハウスとダイスバトル！（全員参加）</p>
+        <p class="hint">${partyHint} 攻めは2d6、守りは1d6+3。共通のハウス出目に挑みます。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-rush">攻め（2d6）</button>
           <button class="btn" id="m-guard">守り（1d6+3）</button>
@@ -6421,8 +6477,9 @@ function showChoiceModal(g) {
     } else if (game === 'horse_race') {
       const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
       body.innerHTML = `
-        <p class="modal-lead">ミニ競馬！乗る馬を選ぼう</p>
-        <p class="hint">1着は高額、2着も入賞。3着以下でも参加賞あり。</p>
+        <p class="modal-lead">ミニ競馬！乗る馬を選ぼう（全員参加）</p>
+        <p class="hint">${partyHint} 1着は高額、2着も入賞。それ以外は参加賞。</p>
+        ${statusHtml}
         <div class="mini-pick-grid">
           ${horses.map((name, i) => `<button type="button" class="btn primary mini-pick" data-pick="${i}">${name}</button>`).join('')}
         </div>`;
@@ -6434,8 +6491,9 @@ function showChoiceModal(g) {
       });
     } else if (game === 'high_low') {
       body.innerHTML = `
-        <p class="modal-lead">次の数字はハイ？ ロー？</p>
-        <p class="hint">1〜10のうち、6以上がハイ・5以下がロー。外れても全員に参加賞。</p>
+        <p class="modal-lead">次の数字はハイ？ ロー？（全員参加）</p>
+        <p class="hint">${partyHint} 1〜10のうち、6以上がハイ・5以下がロー。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
           <button class="btn" id="m-lo">ロー（1〜5）</button>
@@ -6444,8 +6502,9 @@ function showChoiceModal(g) {
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
     } else if (game === 'rps_duel') {
       body.innerHTML = `
-        <p class="modal-lead">じゃんけん勝負！</p>
-        <p class="hint">勝ちで本賞、あいこは引き分け賞。負けても参加賞あり。</p>
+        <p class="modal-lead">じゃんけん勝負！（全員参加）</p>
+        <p class="hint">${partyHint} 共通の相手の手にみんなで挑みます。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-rock">グー</button>
           <button class="btn primary" id="m-paper">パー</button>
@@ -6456,8 +6515,9 @@ function showChoiceModal(g) {
       $('#m-scissors').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'scissors' } }); };
     } else if (game === 'coin') {
       body.innerHTML = `
-        <p class="modal-lead">コインの裏表を予想！</p>
-        <p class="hint">当たればボーナス。外れても全員に参加賞。</p>
+        <p class="modal-lead">コインの裏表を予想！（全員参加）</p>
+        <p class="hint">${partyHint} 当たればボーナス。外れは参加賞。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-heads">おもて</button>
           <button class="btn" id="m-tails">うら</button>
@@ -6466,8 +6526,9 @@ function showChoiceModal(g) {
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
     } else if (game === 'roulette') {
       body.innerHTML = `
-        <p class="modal-lead">ルーレットに賭けよう！</p>
-        <p class="hint">赤／黒は通常配当、緑(0)は大当り。外れても参加賞。</p>
+        <p class="modal-lead">ルーレットに賭けよう！（全員参加）</p>
+        <p class="hint">${partyHint} 赤／黒は通常配当、緑(0)は大当り。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-red">赤</button>
           <button class="btn" id="m-black">黒</button>
@@ -6478,8 +6539,9 @@ function showChoiceModal(g) {
       $('#m-green').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'green' } }); };
     } else if (game === 'heist') {
       body.innerHTML = `
-        <p class="modal-lead">金庫破り（非対称リスク）</p>
-        <p class="hint">用心は成功しやすいが少額。大胆は高配当だが失敗しやすい。失敗時もみんなに慰労金。</p>
+        <p class="modal-lead">金庫破り（全員参加）</p>
+        <p class="hint">${partyHint} 用心は成功しやすいが少額。大胆は高配当だが失敗しやすい。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn" id="m-safe">用心（高確率）</button>
           <button class="btn primary" id="m-normal">普通</button>
@@ -6490,8 +6552,9 @@ function showChoiceModal(g) {
       $('#m-bold').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'bold' } }); };
     } else if (game === 'balloon_dash') {
       body.innerHTML = `
-        <p class="modal-lead">バルーンチャレンジ！</p>
-        <p class="hint">ポンプ回数が多いほど高配当。限界を超えると破裂して本人ゼロ。参加賞あり。</p>
+        <p class="modal-lead">バルーンチャレンジ！（全員参加）</p>
+        <p class="hint">${partyHint} ポンプ回数が多いほど高配当。限界超えで破裂（参加賞）。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn" id="m-p3">3回（安全寄り）</button>
           <button class="btn primary" id="m-p5">5回</button>
@@ -6502,8 +6565,9 @@ function showChoiceModal(g) {
       $('#m-p7').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 7 } }); };
     } else {
       body.innerHTML = `
-        <p class="modal-lead">スロットを回そう！</p>
-        <p class="hint">5リールの役（5揃い／4揃い／フルハウスなど）で報酬。外れても全員に参加賞。</p>
+        <p class="modal-lead">スロットを回そう！（全員参加）</p>
+        <p class="hint">${partyHint} 共通の5リール結果でみんな精算。</p>
+        ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary large" id="m-spin">回す！</button>
         </div>`;
@@ -6517,6 +6581,7 @@ function showChoiceModal(g) {
 
 function hideModal() {
   app.modalActive = false;
+  app.modalPendingKey = null;
   // 選択完了後は次の選択を右下に再表示
   app.modalMode = 'shown';
   $('#modal').hidden = true;
@@ -7055,6 +7120,7 @@ function localHumanSeat(g) {
 
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
+  const drafts = snapshotEditableFields(el);
   const areas = Object.keys(g.areas).map(Number);
   const players = g.players;
   const seat = localHumanSeat(g);
@@ -7174,6 +7240,19 @@ function renderStockPanel(g) {
     input.addEventListener('input', sync);
     input.addEventListener('change', sync);
     sync();
+  });
+
+  // 催促などの再描画で入力中の枚数が初期値に戻らないようにする
+  restoreEditableFields(el, drafts);
+  el.querySelectorAll('input[data-sell-count]').forEach((input) => {
+    const area = Number(input.dataset.sellCount);
+    const have = me?.stocks[area] || 0;
+    const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+    const preview = el.querySelector(`[data-sell-preview="${area}"]`);
+    if (preview) {
+      preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
+      preview.innerHTML = formatStockSellPreview(g, area, count);
+    }
   });
 }
 

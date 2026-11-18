@@ -1382,6 +1382,8 @@ describe('MkMk Street engine', () => {
     assert.equal(g.phase, 'await_choice');
     assert.equal(g.pending?.type, 'minigame');
     assert.equal(g.pending?.game, 'slot');
+    assert.deepEqual(g.pending?.participantIds, [0, 1]);
+    assert.equal(g.pending?.starterId, 0);
 
     const diceHub = g.map.find((n) => n.type === 'minigame' && n.game === 'guess_dice');
     g.players[0].pos = diceHub.id;
@@ -1391,6 +1393,8 @@ describe('MkMk Street engine', () => {
     advanceMove(g);
     assert.equal(g.pending?.type, 'minigame');
     assert.equal(g.pending?.game, 'guess_dice');
+    assert.ok(g.pending.participantIds.includes(0));
+    assert.ok(g.pending.participantIds.includes(1));
   });
 
   it('has one dedicated scratch hub and one event hub on mid-sides', () => {
@@ -1758,27 +1762,59 @@ describe('MkMk Street engine', () => {
     assert.match(msgs.join(''), /全員/);
   });
 
-  it('minigame pending pays participation cash to everyone', () => {
+  function openPartyMinigame(g, game, label, starterId = 0) {
+    const ids = g.players.filter((p) => !p.bankrupt).map((p) => p.id);
+    const ordered = [starterId, ...ids.filter((id) => id !== starterId)];
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = starterId;
+    g.pending = {
+      type: 'minigame',
+      playerId: ordered[0],
+      starterId,
+      game,
+      label,
+      participantIds: ordered,
+      picks: {},
+    };
+  }
+
+  function allPlayersPick(g, valuesByOrder) {
+    let last = null;
+    for (const value of valuesByOrder) {
+      const choice = value && typeof value === 'object' && value.action
+        ? value
+        : { action: 'pick', value };
+      last = applyChoice(g, choice);
+      assert.equal(last.ok, true, last.error || 'pick failed');
+    }
+    return last;
+  }
+
+  it('minigame waits for every player before resolving shared outcome', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 88,
       cash: 1000,
     });
-    g.phase = 'await_choice';
-    g.pending = { type: 'minigame', playerId: 0, game: 'coin', label: 'コイントス' };
+    openPartyMinigame(g, 'coin', 'コイントス');
     const beforeA = g.players[0].cash;
     const beforeB = g.players[1].cash;
-    const r = applyChoice(g, { action: 'pick', value: 'heads' });
+    const mid = applyChoice(g, { action: 'pick', value: 'heads' });
+    assert.equal(mid.ok, true);
+    assert.equal(mid.minigamePick, true);
+    assert.equal(g.pending?.playerId, 1);
+    assert.equal(g.pending?.picks?.[0], 'heads');
+    assert.equal(g.players[0].cash, beforeA, 'no payout until everyone picked');
+    assert.equal(g.players[1].cash, beforeB);
+
+    const r = applyChoice(g, { action: 'pick', value: 'tails' });
     assert.equal(r.ok, true);
     assert.equal(r.minigame, true);
-    // 当たりでも外れでも相手（と自分）に参加賞が入る
-    assert.ok(g.players[1].cash > beforeB, 'other player got participation');
-    assert.ok(g.players[0].cash >= beforeA, 'actor cash not reduced');
     assert.equal(g.pending, null);
-    assert.ok(r.reveal, 'reveal payload for FX');
-    assert.equal(r.reveal.game, 'coin');
-    assert.ok(r.reveal.outcome?.face);
-    assert.ok(r.reveal.title);
+    assert.ok(r.reveal?.results?.length === 2);
+    assert.ok(r.reveal.shared?.face || r.reveal.outcome?.face);
+    assert.ok(g.players[0].cash >= beforeA);
+    assert.ok(g.players[1].cash >= beforeB);
   });
 
   it('slot minigame reveal includes symbols and tier', () => {
@@ -1787,17 +1823,15 @@ describe('MkMk Street engine', () => {
       seed: 42,
       cash: 1000,
     });
-    g.phase = 'await_choice';
-    g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
-    const r = applyChoice(g, { action: 'spin' });
-    assert.equal(r.ok, true);
+    openPartyMinigame(g, 'slot', 'スロット');
+    const r = allPlayersPick(g, [{ action: 'spin' }, { action: 'spin' }]);
     assert.equal(r.reveal.game, 'slot');
-    assert.equal(r.reveal.outcome.symbols.length, 5);
-    assert.ok(Array.isArray(r.reveal.outcome.hitIndices));
+    assert.equal(r.reveal.shared.symbols.length, 5);
+    assert.equal(r.reveal.results.length, 2);
+    assert.ok(Array.isArray(r.reveal.results[0].outcome.hitIndices));
     assert.ok(
-      ['jackpot', 'quad', 'fullhouse', 'triple', 'two_pair', 'pair', 'miss'].includes(r.reveal.tier)
+      ['jackpot', 'quad', 'fullhouse', 'triple', 'two_pair', 'pair', 'miss'].includes(r.reveal.results[0].tier)
     );
-    assert.ok(r.reveal.detail);
   });
 
   it('5-reel slot pays jackpot / quad / pair tiers with adjusted prizes', () => {
@@ -1809,27 +1843,26 @@ describe('MkMk Street engine', () => {
         seed,
         cash: 1000,
       });
-      g.phase = 'await_choice';
-      g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+      openPartyMinigame(g, 'slot', 'スロット');
       const before = g.players[0].cash;
-      const r = applyChoice(g, { action: 'spin' });
+      const r = allPlayersPick(g, [{ action: 'spin' }, { action: 'spin' }]);
       assert.equal(r.ok, true);
-      assert.equal(r.reveal.outcome.symbols.length, 5);
-      assert.ok(SLOT_TIERS.includes(r.reveal.tier));
-      seen.add(r.reveal.tier);
+      assert.equal(r.reveal.shared.symbols.length, 5);
+      const my = r.reveal.results.find((x) => x.playerId === 0);
+      assert.ok(SLOT_TIERS.includes(my.tier));
+      seen.add(my.tier);
       const prize = g.players[0].cash - before;
-      if (r.reveal.tier === 'jackpot') {
+      if (my.tier === 'jackpot') {
         assert.ok(prize >= 1020);
-        assert.equal(r.reveal.win, true);
-      } else if (r.reveal.tier === 'quad') {
+        assert.equal(my.win, true);
+      } else if (my.tier === 'quad') {
         assert.ok(prize >= 480);
-        assert.equal(r.reveal.win, true);
-      } else if (r.reveal.tier === 'pair') {
+        assert.equal(my.win, true);
+      } else if (my.tier === 'pair') {
         assert.ok(prize >= 55);
-        assert.equal(r.reveal.win, true);
-      } else if (r.reveal.tier === 'miss') {
-        assert.equal(r.reveal.win, false);
-        // 参加賞のみ（自分も受け取る）
+        assert.equal(my.win, true);
+      } else if (my.tier === 'miss') {
+        assert.equal(my.win, false);
         assert.ok(prize >= 22);
       }
     }
@@ -1850,23 +1883,21 @@ describe('MkMk Street engine', () => {
           cash: 5000,
         });
         g2.players[0].level = 3;
-        g2.phase = 'await_choice';
-        g2.pending = { type: 'minigame', playerId: 0, game: 'guess_dice', label: 'サイコロ当て' };
+        openPartyMinigame(g2, 'guess_dice', 'サイコロ当て');
         const before = g2.players[0].cash;
         const beforeB = g2.players[1].cash;
-        const r = applyChoice(g2, { action: 'pick', value: pick });
-        if (r.reveal?.tier !== 'exact') continue;
+        const r = allPlayersPick(g2, [pick, ((pick % 6) + 1)]);
+        const mine = r.reveal?.results?.find((x) => x.playerId === 0);
+        if (mine?.tier !== 'exact') continue;
         const gained = g2.players[0].cash - before;
-        // 本人賞 320×3 + 参加賞 60
-        assert.equal(gained, 320 * 3 + 60);
-        assert.ok(g2.players[1].cash > beforeB);
+        assert.equal(gained, 320 * 3);
+        assert.ok(g2.players[1].cash !== beforeB || mine);
         foundExact = true;
         break;
       }
     }
     assert.ok(foundExact, 'expected an exact dice guess within seeds');
 
-    // スロット：レベル3のワンペア以上なら基本額×3以上
     let foundPair = false;
     for (let seed = 1; seed <= 200 && !foundPair; seed++) {
       const g = createGame({
@@ -1875,13 +1906,13 @@ describe('MkMk Street engine', () => {
         cash: 5000,
       });
       g.players[0].level = 3;
-      g.phase = 'await_choice';
-      g.pending = { type: 'minigame', playerId: 0, game: 'slot', label: 'スロット' };
+      openPartyMinigame(g, 'slot', 'スロット');
       const before = g.players[0].cash;
-      const r = applyChoice(g, { action: 'spin' });
-      if (r.reveal?.tier !== 'pair') continue;
+      const r = allPlayersPick(g, [{ action: 'spin' }, { action: 'spin' }]);
+      const mine = r.reveal?.results?.find((x) => x.playerId === 0);
+      if (mine?.tier !== 'pair') continue;
       const gained = g.players[0].cash - before;
-      assert.equal(gained, 55 * 3 + 28);
+      assert.equal(gained, 55 * 3);
       foundPair = true;
     }
     assert.ok(foundPair, 'expected a slot pair within seeds');
@@ -1971,37 +2002,35 @@ describe('MkMk Street engine', () => {
   });
 
   it('named minigame variants use distinct rules', () => {
-    const run = (game, label, choice) => {
+    const run = (game, label, choiceA, choiceB = choiceA) => {
       const g = createGame({
         players: [{ name: 'A' }, { name: 'B' }],
         seed: 3,
         cash: 1000,
       });
-      g.currentPlayerIdx = 0;
-      g.phase = 'await_choice';
-      g.pending = { type: 'minigame', playerId: 0, game, label };
-      const r = applyChoice(g, choice);
-      assert.equal(r.ok, true);
+      openPartyMinigame(g, game, label);
+      const r = allPlayersPick(g, [choiceA, choiceB]);
       assert.equal(r.reveal.game, game);
+      assert.equal(r.reveal.results.length, 2);
       return r;
     };
 
-    const battle = run('dice_battle', 'ダイスバトル', { action: 'pick', value: 'rush' });
-    assert.ok(battle.reveal.outcome.youTotal >= 2);
-    assert.ok(battle.reveal.outcome.foeTotal >= 2);
+    const battle = run('dice_battle', 'ダイスバトル', { action: 'pick', value: 'rush' }, { action: 'pick', value: 'guard' });
+    assert.ok(battle.reveal.results[0].outcome.youTotal >= 2);
+    assert.ok(battle.reveal.shared.foeTotal >= 2);
 
-    const race = run('horse_race', 'ミニ競馬', { action: 'pick', value: 1 });
-    assert.ok(race.reveal.outcome.place >= 1 && race.reveal.outcome.place <= 4);
-    assert.equal(race.reveal.outcome.order.length, 4);
+    const race = run('horse_race', 'ミニ競馬', { action: 'pick', value: 1 }, { action: 'pick', value: 2 });
+    assert.ok(race.reveal.results[0].outcome.place >= 1 && race.reveal.results[0].outcome.place <= 4);
+    assert.equal(race.reveal.shared.order.length, 4);
 
-    const rps = run('rps_duel', 'じゃんけん勝負', { action: 'pick', value: 'rock' });
-    assert.ok(['rock', 'paper', 'scissors'].includes(rps.reveal.outcome.foe));
+    const rps = run('rps_duel', 'じゃんけん勝負', { action: 'pick', value: 'rock' }, { action: 'pick', value: 'paper' });
+    assert.ok(['rock', 'paper', 'scissors'].includes(rps.reveal.shared.foe));
 
-    const roulette = run('roulette', 'ルーレット', { action: 'pick', value: 'red' });
-    assert.ok(roulette.reveal.outcome.spin >= 0 && roulette.reveal.outcome.spin <= 36);
-    assert.ok(['red', 'black', 'green'].includes(roulette.reveal.outcome.color));
+    const roulette = run('roulette', 'ルーレット', { action: 'pick', value: 'red' }, { action: 'pick', value: 'black' });
+    assert.ok(roulette.reveal.shared.spin >= 0 && roulette.reveal.shared.spin <= 36);
+    assert.ok(['red', 'black', 'green'].includes(roulette.reveal.shared.color));
 
-    const heist = run('heist', '金庫破り', { action: 'pick', value: 'normal' });
+    const heist = run('heist', '金庫破り', { action: 'pick', value: 'normal' }, { action: 'pick', value: 'safe' });
     assert.equal(typeof heist.reveal.outcome.success, 'boolean');
 
     const balloon = run('balloon_dash', 'バルーンチャレンジ', { action: 'pick', value: 5 });

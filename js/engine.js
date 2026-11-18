@@ -3318,18 +3318,29 @@ function maybeOpenAnyShopBuy(g, p) {
   return true;
 }
 
+function minigameParticipants(g, starterId) {
+  const alive = g.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
+  if (!alive.includes(starterId)) return alive;
+  return [starterId, ...alive.filter((id) => id !== starterId)];
+}
+
 function maybeOpenMinigame(g, p) {
   const mg = p.flags?.pendingMinigame;
   if (!mg) return false;
   p.flags.pendingMinigame = null;
+  const participantIds = minigameParticipants(g, p.id);
+  if (!participantIds.length) return false;
   g.phase = 'await_choice';
   g.pending = {
     type: 'minigame',
-    playerId: p.id,
+    playerId: participantIds[0],
+    starterId: p.id,
     game: mg.game || 'guess_dice',
     label: mg.label || 'ミニゲーム',
+    participantIds,
+    picks: {},
   };
-  addLog(g, `${p.name} のミニゲーム「${g.pending.label}」！`, 'event');
+  addLog(g, `みんなのミニゲーム「${g.pending.label}」！（${p.name}が開催・${participantIds.length}人参加）`, 'event');
   return true;
 }
 
@@ -3343,8 +3354,171 @@ export function scaleDiceSlotPrize(base, level) {
   return Math.max(1, Math.floor(Number(base) || 0) * lv);
 }
 
+function normalizeMinigamePick(game, choice) {
+  if (game === 'guess_dice') return Math.max(1, Math.min(6, Number(choice?.value) || 1));
+  if (game === 'dice_battle') return choice?.value === 'guard' ? 'guard' : 'rush';
+  if (game === 'horse_race') return Math.max(0, Math.min(3, Number(choice?.value) || 0));
+  if (game === 'high_low') return choice?.value === 'high' ? 'high' : 'low';
+  if (game === 'rps_duel') {
+    return ['rock', 'paper', 'scissors'].includes(choice?.value) ? choice.value : 'rock';
+  }
+  if (game === 'coin') return choice?.value === 'tails' ? 'tails' : 'heads';
+  if (game === 'roulette') {
+    return ['red', 'black', 'green'].includes(choice?.value) ? choice.value : 'red';
+  }
+  if (game === 'heist') {
+    return ['safe', 'normal', 'bold'].includes(choice?.value) ? choice.value : 'normal';
+  }
+  if (game === 'balloon_dash') {
+    return [3, 5, 7].includes(Number(choice?.value)) ? Number(choice.value) : 5;
+  }
+  if (game === 'slot') return 'spin';
+  return choice?.value ?? null;
+}
+
+function grantMinigamePrize(player, amount, messages, text) {
+  const prize = Math.max(0, Math.floor(Number(amount) || 0));
+  if (prize > 0) {
+    player.cash += prize;
+    messages.push(text);
+  }
+  return prize;
+}
+
+function minigameConsolation(player, amount, messages, text) {
+  return grantMinigamePrize(player, amount, messages, text);
+}
+
+/**
+ * 全員の選択を受け取ってから共通結果を出す。
+ * 最後のプレイヤーまで選択肢が意味を持つよう、乱数は全員選択後にだけ進める。
+ */
 function resolveMinigame(g, p, pending, choice) {
+  if (!pending.participantIds) {
+    pending.starterId = pending.playerId;
+    pending.participantIds = [p.id];
+    pending.picks = pending.picks || {};
+  }
+  if (pending.picks[p.id] != null) {
+    return { ok: false, error: 'already_picked' };
+  }
+  const pick = normalizeMinigamePick(pending.game || 'guess_dice', choice);
+  pending.picks[p.id] = pick;
+
+  const waiting = pending.participantIds.filter((id) => {
+    const pl = g.players[id];
+    return pl && !pl.bankrupt && pending.picks[id] == null;
+  });
+  if (waiting.length) {
+    pending.playerId = waiting[0];
+    addLog(g, `${p.name} が選択済み（残り${waiting.length}人）`, 'event');
+    return {
+      ok: true,
+      minigamePick: true,
+      waitingCount: waiting.length,
+      state: serializeState(g),
+    };
+  }
+
+  return finalizeMinigame(g, pending);
+}
+
+function finalizeMinigame(g, pending) {
   const game = pending.game || 'guess_dice';
+  const participants = pending.participantIds
+    .map((id) => g.players[id])
+    .filter((pl) => pl && !pl.bankrupt);
+  /** @type {Record<string, unknown>} */
+  const shared = {};
+  const results = [];
+
+  if (game === 'guess_dice') {
+    shared.roll = Math.floor(rngNext(g) * 6) + 1;
+  } else if (game === 'dice_battle') {
+    shared.foeDice = [Math.floor(rngNext(g) * 6) + 1, Math.floor(rngNext(g) * 6) + 1];
+    shared.foeTotal = shared.foeDice[0] + shared.foeDice[1];
+  } else if (game === 'horse_race') {
+    const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
+    const scores = horses.map((_, i) => ({
+      i,
+      score: rngNext(g) * 0.85 + rngNext(g) * 0.4,
+    }));
+    scores.sort((a, b) => b.score - a.score);
+    shared.horses = horses;
+    shared.order = scores.map((s) => s.i);
+    shared.scores = scores.map((s) => Math.round(s.score * 1000) / 1000);
+  } else if (game === 'high_low') {
+    shared.secret = Math.floor(rngNext(g) * 10) + 1;
+    shared.band = shared.secret >= 6 ? 'high' : 'low';
+  } else if (game === 'rps_duel') {
+    const opts = ['rock', 'paper', 'scissors'];
+    shared.foe = opts[Math.floor(rngNext(g) * 3)];
+  } else if (game === 'coin') {
+    shared.face = rngNext(g) < 0.5 ? 'heads' : 'tails';
+  } else if (game === 'roulette') {
+    shared.spin = Math.floor(rngNext(g) * 37);
+    shared.color = shared.spin === 0 ? 'green' : (shared.spin % 2 === 0 ? 'black' : 'red');
+  } else if (game === 'slot') {
+    const syms = ['★', '♪', 'G', '♦', '♣'];
+    const reels = [];
+    for (let i = 0; i < 5; i++) reels.push(syms[Math.floor(rngNext(g) * syms.length)]);
+    shared.symbols = reels;
+  }
+
+  for (const player of participants) {
+    const playerPick = pending.picks[player.id];
+    const scored = scoreMinigamePlayer(g, player, game, playerPick, shared);
+    bumpStat(player, 'minigamePlays', 1);
+    if (scored.win) bumpStat(player, 'minigameWins', 1);
+    if (scored.prizeWon > 0) bumpStat(player, 'minigamePrize', scored.prizeWon);
+    results.push({
+      playerId: player.id,
+      playerName: player.name,
+      playerColor: player.color,
+      pick: playerPick,
+      ...scored,
+      outcome: { ...shared, ...(scored.outcome || {}), pick: playerPick },
+    });
+    addLog(g, `${player.name} の「${pending.label}」→ ${scored.messages.join(' / ')}`, 'event');
+  }
+
+  const highlight = results.find((r) => r.win) || results[0] || null;
+  const reveal = {
+    game,
+    label: pending.label || 'ミニゲーム',
+    starterId: pending.starterId ?? pending.playerId,
+    shared,
+    results,
+    playerId: highlight?.playerId ?? null,
+    playerName: highlight?.playerName ?? '',
+    playerColor: highlight?.playerColor ?? '#c4a574',
+    pick: highlight?.pick,
+    outcome: highlight?.outcome || shared,
+    tier: highlight?.tier || 'miss',
+    win: !!highlight?.win,
+    title: highlight?.title || '結果発表',
+    detail: results.map((r) => `${r.playerName}: ${r.detail}`).join(' ／ '),
+    messages: results.flatMap((r) => r.messages),
+  };
+
+  const starterId = pending.starterId ?? pending.playerId;
+  g.pending = null;
+  if (g.currentPlayerIdx !== starterId) {
+    g.currentPlayerIdx = starterId;
+  }
+  endTurn(g);
+  return {
+    ok: true,
+    minigame: true,
+    win: !!highlight?.win,
+    detail: reveal.detail,
+    messages: reveal.messages,
+    reveal,
+    state: serializeState(g),
+  };
+}
+
+function scoreMinigamePlayer(g, p, game, pick, shared) {
   const messages = [];
   let win = false;
   let detail = '';
@@ -3353,273 +3527,160 @@ function resolveMinigame(g, p, pending, choice) {
   let prizeWon = 0;
   /** @type {Record<string, unknown>} */
   const outcome = {};
-  let pick = choice?.value;
   const lvPrize = (base) => scaleDiceSlotPrize(base, p.level);
 
   if (game === 'guess_dice') {
-    pick = Math.max(1, Math.min(6, Number(choice.value) || 1));
-    const roll = Math.floor(rngNext(g) * 6) + 1;
-    const diff = Math.abs(pick - roll);
+    const roll = Number(shared.roll);
+    const diff = Math.abs(Number(pick) - roll);
     outcome.roll = roll;
-    outcome.pick = pick;
     if (diff === 0) {
-      win = true;
-      tier = 'exact';
-      title = 'ぴったり！';
+      win = true; tier = 'exact'; title = 'ぴったり！';
       const prize = lvPrize(320);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`ぴったり！出目${roll} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 60, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `ぴったり！出目${roll} → +${prize}G（×Lv${p.level}）`);
     } else if (diff === 1) {
-      win = true;
-      tier = 'near';
-      title = 'おしい！';
+      win = true; tier = 'near'; title = 'おしい！';
       const prize = lvPrize(115);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`おしい！出目${roll}（予想${pick}）→ +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 40, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `おしい！出目${roll}（予想${pick}）→ +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = 'ハズレ…';
-      messages.push(`ハズレ…出目${roll}（予想${pick}）`);
-      payoutAll(g, 25, messages);
+      prizeWon = minigameConsolation(p, 25, messages, `ハズレ…出目${roll}（予想${pick}）→ 参加賞 +25G`);
     }
     detail = `予想 ${pick} → 出目 ${roll}`;
   } else if (game === 'dice_battle') {
-    // ダイスバトル：攻め(2d6)／守り(1d6+3) vs ハウス2d6
-    pick = choice.value === 'guard' ? 'guard' : 'rush';
+    const stylePick = pick === 'guard' ? 'guard' : 'rush';
     const youA = Math.floor(rngNext(g) * 6) + 1;
-    const youB = pick === 'rush' ? Math.floor(rngNext(g) * 6) + 1 : 0;
-    const youTotal = pick === 'rush' ? youA + youB : youA + 3;
-    const foeA = Math.floor(rngNext(g) * 6) + 1;
-    const foeB = Math.floor(rngNext(g) * 6) + 1;
-    const foeTotal = foeA + foeB;
-    outcome.pick = pick;
-    outcome.youDice = pick === 'rush' ? [youA, youB] : [youA];
-    outcome.youBonus = pick === 'guard' ? 3 : 0;
+    const youB = stylePick === 'rush' ? Math.floor(rngNext(g) * 6) + 1 : 0;
+    const youTotal = stylePick === 'rush' ? youA + youB : youA + 3;
+    const foeTotal = Number(shared.foeTotal);
+    outcome.youDice = stylePick === 'rush' ? [youA, youB] : [youA];
+    outcome.youBonus = stylePick === 'guard' ? 3 : 0;
     outcome.youTotal = youTotal;
-    outcome.foeDice = [foeA, foeB];
+    outcome.foeDice = shared.foeDice;
     outcome.foeTotal = foeTotal;
-    const style = pick === 'rush' ? '攻め' : '守り';
+    const style = stylePick === 'rush' ? '攻め' : '守り';
     if (youTotal > foeTotal) {
-      win = true;
-      tier = 'win';
-      title = 'バトル勝利！';
-      const prize = lvPrize(pick === 'rush' ? 260 : 190);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${style} ${youTotal} vs ${foeTotal} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 55, messages);
+      win = true; tier = 'win'; title = 'バトル勝利！';
+      const prize = lvPrize(stylePick === 'rush' ? 260 : 190);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${style} ${youTotal} vs ${foeTotal} → +${prize}G（×Lv${p.level}）`);
     } else if (youTotal === foeTotal) {
-      win = true;
-      tier = 'near';
-      title = '引き分け！';
+      win = true; tier = 'near'; title = '引き分け！';
       const prize = lvPrize(90);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`同点 ${youTotal} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 40, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `同点 ${youTotal} → +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = 'バトル敗北…';
-      messages.push(`${style} ${youTotal} vs ${foeTotal}`);
-      payoutAll(g, 28, messages);
+      prizeWon = minigameConsolation(p, 28, messages, `${style} ${youTotal} vs ${foeTotal} → 参加賞 +28G`);
     }
     detail = `${style} ${youTotal} vs ハウス ${foeTotal}`;
   } else if (game === 'horse_race') {
-    // ミニ競馬：4頭から1頭を選んで着順を競う
-    const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
-    const idx = Math.max(0, Math.min(3, Number(choice.value)));
-    pick = idx;
-    const scores = horses.map((_, i) => ({
-      i,
-      score: rngNext(g) * 0.85 + rngNext(g) * 0.4 + (i === idx ? 0.08 : 0),
-    }));
-    scores.sort((a, b) => b.score - a.score);
-    const place = scores.findIndex((s) => s.i === idx) + 1;
+    const horses = shared.horses || ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
+    const idx = Math.max(0, Math.min(3, Number(pick)));
+    const place = (shared.order || []).findIndex((i) => i === idx) + 1;
     outcome.horses = horses;
-    outcome.pick = idx;
-    outcome.order = scores.map((s) => s.i);
+    outcome.order = shared.order;
     outcome.place = place;
-    outcome.scores = scores.map((s) => Math.round(s.score * 1000) / 1000);
+    outcome.scores = shared.scores;
     if (place === 1) {
-      win = true;
-      tier = 'jackpot';
-      title = '優勝！';
+      win = true; tier = 'jackpot'; title = '優勝！';
       const prize = lvPrize(380);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${horses[idx]} が1着！ → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 80, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${horses[idx]} が1着！ → +${prize}G（×Lv${p.level}）`);
     } else if (place === 2) {
-      win = true;
-      tier = 'win';
-      title = '2着入賞！';
+      win = true; tier = 'win'; title = '2着入賞！';
       const prize = lvPrize(160);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${horses[idx]} が2着 → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 45, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${horses[idx]} が2着 → +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
-      title = `${place}着…`;
-      messages.push(`${horses[idx]} は${place}着`);
-      payoutAll(g, 30, messages);
+      title = `${place || '?'}着…`;
+      prizeWon = minigameConsolation(p, 30, messages, `${horses[idx]} は${place}着 → 参加賞 +30G`);
     }
-    detail = `${horses[idx]} → ${place}着（順: ${scores.map((s) => horses[s.i]).join('→')}）`;
+    detail = `${horses[idx]} → ${place}着`;
   } else if (game === 'high_low') {
-    pick = choice.value === 'high' ? 'high' : 'low';
-    const secret = Math.floor(rngNext(g) * 10) + 1; // 1-10
-    const isHigh = secret >= 6;
+    const secret = Number(shared.secret);
+    const isHigh = shared.band === 'high';
     const ok = (pick === 'high' && isHigh) || (pick === 'low' && !isHigh);
     outcome.secret = secret;
-    outcome.band = isHigh ? 'high' : 'low';
-    outcome.pick = pick;
+    outcome.band = shared.band;
     if (ok) {
-      win = true;
-      tier = 'win';
-      title = '正解！';
+      win = true; tier = 'win'; title = '正解！';
       const prize = 200 + p.level * 30;
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`正解！数字は ${secret} → +${prize}G`);
-      payoutAll(g, 70, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `正解！数字は ${secret} → +${prize}G`);
     } else {
-      tier = 'miss';
       title = '残念…';
-      messages.push(`残念…数字は ${secret}`);
-      payoutAll(g, 35, messages);
+      prizeWon = minigameConsolation(p, 35, messages, `残念…数字は ${secret} → 参加賞 +35G`);
     }
     detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'} → ${secret}`;
   } else if (game === 'rps_duel') {
-    // じゃんけん勝負
-    const opts = ['rock', 'paper', 'scissors'];
-    pick = opts.includes(choice.value) ? choice.value : 'rock';
-    const foe = opts[Math.floor(rngNext(g) * 3)];
-    outcome.pick = pick;
-    outcome.foe = foe;
+    const foe = shared.foe;
     const beats = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
     const labels = { rock: 'グー', paper: 'パー', scissors: 'チョキ' };
+    outcome.foe = foe;
     if (pick === foe) {
-      win = true;
-      tier = 'near';
-      title = 'あいこ！';
+      win = true; tier = 'near'; title = 'あいこ！';
       const prize = 75 + p.level * 12;
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`あいこ（${labels[pick]}）→ +${prize}G`);
-      payoutAll(g, 40, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `あいこ（${labels[pick]}）→ +${prize}G`);
     } else if (beats[pick] === foe) {
-      win = true;
-      tier = 'win';
-      title = 'じゃんけん勝ち！';
+      win = true; tier = 'win'; title = 'じゃんけん勝ち！';
       const prize = 200 + p.level * 28;
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${labels[pick]} vs ${labels[foe]} → +${prize}G`);
-      payoutAll(g, 60, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${labels[pick]} vs ${labels[foe]} → +${prize}G`);
     } else {
-      tier = 'miss';
       title = 'じゃんけん負け…';
-      messages.push(`${labels[pick]} vs ${labels[foe]}`);
-      payoutAll(g, 30, messages);
+      prizeWon = minigameConsolation(p, 30, messages, `${labels[pick]} vs ${labels[foe]} → 参加賞 +30G`);
     }
     detail = `${labels[pick]} vs ${labels[foe]}`;
   } else if (game === 'coin') {
-    pick = choice.value === 'tails' ? 'tails' : 'heads';
-    const face = rngNext(g) < 0.5 ? 'heads' : 'tails';
+    const face = shared.face;
     const faceLabel = face === 'heads' ? 'おもて' : 'うら';
     const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
     outcome.face = face;
-    outcome.pick = pick;
     if (pick === face) {
-      win = true;
-      tier = 'win';
-      title = '当たり！';
+      win = true; tier = 'win'; title = '当たり！';
       const prize = 180 + p.level * 25;
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`当たり！${faceLabel} → +${prize}G`);
-      payoutAll(g, 55, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `当たり！${faceLabel} → +${prize}G`);
     } else {
-      tier = 'miss';
       title = 'ハズレ…';
-      messages.push(`ハズレ…${faceLabel}`);
-      payoutAll(g, 30, messages);
+      prizeWon = minigameConsolation(p, 30, messages, `ハズレ…${faceLabel} → 参加賞 +30G`);
     }
     detail = `予想 ${pickLabel} → ${faceLabel}`;
   } else if (game === 'roulette') {
-    // ルーレット：赤／黒／緑(0)
-    pick = ['red', 'black', 'green'].includes(choice.value) ? choice.value : 'red';
-    const spin = Math.floor(rngNext(g) * 37); // 0-36
-    const color = spin === 0 ? 'green' : (spin % 2 === 0 ? 'black' : 'red');
-    outcome.pick = pick;
+    const spin = Number(shared.spin);
+    const color = shared.color;
+    const colorLabel = { red: '赤', black: '黒', green: '緑(0)' };
     outcome.spin = spin;
     outcome.color = color;
-    const colorLabel = { red: '赤', black: '黒', green: '緑(0)' };
     if (pick === 'green' && color === 'green') {
-      win = true;
-      tier = 'jackpot';
-      title = 'ゼロ的中！';
+      win = true; tier = 'jackpot'; title = 'ゼロ的中！';
       const prize = lvPrize(900);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`0的中！ → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 120, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `0的中！ → +${prize}G（×Lv${p.level}）`);
     } else if (pick === color) {
-      win = true;
-      tier = 'win';
-      title = 'ルーレット当たり！';
+      win = true; tier = 'win'; title = 'ルーレット当たり！';
       const prize = lvPrize(210);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${colorLabel[color]}${spin} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 55, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${colorLabel[color]}${spin} → +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = 'ルーレット外れ…';
-      messages.push(`予想${colorLabel[pick]} → ${colorLabel[color]}${spin}`);
-      payoutAll(g, 28, messages);
+      prizeWon = minigameConsolation(p, 28, messages, `予想${colorLabel[pick]} → ${colorLabel[color]}${spin} → 参加賞 +28G`);
     }
     detail = `予想 ${colorLabel[pick]} → ${colorLabel[color]} ${spin}`;
   } else if (game === 'heist') {
-    // 金庫破り（非対称リスク）：用心／普通／大胆
-    pick = ['safe', 'normal', 'bold'].includes(choice.value) ? choice.value : 'normal';
     const table = {
-      safe: { chance: 0.82, prize: 120, bust: 0, party: 35 },
-      normal: { chance: 0.55, prize: 240, bust: 0, party: 50 },
-      bold: { chance: 0.28, prize: 520, bust: 0, party: 90 },
+      safe: { chance: 0.82, prize: 120, party: 35 },
+      normal: { chance: 0.55, prize: 240, party: 50 },
+      bold: { chance: 0.28, prize: 520, party: 90 },
     };
-    const cfg = table[pick];
+    const cfg = table[pick] || table.normal;
     const success = rngNext(g) < cfg.chance;
-    outcome.pick = pick;
     outcome.success = success;
     outcome.chance = cfg.chance;
-    const riskLabel = { safe: '用心', normal: '普通', bold: '大胆' }[pick];
+    const riskLabel = { safe: '用心', normal: '普通', bold: '大胆' }[pick] || '普通';
     if (success) {
-      win = true;
-      tier = pick === 'bold' ? 'jackpot' : 'win';
-      title = '金庫オープン！';
+      win = true; tier = pick === 'bold' ? 'jackpot' : 'win'; title = '金庫オープン！';
       const prize = lvPrize(cfg.prize);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${riskLabel}成功 → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, cfg.party, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${riskLabel}成功 → +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = '警備に捕まった…';
-      messages.push(`${riskLabel}失敗（本人はゼロ、みんなに慰労）`);
-      payoutAll(g, Math.floor(cfg.party * 0.7), messages);
+      const consol = Math.floor(cfg.party * 0.7);
+      prizeWon = minigameConsolation(p, consol, messages, `${riskLabel}失敗 → 慰労 +${consol}G`);
     }
     detail = `${riskLabel}（成功率${Math.round(cfg.chance * 100)}%）→ ${success ? '成功' : '失敗'}`;
   } else if (game === 'slot') {
-    const syms = ['★', '♪', 'G', '♦', '♣'];
-    const reels = [];
-    for (let i = 0; i < 5; i++) {
-      reels.push(syms[Math.floor(rngNext(g) * syms.length)]);
-    }
+    const reels = shared.symbols || [];
     const line = reels.join('');
     const counts = new Map();
     for (const s of reels) counts.set(s, (counts.get(s) || 0) + 1);
@@ -3631,75 +3692,38 @@ function resolveMinigame(g, p, pending, choice) {
       .filter((i) => i >= 0);
     outcome.symbols = reels;
     outcome.hitIndices = hitIndices;
-
-    // 5リール役：5揃い > 4揃い > フルハウス > 3揃い > ツーペア > ワンペア > ハズレ
-    // 揃いが難しくなった分、上位役の報酬を厚く／下位は控えめに調整
     if (top === 5) {
-      win = true;
-      tier = 'jackpot';
-      title = 'ジャックポット！';
+      win = true; tier = 'jackpot'; title = 'ジャックポット！';
       const prize = lvPrize(1020);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`5揃い ${line}！ → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 180, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `5揃い ${line}！ → +${prize}G（×Lv${p.level}）`);
     } else if (top === 4) {
-      win = true;
-      tier = 'quad';
-      title = 'フォーカード！';
+      win = true; tier = 'quad'; title = 'フォーカード！';
       const prize = lvPrize(480);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`4揃い ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 100, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `4揃い ${line} → +${prize}G（×Lv${p.level}）`);
     } else if (top === 3 && second === 2) {
-      win = true;
-      tier = 'fullhouse';
-      title = 'フルハウス！';
+      win = true; tier = 'fullhouse'; title = 'フルハウス！';
       const prize = lvPrize(320);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`フルハウス ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 75, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `フルハウス ${line} → +${prize}G（×Lv${p.level}）`);
     } else if (top === 3) {
-      win = true;
-      tier = 'triple';
-      title = 'スリーカード！';
+      win = true; tier = 'triple'; title = 'スリーカード！';
       const prize = lvPrize(180);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`3揃い ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 55, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `3揃い ${line} → +${prize}G（×Lv${p.level}）`);
     } else if (top === 2 && second === 2) {
-      win = true;
-      tier = 'two_pair';
-      title = 'ツーペア！';
+      win = true; tier = 'two_pair'; title = 'ツーペア！';
       const prize = lvPrize(105);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`ツーペア ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 40, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `ツーペア ${line} → +${prize}G（×Lv${p.level}）`);
     } else if (top === 2) {
-      win = true;
-      tier = 'pair';
-      title = 'ワンペア！';
+      win = true; tier = 'pair'; title = 'ワンペア！';
       const prize = lvPrize(55);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`ワンペア ${line} → +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 28, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `ワンペア ${line} → +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = 'バラケ目…';
-      messages.push(`バラケ目 ${line}`);
-      payoutAll(g, 22, messages);
+      prizeWon = minigameConsolation(p, 22, messages, `バラケ目 ${line} → 参加賞 +22G`);
     }
     detail = line;
   } else if (game === 'balloon_dash') {
-    // バルーンチャレンジ：ポンプ回数が多いほど高配当だが割れる
-    const pumps = [3, 5, 7].includes(Number(choice.value)) ? Number(choice.value) : 5;
-    pick = pumps;
-    const popAt = 2 + Math.floor(rngNext(g) * 7); // 2..8
+    const pumps = [3, 5, 7].includes(Number(pick)) ? Number(pick) : 5;
+    const popAt = 2 + Math.floor(rngNext(g) * 7);
     const popped = pumps >= popAt;
     outcome.pumps = pumps;
     outcome.popAt = popAt;
@@ -3709,57 +3733,21 @@ function resolveMinigame(g, p, pending, choice) {
       tier = pumps >= 7 ? 'jackpot' : pumps >= 5 ? 'win' : 'near';
       title = 'バルーン成功！';
       const prize = lvPrize(55 * pumps);
-      prizeWon = prize;
-      p.cash += prize;
-      messages.push(`${pumps}回ポンプ成功（限界${popAt}）→ +${prize}G（×Lv${p.level}）`);
-      payoutAll(g, 20 + pumps * 6, messages);
+      prizeWon = grantMinigamePrize(p, prize, messages, `${pumps}回ポンプ成功（限界${popAt}）→ +${prize}G（×Lv${p.level}）`);
     } else {
-      tier = 'miss';
       title = 'パンッ！';
-      messages.push(`${pumps}回目で破裂（限界${popAt}）`);
-      payoutAll(g, 26, messages);
+      prizeWon = minigameConsolation(p, 26, messages, `${pumps}回目で破裂（限界${popAt}）→ 参加賞 +26G`);
     }
     detail = `${pumps}ポンプ / 限界 ${popAt} → ${popped ? '破裂' : '成功'}`;
   } else {
-    tier = 'miss';
     title = '参加賞';
-    payoutAll(g, 40, messages);
-    messages.push('参加賞');
+    prizeWon = minigameConsolation(p, 40, messages, '参加賞 +40G');
     detail = '参加賞';
   }
 
-  bumpStat(p, 'minigamePlays', 1);
-  if (win) bumpStat(p, 'minigameWins', 1);
-  if (prizeWon > 0) bumpStat(p, 'minigamePrize', prizeWon);
-
-  const reveal = {
-    game,
-    label: pending.label || 'ミニゲーム',
-    playerId: p.id,
-    playerName: p.name,
-    playerColor: p.color,
-    pick,
-    outcome,
-    tier,
-    win,
-    title,
-    detail,
-    messages: [...messages],
-  };
-
-  addLog(g, `${p.name} の「${pending.label}」→ ${messages.join(' / ')}`, 'event');
-  g.pending = null;
-  endTurn(g);
-  return {
-    ok: true,
-    minigame: true,
-    win,
-    detail,
-    messages,
-    reveal,
-    state: serializeState(g),
-  };
+  return { win, detail, tier, title, prizeWon, messages, outcome };
 }
+
 
 const STOCK_SELL_PHASES = new Set(['await_roll', 'await_choice', 'await_fork']);
 
