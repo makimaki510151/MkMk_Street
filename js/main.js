@@ -10,6 +10,10 @@ import {
   chooseFork,
   preTurnSell,
   canSellStockOnTurn,
+  canOpenShopTrade,
+  openShopTradeCompose,
+  sumShopPrices,
+  defaultShopTradeCashDelta,
   cpuAct,
   currentPlayer,
   getPlayerAssets,
@@ -2494,6 +2498,11 @@ function bindGameControls() {
     audio.resume();
     sendAction({ type: 'roll' });
   };
+  $('#btn-trade')?.addEventListener('click', () => {
+    if (app.busy) return;
+    audio.sfx.click();
+    sendAction({ type: 'trade_open' });
+  });
   $('#btn-end-choice').onclick = () => {
     hideModal();
     sendAction({ type: 'choice', choice: { action: 'done' } });
@@ -2941,6 +2950,24 @@ async function applyLocalAction(action) {
     if (!result.ok) return toast(result.error || '売却できません');
     if (result.state) app.game = restoreState(result.state);
     audio.sfx.buy();
+    syncState();
+    refreshGameUI();
+    return;
+  }
+
+  if (action.type === 'trade_open') {
+    const pid = app.game.currentPlayerIdx;
+    const cur = currentPlayer(app.game);
+    if (app.mode === 'local') {
+      if (cur?.isCPU) return;
+    } else if (!isMyTurn()) {
+      return toast('あなたのターンではありません');
+    }
+    if (app.game.phase !== 'await_roll') return toast('サイコロを振る前だけ取引できます');
+    noteActionActor(pid);
+    const result = openShopTradeCompose(app.game, pid);
+    if (!result.ok) return toast(choiceErrorMessage(result.error));
+    if (result.state) app.game = restoreState(result.state);
     syncState();
     refreshGameUI();
   }
@@ -3752,6 +3779,23 @@ async function handleHostAction(from, data) {
     return;
   }
 
+  if (action.type === 'trade_open') {
+    if (app.game.currentPlayerIdx !== seat || app.game.phase !== 'await_roll') {
+      app.net.sendTo(from, { type: 'reject', reason: '今は物件取引できません' });
+      return;
+    }
+    noteActionActor(seat);
+    const result = openShopTradeCompose(app.game, seat);
+    if (!result.ok) {
+      app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
+      return;
+    }
+    if (result.state) app.game = restoreState(result.state);
+    syncState();
+    refreshGameUI();
+    return;
+  }
+
   if (action.type === 'choice') {
     const pend = app.game.pending;
     if (!pend || pend.playerId !== seat) {
@@ -3877,14 +3921,25 @@ function scheduleCpu() {
   if (!app.game || app.game.phase === 'gameover' || app.busy) return;
   if (app.mode === 'guest') return;
   const cur = currentPlayer(app.game);
-  if (!cur?.isCPU) return;
+  const pend = app.game.pending;
+  const pendingCpu = (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
+    && pend
+    && app.game.players[pend.playerId]?.isCPU
+    && !app.game.players[pend.playerId]?.bankrupt;
+  if (!cur?.isCPU && !pendingCpu) return;
 
   app.cpuTimer = setTimeout(async () => {
     if (app.busy || isEventUiBlocking() || !app.game) return;
-    noteActionActor(app.game.currentPlayerIdx);
+    const pendNow = app.game.pending;
+    const actorId = (app.game.phase === 'await_choice' || app.game.phase === 'await_fork')
+      && pendNow?.playerId != null
+      ? pendNow.playerId
+      : app.game.currentPlayerIdx;
+    noteActionActor(actorId);
     const phase = app.game.phase;
 
     if (phase === 'await_roll') {
+      if (!currentPlayer(app.game)?.isCPU) return;
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
       if (result?.dice) {
@@ -3972,6 +4027,13 @@ function maybeYourTurnChime() {
 function choiceErrorMessage(err) {
   if (err === 'still_short') return 'まだ目標金額に足りません。売却か破産を選んでください';
   if (err === 'insufficient') return '資金が足りません';
+  if (err === 'cannot_trade') return '今は物件取引できません（双方に店が必要です）';
+  if (err === 'need_shops') return '渡す店と受け取る店をそれぞれ1軒以上選んでください';
+  if (err === 'bad_target') return '取引相手を選んでください';
+  if (err === 'bad_give' || err === 'bad_take') return '選べないお店です';
+  if (err === 'proposer_cash') return '提案側の現金が足りません';
+  if (err === 'target_cash') return '相手の現金が足りません（差額を減らしてください）';
+  if (err === 'bad_player') return '取引相手がいません';
   return err || '失敗';
 }
 
@@ -4153,6 +4215,16 @@ function refreshGameUI() {
   const eventBlocked = isEventUiBlocking();
   const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
   $('#btn-roll').disabled = !canRoll;
+  const tradeBtn = $('#btn-trade');
+  if (tradeBtn) {
+    const myId = app.mode === 'local'
+      ? (humanTurn ? cur?.id : -1)
+      : app.localSeat;
+    const canTrade = !app.busy && !eventBlocked
+      && canOpenShopTrade(g, myId);
+    tradeBtn.hidden = !canTrade;
+    tradeBtn.disabled = !canTrade;
+  }
   const reader = g.players[app.eventFlashReaderId];
   if (eventBlocked || app.eventFlashOpen) {
     $('#btn-roll').textContent = reader?.isCPU
@@ -4248,6 +4320,8 @@ function pendingStatusLabel(pend) {
     case 'scratch': return 'イベント表をスクラッチ中';
     case 'minigame': return `ミニゲーム「${pend.label || ''}」中`;
     case 'level_up': return '昇進を祝っている';
+    case 'shop_trade_compose': return '物件取引を作成中';
+    case 'shop_trade_offer': return '物件取引の承認待ち';
     default: return '選択中';
   }
 }
@@ -5297,6 +5371,138 @@ function showChoiceModal(g) {
     return;
   }
   $('#modal-card').classList.remove('fork-hint-only');
+
+  if (pend.type === 'shop_trade_compose') {
+    title.textContent = '物件取引';
+    $('#modal-card').classList.add('wide');
+    $('#btn-skip-choice').textContent = 'やめる';
+    const others = g.players.filter((o) => o.id !== pend.playerId && !o.bankrupt
+      && g.map.some((s) => s.type === 'shop' && s.owner === o.id));
+    const target = pend.targetId != null ? g.players[pend.targetId] : null;
+    const giveSet = new Set(pend.giveShopIds || []);
+    const takeSet = new Set(pend.takeShopIds || []);
+    const giveValue = sumShopPrices(g, pend.giveShopIds);
+    const takeValue = sumShopPrices(g, pend.takeShopIds);
+    const cashDelta = Math.floor(Number(pend.cashDelta) || 0);
+    const autoDelta = defaultShopTradeCashDelta(giveValue, takeValue);
+    const myShops = g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId);
+    const theirShops = target
+      ? g.map.filter((s) => s.type === 'shop' && s.owner === target.id)
+      : [];
+    const shopBtn = (sq, selected, dataAttr) => `
+      <button type="button" class="btn tiny trade-shop${selected ? ' selected' : ''}"
+        ${dataAttr}="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        ${escapeHtml(sq.label)}
+        <span class="hint">${sq.price.toLocaleString()}G・A${sq.area}</span>
+      </button>`;
+    body.innerHTML = `
+      <p class="hint">渡す店と受け取る店を選び、差額を確認して提案します。相手は承認か拒否のみです。</p>
+      <div class="trade-section">
+        <h4>相手</h4>
+        <div class="trade-targets">
+          ${others.map((o) => `
+            <button type="button" class="btn tiny${pend.targetId === o.id ? ' primary' : ''}"
+              data-trade-target="${o.id}" style="--pc:${o.color}">
+              ${escapeHtml(o.name)}${o.isCPU ? '（CPU）' : ''}
+            </button>`).join('') || '<p class="hint">取引できる相手がいません</p>'}
+        </div>
+      </div>
+      ${target ? `
+      <div class="trade-cols">
+        <div class="trade-section">
+          <h4>渡す（自分 → ${escapeHtml(target.name)}）</h4>
+          <p class="hint">合計 ${giveValue.toLocaleString()}G</p>
+          <div class="trade-shop-list">${myShops.map((sq) => shopBtn(sq, giveSet.has(sq.id), 'data-trade-give')).join('')}</div>
+        </div>
+        <div class="trade-section">
+          <h4>受け取る（${escapeHtml(target.name)} → 自分）</h4>
+          <p class="hint">合計 ${takeValue.toLocaleString()}G</p>
+          <div class="trade-shop-list">${theirShops.map((sq) => shopBtn(sq, takeSet.has(sq.id), 'data-trade-take')).join('')}</div>
+        </div>
+      </div>
+      <div class="trade-section">
+        <h4>差額精算</h4>
+        <p class="hint">店価差のデフォルトは ${autoDelta === 0 ? '0G' : (autoDelta > 0 ? `あなたが ${autoDelta.toLocaleString()}G 支払い` : `相手が ${Math.abs(autoDelta).toLocaleString()}G 支払い`)}です。変更できます（正の値＝あなたが支払う）。</p>
+        <label class="field">差額（G）
+          <input type="number" id="trade-cash-delta" value="${cashDelta}" step="10" />
+        </label>
+        <p class="modal-lead">${cashDelta === 0 ? '現金のやりとりなし' : (cashDelta > 0 ? `あなたが ${cashDelta.toLocaleString()}G 支払う` : `相手が ${Math.abs(cashDelta).toLocaleString()}G 支払う`)}</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn primary" id="m-trade-propose">この内容で提案</button>
+      </div>` : '<p class="hint">先に相手を選んでください</p>'}`;
+    body.querySelectorAll('[data-trade-target]').forEach((btn) => {
+      btn.onclick = () => {
+        sendAction({ type: 'choice', choice: { action: 'set_target', targetId: Number(btn.dataset.tradeTarget) } });
+      };
+    });
+    body.querySelectorAll('[data-trade-give]').forEach((btn) => {
+      btn.onclick = () => {
+        sendAction({ type: 'choice', choice: { action: 'toggle_give', shopId: Number(btn.dataset.tradeGive) } });
+      };
+    });
+    body.querySelectorAll('[data-trade-take]').forEach((btn) => {
+      btn.onclick = () => {
+        sendAction({ type: 'choice', choice: { action: 'toggle_take', shopId: Number(btn.dataset.tradeTake) } });
+      };
+    });
+    const cashInput = $('#trade-cash-delta');
+    if (cashInput) {
+      const commitCash = () => {
+        sendAction({ type: 'choice', choice: { action: 'set_cash', cashDelta: Number(cashInput.value) || 0 } });
+      };
+      cashInput.addEventListener('change', commitCash);
+    }
+    $('#m-trade-propose')?.addEventListener('click', () => {
+      sendAction({ type: 'choice', choice: { action: 'propose' } });
+    });
+    return;
+  }
+
+  if (pend.type === 'shop_trade_offer') {
+    const from = g.players[pend.fromId];
+    const me = g.players[pend.playerId];
+    title.textContent = '物件取引の提案';
+    $('#modal-card').classList.add('wide');
+    $('#btn-skip-choice').textContent = '拒否する';
+    const giveValue = sumShopPrices(g, pend.giveShopIds);
+    const takeValue = sumShopPrices(g, pend.takeShopIds);
+    const cashDelta = Math.floor(Number(pend.cashDelta) || 0);
+    const listShops = (ids) => (ids || []).map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      return `<li><strong>${escapeHtml(sq.label)}</strong>（${sq.price.toLocaleString()}G）</li>`;
+    }).join('');
+    let cashLine = '現金のやりとりなし';
+    if (cashDelta > 0) cashLine = `${escapeHtml(from?.name || '相手')} があなたへ ${cashDelta.toLocaleString()}G 支払い`;
+    else if (cashDelta < 0) cashLine = `あなたが ${escapeHtml(from?.name || '相手')} へ ${Math.abs(cashDelta).toLocaleString()}G 支払い`;
+    body.innerHTML = `
+      <p class="modal-lead">${escapeHtml(from?.name || '相手')} からの提案です</p>
+      <div class="trade-cols">
+        <div class="trade-section">
+          <h4>あなたが受け取る（計 ${giveValue.toLocaleString()}G）</h4>
+          <ul class="trade-summary">${listShops(pend.giveShopIds) || '<li class="hint">なし</li>'}</ul>
+        </div>
+        <div class="trade-section">
+          <h4>あなたが渡す（計 ${takeValue.toLocaleString()}G）</h4>
+          <ul class="trade-summary">${listShops(pend.takeShopIds) || '<li class="hint">なし</li>'}</ul>
+        </div>
+      </div>
+      <p>${cashLine}</p>
+      <p class="hint">所持金 ${Number(me?.cash || 0).toLocaleString()}G ／ 逆提案はできません</p>
+      <div class="modal-actions">
+        <button class="btn primary" id="m-trade-accept">承認する</button>
+        <button class="btn danger ghost" id="m-trade-reject">拒否する</button>
+      </div>`;
+    $('#m-trade-accept').onclick = () => {
+      sendAction({ type: 'choice', choice: { action: 'accept' } });
+    };
+    $('#m-trade-reject').onclick = () => {
+      audio.sfx.cancel();
+      sendAction({ type: 'choice', choice: { action: 'reject' } });
+    };
+    return;
+  }
 
   if (pend.type === 'buy_shop') {
     const sq = getNode(g, pend.shopId);

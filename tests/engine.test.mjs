@@ -68,6 +68,12 @@ import {
   getLevelBonus,
   toggleBoardSwitch,
   getNode,
+  canOpenShopTrade,
+  openShopTradeCompose,
+  sumShopPrices,
+  defaultShopTradeCashDelta,
+  executeShopTrade,
+  cpuShouldAcceptShopTrade,
   cpuCashReserve,
   cpuCanAffordSpend,
   cpuEstimateMaxToll,
@@ -2890,5 +2896,128 @@ describe('MkMk Street engine', () => {
     assert.equal(again.players[0].color, PLAYER_COLORS[0]);
     assert.equal(again.players[1].color, PLAYER_COLORS[1]);
     assert.notEqual(again.players[0].color, again.players[1].color);
+  });
+
+  it('supports multi-shop trades with default cash delta and accept/reject', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 42,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    assert.ok(shops.length >= 4);
+    const aShop1 = shops[0];
+    const aShop2 = shops[1];
+    const bShop1 = shops[2];
+    const bShop2 = shops[3];
+    aShop1.owner = 0;
+    aShop2.owner = 0;
+    bShop1.owner = 1;
+    bShop2.owner = 1;
+    aShop1.price = 200;
+    aShop2.price = 100;
+    bShop1.price = 250;
+    bShop2.price = 150;
+    g.players[0].cash = 5000;
+    g.players[1].cash = 5000;
+    g.phase = 'await_roll';
+    g.currentPlayerIdx = 0;
+
+    assert.equal(canOpenShopTrade(g, 0), true);
+    const opened = openShopTradeCompose(g, 0);
+    assert.equal(opened.ok, true);
+    assert.equal(g.pending.type, 'shop_trade_compose');
+
+    assert.equal(applyChoice(g, { action: 'set_target', targetId: 1 }).ok, true);
+    assert.equal(applyChoice(g, { action: 'toggle_give', shopId: aShop1.id }).ok, true);
+    assert.equal(applyChoice(g, { action: 'toggle_give', shopId: aShop2.id }).ok, true);
+    assert.equal(applyChoice(g, { action: 'toggle_take', shopId: bShop1.id }).ok, true);
+    assert.equal(applyChoice(g, { action: 'toggle_take', shopId: bShop2.id }).ok, true);
+
+    const giveV = sumShopPrices(g, g.pending.giveShopIds);
+    const takeV = sumShopPrices(g, g.pending.takeShopIds);
+    assert.equal(g.pending.cashDelta, defaultShopTradeCashDelta(giveV, takeV));
+    assert.equal(g.pending.cashDelta, 100); // 400 take - 300 give
+
+    const proposed = applyChoice(g, { action: 'propose' });
+    assert.equal(proposed.ok, true);
+    assert.equal(g.pending.type, 'shop_trade_offer');
+    assert.equal(g.pending.playerId, 1);
+
+    // reject returns to await_roll without changing owners
+    assert.equal(applyChoice(g, { action: 'reject' }).ok, true);
+    assert.equal(g.phase, 'await_roll');
+    assert.equal(aShop1.owner, 0);
+    assert.equal(bShop1.owner, 1);
+
+    // re-open and accept
+    openShopTradeCompose(g, 0);
+    applyChoice(g, { action: 'set_target', targetId: 1 });
+    applyChoice(g, { action: 'toggle_give', shopId: aShop1.id });
+    applyChoice(g, { action: 'toggle_take', shopId: bShop1.id });
+    // give 200, take 250 → default +50
+    assert.equal(g.pending.cashDelta, 50);
+    applyChoice(g, { action: 'set_cash', cashDelta: 30 });
+    assert.equal(applyChoice(g, { action: 'propose' }).ok, true);
+
+    const cashA = g.players[0].cash;
+    const cashB = g.players[1].cash;
+    const accepted = applyChoice(g, { action: 'accept' });
+    assert.equal(accepted.ok, true);
+    assert.equal(aShop1.owner, 1);
+    assert.equal(bShop1.owner, 0);
+    assert.equal(g.players[0].cash, cashA - 30);
+    assert.equal(g.players[1].cash, cashB + 30);
+    assert.equal(g.phase, 'await_roll');
+  });
+
+  it('lets CPU accept or reject shop trades when it is the responder', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 7,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    const aShop = shops[0];
+    const bShop = shops[1];
+    aShop.owner = 0;
+    bShop.owner = 1;
+    aShop.price = 500;
+    bShop.price = 100;
+    g.players[0].cash = 3000;
+    g.players[1].cash = 3000;
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'shop_trade_offer',
+      playerId: 1,
+      fromId: 0,
+      giveShopIds: [aShop.id],
+      takeShopIds: [bShop.id],
+      cashDelta: 0,
+    };
+    // A gives 500, takes 100 → great for B
+    assert.equal(cpuShouldAcceptShopTrade(g, g.players[1], g.pending), true);
+    const result = cpuAct(g);
+    assert.equal(result?.ok, true);
+    assert.equal(aShop.owner, 1);
+    assert.equal(bShop.owner, 0);
+  });
+
+  it('executeShopTrade requires at least one shop each side', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    shops[0].owner = 0;
+    shops[1].owner = 1;
+    const bad = executeShopTrade(g, {
+      fromId: 0,
+      toId: 1,
+      giveShopIds: [shops[0].id],
+      takeShopIds: [],
+      cashDelta: 0,
+    });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.error, 'need_shops');
   });
 });

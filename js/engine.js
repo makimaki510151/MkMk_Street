@@ -2160,6 +2160,191 @@ function sellShopForCash(g, p, shopId) {
   return { ok: true, got, monopolyBreak: brk || undefined };
 }
 
+/** 店価合計（取引の差額計算用） */
+export function sumShopPrices(g, shopIds = []) {
+  let total = 0;
+  for (const id of shopIds) {
+    const sq = getNode(g, id);
+    if (sq?.type === 'shop') total += Number(sq.price) || 0;
+  }
+  return total;
+}
+
+/** 差額のデフォルト（正: 提案者が相手へ支払う） */
+export function defaultShopTradeCashDelta(giveValue, takeValue) {
+  return Math.floor(Number(takeValue) || 0) - Math.floor(Number(giveValue) || 0);
+}
+
+/** 自分のターン開始時に物件取引を開けるか */
+export function canOpenShopTrade(g, playerId) {
+  if (!g || g.phase !== 'await_roll') return false;
+  if (g.currentPlayerIdx !== playerId) return false;
+  const p = g.players[playerId];
+  if (!p || p.bankrupt || p.resting) return false;
+  const others = g.players.filter((o) => o.id !== playerId && !o.bankrupt);
+  if (!others.length) return false;
+  const mine = g.map.some((s) => s.type === 'shop' && s.owner === playerId);
+  const theirs = others.some((o) => g.map.some((s) => s.type === 'shop' && s.owner === o.id));
+  return mine && theirs;
+}
+
+/** 物件取引の作成UIを開く（サイコロ前） */
+export function openShopTradeCompose(g, playerId) {
+  if (!canOpenShopTrade(g, playerId)) return { ok: false, error: 'cannot_trade' };
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'shop_trade_compose',
+    playerId,
+    targetId: null,
+    giveShopIds: [],
+    takeShopIds: [],
+    cashDelta: 0,
+  };
+  addLog(g, `${g.players[playerId].name} が物件取引を提案中`, 'system');
+  return { ok: true, state: serializeState(g) };
+}
+
+function syncShopTradeCashDefault(g, pending) {
+  const giveValue = sumShopPrices(g, pending.giveShopIds);
+  const takeValue = sumShopPrices(g, pending.takeShopIds);
+  pending.cashDelta = defaultShopTradeCashDelta(giveValue, takeValue);
+}
+
+function validateShopTradeSides(g, fromId, toId, giveShopIds, takeShopIds) {
+  if (!Array.isArray(giveShopIds) || !Array.isArray(takeShopIds)) {
+    return { ok: false, error: 'need_shops' };
+  }
+  if (giveShopIds.length < 1 || takeShopIds.length < 1) {
+    return { ok: false, error: 'need_shops' };
+  }
+  const giveSet = new Set();
+  for (const id of giveShopIds) {
+    const sid = Number(id);
+    if (giveSet.has(sid)) return { ok: false, error: 'bad_give' };
+    giveSet.add(sid);
+    const sq = getNode(g, sid);
+    if (!sq || sq.type !== 'shop' || sq.owner !== fromId) return { ok: false, error: 'bad_give' };
+  }
+  const takeSet = new Set();
+  for (const id of takeShopIds) {
+    const sid = Number(id);
+    if (takeSet.has(sid)) return { ok: false, error: 'bad_take' };
+    takeSet.add(sid);
+    const sq = getNode(g, sid);
+    if (!sq || sq.type !== 'shop' || sq.owner !== toId) return { ok: false, error: 'bad_take' };
+  }
+  return { ok: true };
+}
+
+/**
+ * 物件交換を実行。cashDelta>0 なら from→to、cashDelta<0 なら to→from。
+ * 店価・増資はそのまま引き継ぐ。
+ */
+export function executeShopTrade(g, {
+  fromId,
+  toId,
+  giveShopIds = [],
+  takeShopIds = [],
+  cashDelta = 0,
+} = {}) {
+  const from = g.players[fromId];
+  const to = g.players[toId];
+  if (!from || !to || from.bankrupt || to.bankrupt) return { ok: false, error: 'bad_player' };
+  const check = validateShopTradeSides(g, fromId, toId, giveShopIds, takeShopIds);
+  if (!check.ok) return check;
+
+  const delta = Math.floor(Number(cashDelta) || 0);
+  const fromPay = Math.max(0, delta);
+  const toPay = Math.max(0, -delta);
+  if (from.cash < fromPay) return { ok: false, error: 'proposer_cash' };
+  if (to.cash < toPay) return { ok: false, error: 'target_cash' };
+
+  const areas = new Set();
+  /** @type {object[]} */
+  const breaks = [];
+  for (const id of giveShopIds) {
+    const sq = getNode(g, Number(id));
+    const old = sq.owner;
+    sq.owner = toId;
+    areas.add(sq.area);
+    const brk = applyMonopolyBreak(g, old, sq.area);
+    if (brk) breaks.push(brk);
+  }
+  for (const id of takeShopIds) {
+    const sq = getNode(g, Number(id));
+    const old = sq.owner;
+    sq.owner = fromId;
+    areas.add(sq.area);
+    const brk = applyMonopolyBreak(g, old, sq.area);
+    if (brk) breaks.push(brk);
+  }
+
+  from.cash -= fromPay;
+  to.cash += fromPay;
+  to.cash -= toPay;
+  from.cash += toPay;
+
+  /** @type {object[]} */
+  const monos = [];
+  for (const area of areas) {
+    const m1 = tryGrantMonopolyBonus(g, from, area);
+    const m2 = tryGrantMonopolyBonus(g, to, area);
+    if (m1) monos.push(m1);
+    if (m2) monos.push(m2);
+  }
+  if (!breaks.length) updateAreaStockPrices(g);
+
+  const giveNames = giveShopIds.map((id) => getNode(g, Number(id))?.label).filter(Boolean);
+  const takeNames = takeShopIds.map((id) => getNode(g, Number(id))?.label).filter(Boolean);
+  let cashNote = '';
+  if (fromPay > 0) cashNote = `／ ${from.name} が ${fromPay.toLocaleString()}G 支払い`;
+  else if (toPay > 0) cashNote = `／ ${to.name} が ${toPay.toLocaleString()}G 支払い`;
+  addLog(
+    g,
+    `${from.name} ⇔ ${to.name} 物件取引（出: ${giveNames.join('・') || '—'} → 受: ${takeNames.join('・') || '—'}${cashNote}）`,
+    'shop',
+  );
+  bumpStat(from, 'shopsBought', takeShopIds.length);
+  bumpStat(to, 'shopsBought', giveShopIds.length);
+
+  return {
+    ok: true,
+    monopolyBreak: breaks[0] || undefined,
+    monopoly: monos[0] || undefined,
+  };
+}
+
+/** CPUが取引を受けるか（ほぼ等価以上なら承諾） */
+export function cpuShouldAcceptShopTrade(g, responder, pending) {
+  if (!responder || !pending) return false;
+  const fromId = pending.fromId;
+  const giveValue = sumShopPrices(g, pending.giveShopIds);
+  const takeValue = sumShopPrices(g, pending.takeShopIds);
+  const delta = Math.floor(Number(pending.cashDelta) || 0);
+  // responder は take を渡し、give を受け取る
+  const receive = giveValue + Math.max(0, delta);
+  const pay = takeValue + Math.max(0, -delta);
+  if (responder.cash < Math.max(0, -delta)) return false;
+  const traits = getCpuPersonality(responder);
+  let threshold = 0.92;
+  if (traits.key === 'tycoon') threshold = 0.98;
+  if (traits.key === 'gambler') threshold = 0.85;
+  // 渡す店が独占崩しなら渋め
+  for (const id of pending.takeShopIds || []) {
+    const sq = getNode(g, Number(id));
+    if (sq && hasAreaMonopoly(g, responder.id, sq.area)) threshold += 0.08;
+  }
+  // 受け取る店で独占に近づくなら甘め
+  for (const id of pending.giveShopIds || []) {
+    const sq = getNode(g, Number(id));
+    if (!sq) continue;
+    const areaSize = getAreaShops(g, sq.area).length;
+    const mine = getPlayerAreaCount(g, responder.id, sq.area);
+    if (mine + 1 >= areaSize) threshold -= 0.1;
+  }
+  return receive + 1e-6 >= pay * Math.max(0.75, threshold);
+}
+
 function sellStockForCash(g, p, area, count) {
   const a = Number(area);
   const have = p.stocks[a] || 0;
@@ -2803,6 +2988,118 @@ export function applyChoice(g, choice) {
     }
     endTurn(g);
     return { ok: true, pickInvest: true, shopId: sq.id, amount, state: serializeState(g) };
+  }
+
+  if (pending.type === 'shop_trade_compose') {
+    const action = choice?.action;
+    if (action === 'cancel' || action === 'skip') {
+      addLog(g, `${p.name} は物件取引をやめた`, 'system');
+      g.pending = null;
+      g.phase = 'await_roll';
+      return { ok: true, state: serializeState(g) };
+    }
+    if (action === 'set_target') {
+      const targetId = Number(choice.targetId);
+      const target = g.players[targetId];
+      if (!target || target.bankrupt || targetId === p.id) {
+        return { ok: false, error: 'bad_target' };
+      }
+      pending.targetId = targetId;
+      pending.giveShopIds = [];
+      pending.takeShopIds = [];
+      syncShopTradeCashDefault(g, pending);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (action === 'toggle_give') {
+      if (pending.targetId == null) return { ok: false, error: 'bad_target' };
+      const shopId = Number(choice.shopId);
+      const sq = getNode(g, shopId);
+      if (!sq || sq.type !== 'shop' || sq.owner !== p.id) return { ok: false, error: 'bad_give' };
+      const list = pending.giveShopIds || (pending.giveShopIds = []);
+      const idx = list.indexOf(shopId);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(shopId);
+      syncShopTradeCashDefault(g, pending);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (action === 'toggle_take') {
+      if (pending.targetId == null) return { ok: false, error: 'bad_target' };
+      const shopId = Number(choice.shopId);
+      const sq = getNode(g, shopId);
+      if (!sq || sq.type !== 'shop' || sq.owner !== pending.targetId) {
+        return { ok: false, error: 'bad_take' };
+      }
+      const list = pending.takeShopIds || (pending.takeShopIds = []);
+      const idx = list.indexOf(shopId);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(shopId);
+      syncShopTradeCashDefault(g, pending);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (action === 'set_cash') {
+      pending.cashDelta = Math.floor(Number(choice.cashDelta) || 0);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (action === 'propose') {
+      const targetId = Number(pending.targetId);
+      const target = g.players[targetId];
+      if (!target || target.bankrupt) return { ok: false, error: 'bad_target' };
+      const giveShopIds = [...(pending.giveShopIds || [])];
+      const takeShopIds = [...(pending.takeShopIds || [])];
+      const cashDelta = Math.floor(Number(pending.cashDelta) || 0);
+      const check = validateShopTradeSides(g, p.id, targetId, giveShopIds, takeShopIds);
+      if (!check.ok) return check;
+      const fromPay = Math.max(0, cashDelta);
+      const toPay = Math.max(0, -cashDelta);
+      if (p.cash < fromPay) return { ok: false, error: 'proposer_cash' };
+      if (target.cash < toPay) return { ok: false, error: 'target_cash' };
+      g.pending = {
+        type: 'shop_trade_offer',
+        playerId: targetId,
+        fromId: p.id,
+        giveShopIds,
+        takeShopIds,
+        cashDelta,
+      };
+      addLog(g, `${p.name} が ${target.name} に物件取引を持ちかけた`, 'shop');
+      return { ok: true, tradeOffered: true, state: serializeState(g) };
+    }
+    return { ok: false, error: 'bad_choice' };
+  }
+
+  if (pending.type === 'shop_trade_offer') {
+    const from = g.players[pending.fromId];
+    if (choice?.action === 'reject' || choice?.action === 'skip') {
+      addLog(g, `${p.name} は物件取引を断った`, 'system');
+      g.pending = null;
+      g.phase = 'await_roll';
+      return { ok: true, tradeRejected: true, state: serializeState(g) };
+    }
+    if (choice?.action === 'accept') {
+      if (!from || from.bankrupt) {
+        g.pending = null;
+        g.phase = 'await_roll';
+        return { ok: false, error: 'bad_player' };
+      }
+      const result = executeShopTrade(g, {
+        fromId: pending.fromId,
+        toId: p.id,
+        giveShopIds: pending.giveShopIds,
+        takeShopIds: pending.takeShopIds,
+        cashDelta: pending.cashDelta,
+      });
+      if (!result.ok) return result;
+      g.pending = null;
+      g.phase = 'await_roll';
+      return {
+        ok: true,
+        tradeAccepted: true,
+        monopolyBreak: result.monopolyBreak,
+        monopoly: result.monopoly,
+        state: serializeState(g),
+      };
+    }
+    return { ok: false, error: 'bad_choice' };
   }
 
   if (pending.type === 'minigame') {
@@ -3852,8 +4149,25 @@ function cpuPickInvestShop(g, p, ids, traits, { preferId = null, requireRem = fa
 
 /** CPUの個性付き行動（1アクション分。移動の連続はUI側） */
 export function cpuAct(g) {
+  if (g.phase === 'gameover') return null;
+
+  // 手番以外でも pending 担当がCPUなら応答（物件取引の承諾など）
+  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_offer') {
+    const responder = g.players[g.pending.playerId];
+    if (responder?.isCPU && !responder.bankrupt) {
+      const ok = cpuShouldAcceptShopTrade(g, responder, g.pending);
+      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
+    }
+  }
+  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_compose') {
+    const composer = g.players[g.pending.playerId];
+    if (composer?.isCPU && !composer.bankrupt) {
+      return applyChoice(g, { action: 'cancel' });
+    }
+  }
+
   const p = currentPlayer(g);
-  if (!p?.isCPU || p.bankrupt || g.phase === 'gameover') return null;
+  if (!p?.isCPU || p.bankrupt) return null;
   const traits = getCpuPersonality(p);
   const phase = cpuGamePhase(g, p);
 
@@ -3872,6 +4186,7 @@ export function cpuAct(g) {
 
   if (g.phase === 'await_choice' && g.pending) {
     const pend = g.pending;
+    if (pend.playerId !== p.id) return null;
     if (pend.type === 'level_up') {
       return applyChoice(g, { action: 'celebrate' });
     }

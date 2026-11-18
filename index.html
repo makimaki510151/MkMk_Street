@@ -45,6 +45,7 @@
         <h3>お店</h3>
         <ul>
           <li>空き店に止まると<strong>購入</strong>。他人の店なら<strong>買い物料</strong>を払います。</li>
+          <li>自分のターン（サイコロ前）に<strong>物件取引</strong>で他プレイヤー／CPUと店の交換を提案できます（複数対複数可）。差額はデフォルトで精算され、変更も可能。相手は承認か拒否のみです。</li>
           <li>同じエリアの店が多いほど買い物料が上がります。<strong>エリア独占</strong>で倍率最大＋店価合計の15%ボーナス（店価自体は増えません）。</li>
           <li>独占が崩れると<strong>株価が大きく下落</strong>し、残店の増資も削られます。</li>
           <li>自分の店に止まると、<strong>好きな自分の店へ増資</strong>できます。上限はエリア独占率で変わります（例: 1/4→0.5倍、半分→1倍、75%→3倍、独占→9倍）。</li>
@@ -316,6 +317,7 @@
           <div id="dice-face">·</div>
           <button class="btn primary" id="btn-roll">サイコロを振る</button>
         </div>
+        <button type="button" class="btn" id="btn-trade" hidden title="自分のターンに物件の交換を持ちかける">物件取引</button>
         <div id="wait-hint" hidden></div>
         <button type="button" class="btn nudge" id="btn-nudge" hidden title="止まっているプレイヤーに催促SEを送る">催促する</button>
       </div>
