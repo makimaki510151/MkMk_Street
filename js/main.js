@@ -2315,7 +2315,10 @@ function enterGame() {
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
   window.addEventListener('resize', () => app.renderer?.resize());
-  app.renderer.startLoop(() => app.game);
+  app.renderer.startLoop(() => ({
+    game: app.game,
+    hideDiceResult: !!app.hideDiceResult,
+  }));
   bindBoardZoomControls(canvas);
   bindGameControls();
   bindModalTools();

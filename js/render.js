@@ -9,6 +9,7 @@ import {
   getAreaShops,
   getTollMulti,
   getForwardNexts,
+  getLandingCandidates,
 } from './engine.js';
 
 const TYPE_ICON = {
@@ -66,6 +67,8 @@ export function createRenderer(canvas) {
   /** 株購入中に盤面で強調するエリア番号（null=特定エリアなし＝通常表示のまま） */
   let stockHighlightArea = null;
   let stockHighlightMode = false;
+  /** 出目ネタバレ防止中は着地候補を出さない */
+  let hideDiceResult = false;
   /** 1 = 全体フィット。拡大時は pan で移動 */
   let userZoom = 1;
   let panX = 0;
@@ -314,6 +317,84 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  /** 移動中の最終着地候補（出目ネタバレ中は空） */
+  function landingCandidateSet(g) {
+    if (hideDiceResult || !g?.move) return null;
+    const cur = g.players?.[g.currentPlayerIdx];
+    if (!cur || cur.bankrupt) return null;
+    const left = g.phase === 'await_fork' && g.pending?.stepsLeft != null
+      ? Number(g.pending.stepsLeft)
+      : Number(g.move.stepsLeft);
+    if (!Number.isFinite(left) || left <= 0) return null;
+    const ids = getLandingCandidates(g, cur.pos, cur.prevPos, left);
+    if (!ids.length) return null;
+    return new Set(ids);
+  }
+
+  /** 着地候補マスを強調（縁＋帯＋「止」バッジ） */
+  function drawLandingCandidateMarks(g, landSet) {
+    if (!landSet?.size) return;
+    const { size } = layout;
+    const pulse = 0.55 + Math.sin(anim.pulse) * 0.25;
+    for (const n of g.map) {
+      if (!landSet.has(n.id)) continue;
+      const vg = visualGridPos(n);
+      const x = layout.ox + vg.col * size;
+      const y = layout.oy + vg.row * size - vg.hop * size;
+      const pad = size * 0.03;
+      const r = size * 0.1;
+      ctx.save();
+      // 外光（候補が一目で浮かぶ）
+      ctx.shadowColor = 'rgba(94, 240, 200, 0.85)';
+      ctx.shadowBlur = size * 0.28;
+      ctx.globalAlpha = 0.28 + pulse * 0.22;
+      ctx.fillStyle = '#5ef0c8';
+      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = '#e8fff7';
+      ctx.lineWidth = Math.max(3.5, size * 0.1);
+      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+      ctx.stroke();
+      ctx.setLineDash([Math.max(4, size * 0.12), Math.max(3, size * 0.08)]);
+      ctx.globalAlpha = 0.7 + pulse * 0.25;
+      ctx.strokeStyle = '#5ef0c8';
+      ctx.lineWidth = Math.max(2, size * 0.05);
+      roundRect(ctx, x + pad * 2.4, y + pad * 2.4, size - pad * 4.8, size - pad * 4.8, r * 0.8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 下帯「停止候補」
+      const bandH = Math.max(12, size * 0.26);
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = 'rgba(8, 42, 38, 0.92)';
+      roundRect(ctx, x + pad, y + size - pad - bandH, size - pad * 2, bandH, r * 0.6);
+      ctx.fill();
+      ctx.fillStyle = '#b8ffe8';
+      ctx.font = `800 ${Math.max(9, size * 0.168)}px "Zen Maru Gothic", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('停止候補', x + size / 2, y + size - pad - bandH / 2);
+
+      const badge = Math.max(14, size * 0.34);
+      const bx = x + size - pad - badge * 0.2;
+      const by = y + pad + badge * 0.55;
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(bx, by, badge * 0.58, 0, Math.PI * 2);
+      ctx.fillStyle = '#062e28';
+      ctx.fill();
+      ctx.strokeStyle = '#9fffe0';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fillStyle = '#e8fff7';
+      ctx.font = `900 ${Math.max(11, size * 0.24)}px "Zen Maru Gothic", sans-serif`;
+      ctx.fillText('止', bx, by + 0.5);
+      ctx.restore();
+    }
+  }
+
   /** 手番プレイヤーの次の進み先マスを薄く示す */
   function drawForwardHeadingHints(g) {
     const cur = g.players?.[g.currentPlayerIdx];
@@ -548,7 +629,10 @@ export function createRenderer(canvas) {
     }
   }
 
-  function draw(g) {
+  function draw(g, opts = {}) {
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'hideDiceResult')) {
+      hideDiceResult = !!opts.hideDiceResult;
+    }
     const viewW = canvas.clientWidth;
     const viewH = canvas.clientHeight;
     ctx.clearRect(0, 0, viewW, viewH);
@@ -575,6 +659,8 @@ export function createRenderer(canvas) {
     layout = computeLayout(g, viewW, viewH);
     const { size, ox, oy } = layout;
     anim.pulse = (anim.pulse + 0.04) % (Math.PI * 2);
+
+    const landSet = landingCandidateSet(g);
 
     // パス（有効）
     ctx.strokeStyle = 'rgba(255, 210, 120, 0.28)';
@@ -678,12 +764,14 @@ export function createRenderer(canvas) {
       else if (n.type === 'switch') fill = '#8a6b2a';
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
+      const landOpt = !!(landSet && landSet.has(n.id));
       const stockMode = stockHighlightMode || (g.phase === 'await_choice' && g.pending?.type === 'stock');
       // 選択／ホバー中のエリアだけ強調。未選択時はマス表示を通常のままにする
       const areaHot = stockMode && n.type === 'shop' && stockHighlightArea != null
         && Number(stockHighlightArea) === Number(n.area);
       const areaDim = stockMode && n.type === 'shop' && stockHighlightArea != null
         && Number(stockHighlightArea) !== Number(n.area);
+      const landDim = !!(landSet && landSet.size && !landOpt);
 
       ctx.fillStyle = fill;
       ctx.fill();
@@ -697,6 +785,15 @@ export function createRenderer(canvas) {
       if (areaDim) {
         ctx.save();
         ctx.fillStyle = 'rgba(4, 12, 16, 0.55)';
+        roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 出目後：着地候補以外を抑え、候補が一目で分かるようにする
+      if (landDim) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 10, 14, 0.52)';
         roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
         ctx.fill();
         ctx.restore();
@@ -819,6 +916,9 @@ export function createRenderer(canvas) {
     pruneFinishedTileSlides();
     drawWarpEffects(g);
 
+    // 出目後の最終着地候補（分岐を踏まえた停止マス）
+    drawLandingCandidateMarks(g, landSet);
+
     // 手番の進み先ヒント（コマの下に敷く）
     drawForwardHeadingHints(g);
 
@@ -873,13 +973,22 @@ export function createRenderer(canvas) {
     // ブランド表記はトップバーに集約（盤面マスと被らない）
   }
 
-  function startLoop(getState) {
+  function startLoop(getFrame) {
     cancelAnimationFrame(raf);
     const tick = () => {
-      draw(getState());
+      const frame = getFrame();
+      if (frame && typeof frame === 'object' && Object.prototype.hasOwnProperty.call(frame, 'game')) {
+        draw(frame.game, { hideDiceResult: !!frame.hideDiceResult });
+      } else {
+        draw(frame);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+  }
+
+  function setHideDiceResult(v) {
+    hideDiceResult = !!v;
   }
 
   function stop() {
@@ -924,6 +1033,7 @@ export function createRenderer(canvas) {
     animateTileSlide,
     setStockHighlight,
     clearStockHighlight,
+    setHideDiceResult,
     getZoom,
     setZoom,
     zoomIn,
