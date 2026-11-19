@@ -1327,6 +1327,11 @@ function handleNetEvent({ from, data }) {
         app.renderer?.animateToken(data.anim.pid, data.anim.from, data.anim.to, 380);
         audio.sfx.step();
       }
+      // リモート演出中 busy でも、自分の購入/増資待ちなら UI を出す
+      if (isLocalPendingChoice(app.game)) {
+        app.busy = false;
+        app.eventFlashHoldingBusy = false;
+      }
       refreshGameUI();
       return;
     }
@@ -3163,6 +3168,7 @@ async function resolveForkChoice(nextId) {
   if (!result.ok) return toast(result.error || '失敗');
   if (result.state) app.game = restoreState(result.state);
   hideModal();
+  app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
   app.renderer?.animateToken(pid, from, nextId, 400);
@@ -3172,6 +3178,12 @@ async function resolveForkChoice(nextId) {
   await wait(420);
   await continueAdvancing();
   resumeAfterMovement();
+  // 着地が購入/増資待ちなら確実に選択UIを再掲（busy 残留や告知での欠落防止）
+  if (isLocalPendingChoice(app.game)) {
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
+    refreshGameUI();
+  }
 }
 
 async function runDiceAndMove(face) {
@@ -4665,9 +4677,21 @@ function refreshGameUI() {
   }
 
   const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
+  // ログ告知は選択UIより先に処理し、直後の flush で購入/増資モーダルを塞がないようにする
+  announceNewLogs(g);
   // 料金確認などが手番移行後に残り、ホストだけ止まる／次が振れないのを解放
   if (reconcileStaleEventFlash(g)) {
     /* busy / flash をクリア済み */
+  }
+  const choiceMine = isLocalPendingChoice(g);
+  // 自分の選択待ち（分かれ道直後の購入/増資など）は移動演出 busy より優先
+  if (choiceMine) {
+    if (isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+    }
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
   }
   const eventBlocked = isEventUiBlocking();
   const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
@@ -4698,15 +4722,8 @@ function refreshGameUI() {
   }
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
-    const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
     const actor = g.players[g.pending.playerId];
-    // 選択UIを優先。マーク確認などの残留フラッシュが busy のままだとモーダルが出ず通信停止する
-    if (mine && isEventUiBlocking()) {
-      flushEventFlashImmediate();
-      if (app.mode === 'guest') requestHostEventFlashFlush();
-      app.busy = false;
-    }
-    if (mine && !app.busy) {
+    if (choiceMine) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
         $('#modal').hidden = true;
@@ -4716,7 +4733,7 @@ function refreshGameUI() {
       }
       $('#wait-hint').hidden = true;
       setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
-    } else if (!mine && !app.busy) {
+    } else if (!app.busy) {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
@@ -4747,7 +4764,6 @@ function refreshGameUI() {
   renderStockPanel(g);
   updateInspectPanel();
   maybeYourTurnChime();
-  announceNewLogs(g);
   updateNudgeButton();
   // ログ再フラッシュでホスト／次手番が止まるのを防ぐ
   if (reconcileStaleEventFlash(g)) {
@@ -4759,6 +4775,15 @@ function refreshGameUI() {
     }
   }
   maybeAutoSkipRest();
+}
+
+/** このクライアントが今すぐ選択UIを出すべきか（購入・増資・分岐など） */
+function isLocalPendingChoice(g) {
+  if (!g || (g.phase !== 'await_choice' && g.phase !== 'await_fork') || !g.pending) return false;
+  const pl = g.players[g.pending.playerId];
+  if (!pl || pl.bankrupt) return false;
+  if (app.mode === 'local') return !pl.isCPU;
+  return g.pending.playerId === app.localSeat;
 }
 
 function pendingStatusLabel(pend) {
@@ -5045,6 +5070,8 @@ function queueEventFlash(payload) {
   app.eventFlashQueue.push(payload);
   // 移動中はキューに積むだけ（着地前に busy を掴むとマス選択UIが出ない）
   if (app.deferEventFlash) return;
+  // 自分の購入/増資/分岐待ち中は確認フラッシュでモーダルを塞がない（選択後に pump）
+  if (isLocalPendingChoice(app.game)) return;
   // 待ち行列に入った時点で進行を止める（ホスト／ローカル）
   if (app.mode !== 'guest') {
     app.eventFlashHoldingBusy = true;
@@ -5057,6 +5084,7 @@ function queueEventFlash(payload) {
 function pumpEventFlash() {
   if (app.deferEventFlash) return;
   if (app.eventFlashOpen) return;
+  if (isLocalPendingChoice(app.game)) return;
   if (eventFlashBlocked()) return;
   const payload = app.eventFlashQueue.shift();
   if (!payload) {
@@ -5077,6 +5105,17 @@ function pumpEventFlash() {
 /** 移動完了後: 遅延したイベントUIを出し、なければ選択UI／次手番へ */
 function resumeAfterMovement() {
   app.deferEventFlash = false;
+  // 分かれ道直後の購入/増資など、選択待ちなら演出 busy を先に解放してモーダルを出す
+  if (isLocalPendingChoice(app.game)) {
+    if (isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+    }
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
+    refreshGameUI();
+    return;
+  }
   refreshGameUI();
   if (app.eventFlashQueue.length > 0 || app.eventFlashOpen) {
     if (app.mode !== 'guest') {
