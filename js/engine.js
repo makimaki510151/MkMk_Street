@@ -2755,9 +2755,12 @@ export function applyChoice(g, choice) {
       g.pending = null;
       endTurn(g);
       return { ok: true, ...(mono || {}), state: serializeState(g) };
-    } else {
-      addLog(g, `${p.name} は「${sq?.label || 'お店'}」の購入を見送り`, 'system');
     }
+    // 分岐の二重クリック等で nextId だけが来ても見送りにしない
+    if (choice.action !== 'skip' && choice.action !== 'done') {
+      return { ok: false, error: 'bad_choice' };
+    }
+    addLog(g, `${p.name} は「${sq?.label || 'お店'}」の購入を見送り`, 'system');
     g.pending = null;
     endTurn(g);
     return { ok: true, state: serializeState(g) };
@@ -2806,6 +2809,12 @@ export function applyChoice(g, choice) {
           'shop'
         );
       }
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action !== 'skip' && choice.action !== 'done') {
+      return { ok: false, error: 'bad_choice' };
     }
     g.pending = null;
     endTurn(g);
@@ -2871,6 +2880,9 @@ export function applyChoice(g, choice) {
           state: serializeState(g),
         };
       }
+    }
+    if (choice.action !== 'skip' && choice.action !== 'done') {
+      return { ok: false, error: 'bad_choice' };
     }
     g.pending = null;
     endTurn(g);
