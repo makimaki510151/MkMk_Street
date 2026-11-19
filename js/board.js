@@ -44,6 +44,38 @@ function link(...pairs) {
   }
 }
 
+/**
+ * グリッド上のマスを直交接続し、必要なら斜めブリッジも張る。
+ * 斜めは「角2マスがどちらも空」のときだけ（小さな直角三角形を作らない）。
+ * マーク角やスロット／ラッキー脇の小さな三角形を今後も作らないための共通規則。
+ * @param {(object|null|undefined)[][]} grid
+ */
+function linkGridOrthoAndGapDiagonals(grid) {
+  const ortho = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
+      for (const [dc, dr] of ortho) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        link([a, b]);
+      }
+      for (const [dc, dr] of diag) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        // 角にマスがあると a–角–b の単位三角形になる → つながない
+        const cornerH = grid[r]?.[c + dc];
+        const cornerV = grid[r + dr]?.[c];
+        if (cornerH || cornerV) continue;
+        link([a, b]);
+      }
+    }
+  }
+}
+
 function makeNodeFactory() {
   const nodes = [];
   let nid = 0;
@@ -1105,23 +1137,9 @@ export function buildTorima() {
     if (count !== 4) throw new Error(`とりま: エリア${area}の店が${count}件（4であるべき）`);
   }
 
-  // 直交＋斜め（8方向）。案のマス配置を変えないための接続規則
-  const dirs = [
-    [1, 0], [-1, 0], [0, 1], [0, -1],
-    [1, 1], [1, -1], [-1, 1], [-1, -1],
-  ];
-  for (let r = 0; r < grid.length; r++) {
-    const row = grid[r] || [];
-    for (let c = 0; c < row.length; c++) {
-      const a = row[c];
-      if (!a) continue;
-      for (const [dc, dr] of dirs) {
-        const b = grid[r + dr]?.[c + dc];
-        if (!b || a.id >= b.id) continue;
-        link([a, b]);
-      }
-    }
-  }
+  // 直交は常に接続。斜めは「角のマスが空いているブリッジ」だけ
+  // （角にマスがあると ♦-店-縦列 や ス/ラ-隣店-縦列 などの小さな三角形になるので禁止）
+  linkGridOrthoAndGapDiagonals(grid);
 
   return packBoard(nodes, bank, 19, gridRows.length, {
     mapId: 'torima',

@@ -550,7 +550,7 @@ describe('MkMk Street engine', () => {
           mapId: def.id,
         });
         if (state === 1) toggleBoardSwitch(g);
-        const allowDiag = def.id === 'torima';
+        const allowGapDiag = def.id === 'torima';
         for (const n of g.map) {
           assert.ok(
             (n.nexts?.length || 0) >= 2,
@@ -559,15 +559,23 @@ describe('MkMk Street engine', () => {
           for (const nid of n.nexts) {
             const other = getNode(g, nid);
             assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
-            const diag = Math.abs(other.col - n.col) > 0 && Math.abs(other.row - n.row) > 0;
-            if (!allowDiag) {
+            const dc = other.col - n.col;
+            const dr = other.row - n.row;
+            const diag = dc !== 0 && dr !== 0;
+            if (!allowGapDiag) {
               assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
             } else {
-              // とりまは斜め1マス隣まで（配置を変えないための接続）
-              assert.ok(
-                Math.abs(other.col - n.col) <= 1 && Math.abs(other.row - n.row) <= 1,
-                `${def.id}: link too far ${n.label}-${other.label}`,
-              );
+              assert.ok(Math.abs(dc) <= 1 && Math.abs(dr) <= 1, `${def.id}: link too far`);
+              if (diag) {
+                // 角にマスがある斜め＝小さな三角形は禁止
+                const cornerH = g.map.find((x) => x.col === n.col + dc && x.row === n.row);
+                const cornerV = g.map.find((x) => x.col === n.col && x.row === n.row + dr);
+                assert.equal(
+                  !!(cornerH || cornerV),
+                  false,
+                  `${def.id}: triangle diagonal ${n.label}-${other.label}`,
+                );
+              }
             }
           }
         }
@@ -1729,10 +1737,37 @@ describe('MkMk Street engine', () => {
     const holidays = board.nodes.filter((n) => n.type === 'holiday');
     assert.equal(holidays.length, 2);
     assert.ok(holidays.every((h) => h.label === '店休'));
-    // JSON配置どおり：銀行は斜め隣のＡ／Ｂとつながる
+    // JSON配置どおり：銀行は角空きの斜めブリッジでＡ／Ｂとつながる
     const bank = board.nodes.find((n) => n.type === 'bank');
     const nearShops = board.nodes.filter((n) => n.type === 'shop' && bank.nexts.includes(n.id));
     assert.ok(nearShops.length >= 4, 'bank should link diagonally to nearby shops');
+
+    // マーク角・スロット／ラッキー脇に単位三角形がないこと
+    const byPos = new Map(board.nodes.map((n) => [`${n.col},${n.row}`, n]));
+    for (const n of board.nodes) {
+      for (const nid of n.nexts) {
+        const other = board.nodes.find((x) => x.id === nid);
+        const dc = other.col - n.col;
+        const dr = other.row - n.row;
+        if (!dc || !dr) continue;
+        assert.equal(!!byPos.get(`${n.col + dc},${n.row}`), false);
+        assert.equal(!!byPos.get(`${n.col},${n.row + dr}`), false);
+      }
+    }
+    const slot = board.nodes.find((n) => n.type === 'minigame' && n.game === 'slot' && n.row === 2);
+    const lucky = board.nodes.find((n) => n.type === 'lucky' && n.row === 2);
+    assert.ok(slot && lucky);
+    // ス／ラから「角に店がある」斜め隣へは繋がらない
+    for (const hub of [slot, lucky]) {
+      for (const nid of hub.nexts) {
+        const o = board.nodes.find((x) => x.id === nid);
+        const dc = o.col - hub.col;
+        const dr = o.row - hub.row;
+        if (!dc || !dr) continue;
+        assert.equal(!!byPos.get(`${hub.col + dc},${hub.row}`), false);
+        assert.equal(!!byPos.get(`${hub.col},${hub.row + dr}`), false);
+      }
+    }
 
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
