@@ -81,6 +81,7 @@ import { createNet } from './net.js';
 import { createRenderer, shopTooltip } from './render.js';
 import { createAudio } from './audio.js';
 import { APP_VERSION } from './version.js';
+import { PATCH_NOTES } from './patchNotes.js';
 import {
   evaluateOrderRolls,
   rollOrderDie,
@@ -758,11 +759,36 @@ function bindTitle() {
   };
   $('#btn-howto').onclick = () => { audio.sfx.click(); showScreen('screen-howto'); };
   $('#btn-howto-back').onclick = () => showScreen('screen-title');
+  $('#btn-patch-notes').onclick = () => {
+    audio.sfx.click();
+    renderPatchNotes();
+    showScreen('screen-patch-notes');
+  };
+  $('#btn-patch-notes-back').onclick = () => showScreen('screen-title');
   $('#btn-results-archive').onclick = () => {
     audio.sfx.click();
     openResultsArchive();
   };
   bindResultsArchiveUi();
+}
+
+function renderPatchNotes() {
+  const list = $('#patch-notes-list');
+  if (!list) return;
+  list.innerHTML = PATCH_NOTES.map((entry) => {
+    const current = entry.version === APP_VERSION;
+    const items = (entry.items || []).map((t) => `<li>${escapeHtml(t)}</li>`).join('');
+    return `
+      <article class="patch-notes-entry${current ? ' is-current' : ''}">
+        <div class="patch-notes-head">
+          <h3 class="patch-notes-ver">v${escapeHtml(entry.version)}</h3>
+          ${entry.date ? `<span class="patch-notes-date">${escapeHtml(entry.date)}</span>` : ''}
+          ${current ? '<span class="patch-notes-badge">いまの版</span>' : ''}
+        </div>
+        <ul>${items}</ul>
+      </article>
+    `;
+  }).join('');
 }
 
 function selectedMapId(rootSel) {
