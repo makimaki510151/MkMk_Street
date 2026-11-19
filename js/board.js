@@ -951,25 +951,26 @@ export function buildThumbsUp() {
 }
 
 /**
- * マップ案「とりま」：19×11。中央銀行から上下左右に枝分かれ。
+ * マップ案「とりま」：19×11（grid-map-maker JSON どおり）。
+ * マス配置は案のまま。斜め隣接もリンクする（8方向）。
  * 凡例: 銀銀行 / Ａ〜Ｊ店 / 削スクラッチ / スロット / 株 / ララッキー / イイベント
  *       当サイコロ当て / 休＝止まると自分の店が1ターン休店 / ♠♥♦♣
  */
 export function buildTorima() {
   const { nodes, N } = makeNodeFactory();
-  // 案JSONは斜め隣接前提の箇所があるため、直交リンクで閉じるよう
-  // 上下アーチ化し、銀行まわりは通路（岐）でつなぐ。
-  // 記号「道」= junction（停止のみの通路）
+  // アップロード案 JSON の map 配列をそのまま使用（配置を変えない）
   const gridRows = [
-    '　　　　　　　ＣＣ休ＣＣ　　　　　　　',
-    '　♦ＥＥ削ＥＥスＡ　ＡラＨＨイＨＨ♠　',
-    '　Ｇ　　　　　　道　道　　　　　　Ｊ　',
-    '　Ｇ　　　　　　Ａ銀Ａ　　　　　　Ｊ　',
-    '　株　　　　　　Ｂ道Ｂ　　　　　　当　',
-    '　Ｇ　　　　　　Ｂ道Ｂ　　　　　　Ｊ　',
-    '　Ｇ　　　　　　　　　　　　　　　Ｊ　',
+    '　　　　　　　　Ｃ休Ｃ　　　　　　　　',
+    '　　　　　　　Ｃ　　　Ｃ　　　　　　　',
+    '　♦ＥＥ削ＥＥス　　　ラＨＨイＨＨ♠　',
+    '　Ｇ　　　　　　Ａ　Ａ　　　　　　Ｊ　',
+    '　Ｇ　　　　　　Ａ　Ａ　　　　　　Ｊ　',
+    '　株　　　　　　　銀　　　　　　　当　',
+    '　Ｇ　　　　　　Ｂ　Ｂ　　　　　　Ｊ　',
+    '　Ｇ　　　　　　Ｂ　Ｂ　　　　　　Ｊ　',
     '　♥ＦＦイＦＦラ　　　スＩＩ削ＩＩ♣　',
-    '　　　　　　　ＤＤ休ＤＤ　　　　　　　',
+    '　　　　　　　Ｄ　　　Ｄ　　　　　　　',
+    '　　　　　　　　Ｄ休Ｄ　　　　　　　　',
   ];
   const BLANK = '　';
   const areaFromChar = {
@@ -1095,10 +1096,6 @@ export function buildTorima() {
         put(col, row, N('holiday', { label: '店休', col, row }));
         continue;
       }
-      if (ch === '道') {
-        put(col, row, N('junction', { label: '道', col, row }));
-        continue;
-      }
       throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
     }
   }
@@ -1108,7 +1105,11 @@ export function buildTorima() {
     if (count !== 4) throw new Error(`とりま: エリア${area}の店が${count}件（4であるべき）`);
   }
 
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  // 直交＋斜め（8方向）。案のマス配置を変えないための接続規則
+  const dirs = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, 1], [1, -1], [-1, 1], [-1, -1],
+  ];
   for (let r = 0; r < grid.length; r++) {
     const row = grid[r] || [];
     for (let c = 0; c < row.length; c++) {
@@ -1187,7 +1188,7 @@ export const MAP_CATALOG = [
   {
     id: 'torima',
     name: 'とりま',
-    blurb: '中央銀行から上下左右に広がる交差マップ。休みマスは自分の店が1ターン休店',
+    blurb: '中央銀行から上下左右に広がる交差マップ（斜め接続あり）。休みマスは自分の店が1ターン休店',
     defaultGoal: 13000,
     defaultCash: 2200,
     build: buildTorima,
@@ -1208,8 +1209,13 @@ export function buildBoard(mapId = DEFAULT_MAP_ID) {
 
 export function dirLabel(from, to) {
   if (!from || !to) return '進む';
-  const dc = to.col - from.col;
-  const dr = to.row - from.row;
-  if (Math.abs(dc) >= Math.abs(dr)) return dc > 0 ? '→ 右' : '← 左';
-  return dr > 0 ? '↓ 下' : '↑ 上';
+  const dc = Math.sign((to.col ?? 0) - (from.col ?? 0));
+  const dr = Math.sign((to.row ?? 0) - (from.row ?? 0));
+  if (dc === 0 && dr === 0) return '進む';
+  if (dc === 0) return dr > 0 ? '↓ 下' : '↑ 上';
+  if (dr === 0) return dc > 0 ? '→ 右' : '← 左';
+  if (dc > 0 && dr > 0) return '↘ 右下';
+  if (dc > 0 && dr < 0) return '↗ 右上';
+  if (dc < 0 && dr > 0) return '↙ 左下';
+  return '↖ 左上';
 }

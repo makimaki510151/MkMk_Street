@@ -550,6 +550,7 @@ describe('MkMk Street engine', () => {
           mapId: def.id,
         });
         if (state === 1) toggleBoardSwitch(g);
+        const allowDiag = def.id === 'torima';
         for (const n of g.map) {
           assert.ok(
             (n.nexts?.length || 0) >= 2,
@@ -559,7 +560,15 @@ describe('MkMk Street engine', () => {
             const other = getNode(g, nid);
             assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
             const diag = Math.abs(other.col - n.col) > 0 && Math.abs(other.row - n.row) > 0;
-            assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
+            if (!allowDiag) {
+              assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
+            } else {
+              // とりまは斜め1マス隣まで（配置を変えないための接続）
+              assert.ok(
+                Math.abs(other.col - n.col) <= 1 && Math.abs(other.row - n.row) <= 1,
+                `${def.id}: link too far ${n.label}-${other.label}`,
+              );
+            }
           }
         }
       }
@@ -1714,11 +1723,16 @@ describe('MkMk Street engine', () => {
     const board = buildBoard('torima');
     assert.equal(board.mapId, 'torima');
     assert.equal(board.cols, 19);
-    assert.equal(board.rows, 9);
+    assert.equal(board.rows, 11);
     assert.equal(Object.keys(board.areas).length, 10);
+    assert.equal(board.nodes.filter((n) => n.type === 'junction').length, 0);
     const holidays = board.nodes.filter((n) => n.type === 'holiday');
     assert.equal(holidays.length, 2);
     assert.ok(holidays.every((h) => h.label === '店休'));
+    // JSON配置どおり：銀行は斜め隣のＡ／Ｂとつながる
+    const bank = board.nodes.find((n) => n.type === 'bank');
+    const nearShops = board.nodes.filter((n) => n.type === 'shop' && bank.nexts.includes(n.id));
+    assert.ok(nearShops.length >= 4, 'bank should link diagonally to nearby shops');
 
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
