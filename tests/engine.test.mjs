@@ -36,6 +36,7 @@ import {
   applyChoice,
   chooseFork,
   getForwardNexts,
+  getLandingCandidates,
   continueMove,
   updateAreaStockPrices,
   buildGameResults,
@@ -1023,6 +1024,54 @@ describe('MkMk Street engine', () => {
     const first = arm[0];
     const fwd = getForwardNexts(g, first, bank);
     assert.ok(!fwd.includes(bank));
+  });
+
+  it('getLandingCandidates lists unique final stops for a roll', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const bank = g.startId;
+    const arms = getForwardNexts(g, bank, null);
+    const one = getLandingCandidates(g, bank, null, 1);
+    assert.equal(one.length, arms.length);
+    assert.deepEqual([...one].sort((a, b) => a - b), [...arms].sort((a, b) => a - b));
+
+    const six = getLandingCandidates(g, bank, null, 6);
+    assert.ok(six.length >= 4);
+    assert.equal(new Set(six).size, six.length);
+
+    // 残り歩数があっても行き止まりならそこで着地
+    g.map = [
+      { id: 0, type: 'bank', label: '銀', col: 0, row: 0, nexts: [1] },
+      { id: 1, type: 'shop', label: '店', col: 1, row: 0, nexts: [], area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0 },
+    ];
+    g.startId = 0;
+    assert.deepEqual(getLandingCandidates(g, 0, null, 3), [1]);
+  });
+
+  it('getLandingCandidates resolves warp landings to the destination', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+    });
+    g.map = [
+      { id: 0, type: 'bank', label: '銀', col: 0, row: 0, nexts: [1, 2] },
+      {
+        id: 1, type: 'shop', label: 'A', col: 1, row: 0, nexts: [3],
+        area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0,
+      },
+      {
+        id: 2, type: 'shop', label: 'B', col: 0, row: 1, nexts: [4],
+        area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0,
+      },
+      { id: 3, type: 'warp', label: 'W', col: 2, row: 0, nexts: [], warpTo: 4 },
+      { id: 4, type: 'lucky', label: 'L', col: 0, row: 2, nexts: [] },
+    ];
+    g.startId = 0;
+    assert.deepEqual(getLandingCandidates(g, 0, null, 1).sort((a, b) => a - b), [1, 2]);
+    // 0→1→3(warp→4) と 0→2→4 の両経路とも最終は 4
+    assert.deepEqual(getLandingCandidates(g, 0, null, 2), [4]);
   });
 
   it('can buy a vacant shop via choice', () => {
