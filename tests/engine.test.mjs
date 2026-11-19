@@ -2865,6 +2865,48 @@ describe('MkMk Street engine', () => {
     assert.equal(blocked.error, 'bad_phase');
   });
 
+  it('rejects stock sell when holding zero shares (no phantom cash)', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const area = Number(Object.keys(g.areas)[0]);
+    g.phase = 'await_roll';
+    g.currentPlayerIdx = 0;
+    g.players[0].stocks = {};
+    g.players[0].cash = 2000;
+    const before = g.players[0].cash;
+    const sold = preTurnSell(g, 0, area, 5);
+    assert.equal(sold.ok, false);
+    assert.equal(sold.error, 'no_stock');
+    assert.equal(g.players[0].cash, before);
+    assert.equal(g.players[0].stocks[area], undefined);
+
+    // 証券売却も同様
+    g.phase = 'await_choice';
+    g.pending = { type: 'stock', playerId: 0, bankVisit: false };
+    const broker = applyChoice(g, { action: 'sell', area, count: 3 });
+    assert.equal(broker.ok, false);
+    assert.equal(broker.error, 'no_stock');
+    assert.equal(g.players[0].cash, before);
+  });
+
+  it('rejects buying an already-owned shop via buy_shop', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 5,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    g.players[0].cash = shop.price + 5000;
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: shop.id, price: shop.price };
+    const buy = applyChoice(g, { action: 'buy' });
+    assert.equal(buy.ok, false);
+    assert.equal(buy.error, 'bad_shop');
+    assert.equal(shop.owner, 1);
+  });
+
   it('tracks player stats and builds endgame results with awards', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],

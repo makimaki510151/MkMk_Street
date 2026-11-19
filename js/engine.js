@@ -299,7 +299,9 @@ function bumpStat(p, key, n = 1) {
 function getStockAssetOnly(g, p) {
   let stockAsset = 0;
   for (const [a, cnt] of Object.entries(p.stocks || {})) {
-    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * cnt;
+    const n = Math.max(0, Math.floor(Number(cnt) || 0));
+    if (n <= 0) continue;
+    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * n;
   }
   return stockAsset;
 }
@@ -876,10 +878,7 @@ export function previewStockBuy(g, area, count) {
 }
 
 export function getPlayerAssets(g, p) {
-  let stockAsset = 0;
-  for (const [a, cnt] of Object.entries(p.stocks || {})) {
-    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * cnt;
-  }
+  const stockAsset = getStockAssetOnly(g, p);
   const shopAsset = g.map
     .filter((s) => s.type === 'shop' && s.owner === p.id)
     .reduce((s, sq) => s + sq.price, 0);
@@ -2457,13 +2456,29 @@ export function cpuShouldAcceptShopTrade(g, responder, pending) {
   return receive + 1e-6 >= pay * Math.max(0.75, threshold);
 }
 
+/** 所持枚数を超えない売却枚数。0枚所持なら必ず 0。 */
+function clampStockSellCount(have, count) {
+  const h = Math.max(0, Math.floor(Number(have) || 0));
+  if (h <= 0) return 0;
+  const want = Math.max(1, Math.floor(Number(count) || 1));
+  return Math.min(h, want);
+}
+
+function setStockHolding(p, area, next) {
+  const a = Number(area);
+  const n = Math.max(0, Math.floor(Number(next) || 0));
+  if (!p.stocks || typeof p.stocks !== 'object') p.stocks = {};
+  if (n <= 0) delete p.stocks[a];
+  else p.stocks[a] = n;
+}
+
 function sellStockForCash(g, p, area, count) {
   const a = Number(area);
-  const have = p.stocks[a] || 0;
-  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  const have = Math.max(0, Math.floor(Number(p.stocks?.[a]) || 0));
+  const n = clampStockSellCount(have, count);
   if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
   const got = g.areas[a].stockPrice * n;
-  p.stocks[a] -= n;
+  setStockHolding(p, a, have - n);
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
@@ -2605,6 +2620,9 @@ export function applyChoice(g, choice) {
   if (pending.type === 'buy_shop') {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'buy') {
+      if (!sq || sq.type !== 'shop' || sq.owner >= 0) {
+        return { ok: false, error: 'bad_shop' };
+      }
       if (getLiquidatableValue(g, p) < sq.price) {
         return { ok: false, error: 'insufficient' };
       }
@@ -2626,7 +2644,7 @@ export function applyChoice(g, choice) {
       endTurn(g);
       return { ok: true, ...(mono || {}), state: serializeState(g) };
     } else {
-      addLog(g, `${p.name} は「${sq.label}」の購入を見送り`, 'system');
+      addLog(g, `${p.name} は「${sq?.label || 'お店'}」の購入を見送り`, 'system');
     }
     g.pending = null;
     endTurn(g);
@@ -2866,14 +2884,14 @@ export function applyChoice(g, choice) {
       const area = Number(choice.area);
       if (!g.areas[area]) return { ok: false, error: 'bad_area' };
       const price = g.areas[area].stockPrice;
-      const maxAfford = Math.floor(p.cash / price);
+      const maxAfford = Math.max(0, Math.floor(p.cash / Math.max(1, price)));
       // 1種類購入時は持ち金の限り（証券・銀行とも）
-      const hardCap = Math.max(1, maxAfford);
-      const count = Math.max(1, Math.min(hardCap, Number(choice.count) || 1));
+      const want = Math.max(1, Math.floor(Number(choice.count) || 1));
+      const count = Math.min(maxAfford, want);
       const cost = price * count;
-      if (p.cash < cost) return { ok: false, error: 'insufficient' };
+      if (count <= 0 || p.cash < cost) return { ok: false, error: 'insufficient' };
       p.cash -= cost;
-      p.stocks[area] = (p.stocks[area] || 0) + count;
+      setStockHolding(p, area, (Math.max(0, Math.floor(Number(p.stocks?.[area]) || 0)) + count));
       bumpStat(p, 'stockBought', count);
       bumpStat(p, 'stockSpent', cost);
       syncStockValueSnap(g, p);
@@ -2897,11 +2915,12 @@ export function applyChoice(g, choice) {
     } else if (choice.action === 'sell') {
       if (bankVisit) return { ok: false, error: 'bank_buy_only' };
       const area = Number(choice.area);
-      const have = p.stocks[area] || 0;
-      const count = Math.max(1, Math.min(have, Number(choice.count) || 1));
+      if (!g.areas[area]) return { ok: false, error: 'bad_area' };
+      const have = Math.max(0, Math.floor(Number(p.stocks?.[area]) || 0));
+      const count = clampStockSellCount(have, choice.count);
       if (count <= 0) return { ok: false, error: 'no_stock' };
       const got = g.areas[area].stockPrice * count;
-      p.stocks[area] -= count;
+      setStockHolding(p, area, have - count);
       p.cash += got;
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
@@ -3779,7 +3798,7 @@ export function canSellStockOnTurn(g, playerId) {
   if (g.currentPlayerIdx !== playerId) return false;
   const p = g.players[playerId];
   if (!p || p.bankrupt || p.resting) return false;
-  return Object.values(p.stocks || {}).some((n) => (n || 0) > 0);
+  return Object.values(p.stocks || {}).some((n) => Math.max(0, Math.floor(Number(n) || 0)) > 0);
 }
 
 /** 自分のターン中いつでも株売却できる（サイコロ前・選択中・分岐中） */
@@ -3789,11 +3808,11 @@ export function preTurnSell(g, playerId, area, count) {
   const p = g.players[playerId];
   if (!p || p.bankrupt) return { ok: false, error: 'bankrupt' };
   const a = Number(area);
-  const have = p.stocks[a] || 0;
-  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  const have = Math.max(0, Math.floor(Number(p.stocks?.[a]) || 0));
+  const n = clampStockSellCount(have, count);
   if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
   const got = g.areas[a].stockPrice * n;
-  p.stocks[a] -= n;
+  setStockHolding(p, a, have - n);
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
