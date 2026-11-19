@@ -2256,7 +2256,7 @@ function seedResultsDemo(g) {
   });
 
   // 本家風グラフ用の仮推移
-  const startCash = 2000;
+  const startCash = 2500;
   const finals = g.players.map((p) => getPlayerAssets(g, p).total);
   g.worthHistory = [];
   for (let t = 1; t <= 18; t++) {
@@ -7394,7 +7394,7 @@ if (bootDemo === 'results-json') {
     mode: 'local',
     goal: 10000,
     turn: 18,
-    startCash: 2000,
+    startCash: 2500,
     winnerId: 0,
     winnerName: 'あか',
     ranking: [

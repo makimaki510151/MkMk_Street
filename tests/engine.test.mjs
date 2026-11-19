@@ -651,7 +651,7 @@ describe('MkMk Street engine', () => {
     const shops = g.map.filter((n) => n.type === 'shop');
     assert.ok(shops.length >= 16);
     assert.ok(Object.keys(g.areas).length >= 4);
-    assert.equal(g.players[0].cash, 2000);
+    assert.equal(g.players[0].cash, 2500);
   });
 
   it('computes toll multipliers by area size and ownership', () => {

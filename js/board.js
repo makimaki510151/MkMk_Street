@@ -34,7 +34,7 @@ export const AREA_SHOP_BASE = 4;
 export const SUIT_LABELS = ['♠', '♥', '♦', '♣'];
 
 export const DEFAULT_GOAL = 10000;
-export const DEFAULT_CASH = 2000;
+export const DEFAULT_CASH = 2500;
 export const DEFAULT_MAP_ID = 'central_cross';
 
 function link(...pairs) {
@@ -371,7 +371,7 @@ export function buildShellHarbor() {
     mapId: 'shell_harbor',
     mapName: '貝がら港',
     goal: 12000,
-    initialCash: 1800,
+    initialCash: 2300,
     switchState: 0,
     switchGates,
     switchMoves,
@@ -534,7 +534,7 @@ export function buildCliffIsle() {
     mapId: 'cliff_isle',
     mapName: 'がけした島',
     goal: 14000,
-    initialCash: 1600,
+    initialCash: 2100,
     areaOverrides: {
       1: { name: 'あまぐもタウン' },
       2: { name: 'どぜうウォーク' },
@@ -726,7 +726,7 @@ export function buildBin() {
     mapId: 'bin',
     mapName: '瓶',
     goal: 16000,
-    initialCash: 1500,
+    initialCash: 2000,
     areaOverrides: {
       1: { name: 'コルク通り' },
       2: { name: '封ろう通り' },
@@ -925,7 +925,7 @@ export function buildThumbsUp() {
     mapId: 'thumbs_up',
     mapName: 'サムズアップ',
     goal: 18000,
-    initialCash: 1400,
+    initialCash: 1900,
     areaOverrides: {
       1: { name: '拍手横丁' },
       2: { name: '手首坂' },
@@ -957,7 +957,7 @@ export const MAP_CATALOG = [
     name: '中央クロス',
     blurb: '銀行中心の十字＋外周。定番の分岐マップ',
     defaultGoal: 10000,
-    defaultCash: 2000,
+    defaultCash: 2500,
     build: buildCentralCross,
   },
   {
@@ -965,7 +965,7 @@ export const MAP_CATALOG = [
     name: '貝がら港',
     blurb: '海岸と埠頭の並列ルート。スイッチで航路も切り替わる',
     defaultGoal: 12000,
-    defaultCash: 1800,
+    defaultCash: 2300,
     build: buildShellHarbor,
   },
   {
@@ -973,7 +973,7 @@ export const MAP_CATALOG = [
     name: 'がけした島',
     blurb: '本島7×7＋離れ小島。ワープで行き来し、島にはマーク補充マスあり',
     defaultGoal: 14000,
-    defaultCash: 1600,
+    defaultCash: 2100,
     build: buildCliffIsle,
   },
   {
@@ -981,7 +981,7 @@ export const MAP_CATALOG = [
     name: '瓶',
     blurb: '縦長のボトル形。首の銀行から胴・底へ分岐し、底のワープで往復',
     defaultGoal: 16000,
-    defaultCash: 1500,
+    defaultCash: 2000,
     build: buildBin,
   },
   {
@@ -989,7 +989,7 @@ export const MAP_CATALOG = [
     name: 'サムズアップ',
     blurb: '親指を立てた形。銀行から指先・手首へ長く分岐する大会戦マップ',
     defaultGoal: 18000,
-    defaultCash: 1400,
+    defaultCash: 1900,
     build: buildThumbsUp,
   },
 ];
