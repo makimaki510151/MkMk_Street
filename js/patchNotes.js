@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.8.7',
+    date: '2026-11-19',
+    items: [
+      'マップ「弾丸」を追加（転送3組で弾倉側と弾頭側を往復）',
+    ],
+  },
+  {
     version: '1.8.6',
     date: '2026-11-19',
     items: [
