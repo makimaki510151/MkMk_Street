@@ -130,7 +130,7 @@
         <h3>オンライン</h3>
         <ul>
           <li>ホストが部屋を作りコードを共有。ゲストは同じコードで入室。<strong>バージョンが違うと入れません</strong>（タイトルに表示）。</li>
-          <li>開始前に<strong>順番決めダイス（1〜100）</strong>で手番順を決めます（同点は同じ出目の人だけ振り直し）。出目がそろったら順位を表示し、<strong>ホストが開始を押す</strong>とゲームへ進みます。ロビーでプレイヤー色を選べます。</li>
+          <li>開始前に<strong>順番決めダイス（1〜100）</strong>で手番順を決めます（同点は同じ出目の人だけ振り直し）。出目がそろったら順位を表示し、<strong>ホストが開始を押す</strong>とゲームへ進みます。ロビーでプレイヤー色・<strong>初期資金</strong>（既定2200G）・目標資産を設定できます。</li>
           <li>切断しても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。ホストは切断者をCPU化／キックできます。</li>
           <li>相手の操作待ちでは<strong>催促</strong>ボタンが使えます。部屋を作り直すときは先に<strong>部屋を解体</strong>します。</li>
         </ul>
@@ -175,6 +175,9 @@
       <label class="field">目標資産（G）
         <input type="number" id="setup-goal" value="10000" min="3000" step="1000" />
       </label>
+      <label class="field">初期資金（G）
+        <input type="number" id="setup-cash" value="2200" min="0" step="100" />
+      </label>
       <fieldset class="map-picker" id="setup-map-picker">
         <legend>マップ</legend>
         <div class="map-picker-grid" id="setup-map-options"></div>
@@ -212,6 +215,9 @@
         </div>
         <label class="field">目標資産（G）
           <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
+        </label>
+        <label class="field">初期資金（G）
+          <input type="number" id="lobby-cash" value="2200" min="0" step="100" />
         </label>
         <fieldset class="map-picker" id="lobby-map-picker">
           <legend>マップ</legend>

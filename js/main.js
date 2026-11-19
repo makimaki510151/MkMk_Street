@@ -55,7 +55,14 @@ import {
   kickDisconnectedPlayer,
   getGoalPressurePlayers,
 } from './engine.js';
-import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
+import {
+  AREA_META,
+  SUIT_LABELS,
+  MAP_CATALOG,
+  DEFAULT_MAP_ID,
+  DEFAULT_CASH,
+  applySwitchState,
+} from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
   pendingFingerprint,
@@ -767,7 +774,7 @@ function getMapDefName(mapId) {
   return MAP_CATALOG.find((m) => m.id === mapId)?.name || '中央クロス';
 }
 
-function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null) {
+function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null, cashInputId = null) {
   const box = document.getElementById(containerId);
   if (!box) return;
   const current = preferredId || DEFAULT_MAP_ID;
@@ -780,23 +787,36 @@ function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId 
       </span>
     </label>
   `).join('');
-  const syncGoal = () => {
-    if (!goalInputId) return;
-    const input = document.getElementById(goalInputId);
+  const syncMapDefaults = () => {
     const def = MAP_CATALOG.find((m) => m.id === selectedMapId(`#${containerId}`));
-    if (input && def?.defaultGoal) input.value = String(def.defaultGoal);
+    if (!def) return;
+    if (goalInputId) {
+      const goalInput = document.getElementById(goalInputId);
+      if (goalInput && def.defaultGoal != null) goalInput.value = String(def.defaultGoal);
+    }
+    if (cashInputId) {
+      const cashInput = document.getElementById(cashInputId);
+      if (cashInput && def.defaultCash != null) cashInput.value = String(def.defaultCash);
+    }
   };
   box.querySelectorAll('input[name="map-id"]').forEach((el) => {
-    el.addEventListener('change', syncGoal);
+    el.addEventListener('change', syncMapDefaults);
   });
-  syncGoal();
+  syncMapDefaults();
+}
+
+/** ロビー／セットアップの初期資金入力（未入力・不正は既定へ） */
+function readStartCash(inputId) {
+  const raw = Number(document.getElementById(inputId)?.value);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_CASH;
+  return Math.floor(raw);
 }
 
 function openSetupLocal() {
   showScreen('screen-setup');
   $('#setup-online-only').hidden = true;
   $('#setup-title').textContent = 'ローカル対戦';
-  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal');
+  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal', 'setup-cash');
   renderSeatEditors(2);
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
@@ -902,7 +922,7 @@ async function openLobby(role, prefill = {}) {
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
-  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal');
+  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash');
   const nameInput = $('#lobby-name');
   const savedName = loadSavedPlayerName();
   const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || prefill.room || '').toUpperCase()) : null;
@@ -1032,6 +1052,7 @@ async function openLobby(role, prefill = {}) {
     if (!app.net) return toast('先に「部屋作成」してください');
     if (app.lobbyPlayers.length < 2) return toast('あと1人以上待ってください（またはCPUを追加）');
     const goal = Number($('#lobby-goal').value) || 10000;
+    const cash = readStartCash('lobby-cash');
     const mapId = selectedMapId('#lobby-map-options');
     resyncLobbyColors();
     const players = app.lobbyPlayers.map((p) => ({
@@ -1041,7 +1062,7 @@ async function openLobby(role, prefill = {}) {
       isCPU: !!p.isCPU,
       key: p.peerId,
     }));
-    beginOrderRoll({ players, goal, mapId, mode: 'host' });
+    beginOrderRoll({ players, goal, cash, mapId, mode: 'host' });
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -1540,7 +1561,7 @@ function syncGoalPressureBgm(g) {
 }
 
 /** 順番決めダイスを開始（ホスト／ローカル） */
-function beginOrderRoll({ players, goal, mapId, mode }) {
+function beginOrderRoll({ players, goal, cash, mapId, mode }) {
   const list = players.map((p, i) => ({
     key: p.key || p.peerId || `p-${i}`,
     peerId: p.peerId || null,
@@ -1556,6 +1577,7 @@ function beginOrderRoll({ players, goal, mapId, mode }) {
     awaitingConfirm: false,
     finalOrder: null,
     goal,
+    cash: cash ?? DEFAULT_CASH,
     mapId,
     mode,
   };
@@ -1591,6 +1613,7 @@ function serializeOrderRoll() {
     awaitingConfirm: !!o.awaitingConfirm,
     finalOrder: o.finalOrder || null,
     goal: o.goal,
+    cash: o.cash ?? DEFAULT_CASH,
     mapId: o.mapId,
   };
 }
@@ -1604,6 +1627,7 @@ function applyOrderRollSync(data) {
     awaitingConfirm: !!data.awaitingConfirm,
     finalOrder: Array.isArray(data.finalOrder) ? data.finalOrder : null,
     goal: data.goal,
+    cash: data.cash ?? DEFAULT_CASH,
     mapId: data.mapId,
     mode: 'guest',
   };
@@ -1842,13 +1866,14 @@ function confirmOrderRollStart() {
     isCPU: !!p.isCPU,
   }));
   const goal = o.goal;
+  const cash = o.cash ?? DEFAULT_CASH;
   const mapId = o.mapId;
   const mode = o.mode;
   app.orderRoll = null;
 
   if (mode === 'local') {
     app.mode = 'local';
-    app.game = createGame({ players, goal, mapId });
+    app.game = createGame({ players, goal, cash, mapId });
     app.localSeat = players.findIndex((p) => !p.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -1856,7 +1881,7 @@ function confirmOrderRollStart() {
   }
 
   // host online
-  app.game = createGame({ players, goal, mapId });
+  app.game = createGame({ players, goal, cash, mapId });
   app.localSeat = app.game.players.findIndex((p) => p.peerId === app.net?.peerId);
   if (app.localSeat < 0) app.localSeat = 0;
   app.net.broadcast({
@@ -1883,9 +1908,12 @@ function startLocal(seats) {
   const goal = mapFromDemo
     ? (mapDef?.defaultGoal)
     : (goalFromUi || mapDef?.defaultGoal || 10000);
+  const cash = mapFromDemo
+    ? (mapDef?.defaultCash ?? DEFAULT_CASH)
+    : readStartCash('setup-cash');
   // デモ直入れは順番ダイスを飛ばす
   if (demo) {
-    app.game = createGame({ players: seats, goal, mapId });
+    app.game = createGame({ players: seats, goal, cash, mapId });
     app.localSeat = seats.findIndex((s) => !s.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -1897,7 +1925,7 @@ function startLocal(seats) {
     peerId: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
     key: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
   }));
-  beginOrderRoll({ players, goal, mapId, mode: 'local' });
+  beginOrderRoll({ players, goal, cash, mapId, mode: 'local' });
 }
 
 function maybeDemoLanding() {
