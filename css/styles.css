@@ -1054,11 +1054,23 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .pc-stocks.empty { font-size: 0.68rem; color: var(--muted); }
 .pc-stock {
+  font: inherit;
   font-size: 0.66rem;
+  font-weight: 700;
   padding: 0.08rem 0.28rem;
   border: 1px solid color-mix(in srgb, var(--ac) 45%, transparent);
   background: color-mix(in srgb, var(--ac) 16%, transparent);
   border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: pointer;
+}
+.pc-stock:hover, .pc-stock:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ac) 80%, #fff);
+  background: color-mix(in srgb, var(--ac) 28%, transparent);
+}
+.pc-stock.peek-on, .stock-chip.peek-on, .sh-row.peek-on, .sh-count.peek-on {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ac, #5ef0c8) 70%, #fff);
 }
 
 .controls {
@@ -1144,8 +1156,23 @@ body.your-turn #btn-roll:not(:disabled) {
 .sh-area b { color: #fff; margin-right: 0.15rem; }
 .sh-area small { color: var(--muted); font-size: 0.64rem; }
 .sh-player { color: var(--pc); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sh-count { text-align: center; color: var(--muted); }
+.sh-count {
+  font: inherit;
+  text-align: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.15rem;
+  cursor: pointer;
+}
+.sh-count:disabled { cursor: default; opacity: 0.55; }
 .sh-count.has { color: var(--ink); font-weight: 700; }
+.sh-count.has:hover, .sh-count.has:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--pc, #888) 50%, transparent);
+  background: color-mix(in srgb, var(--pc, #888) 12%, transparent);
+}
 .stocks-sell {
   border-top: 1px solid var(--line);
   padding-top: 0.35rem;
