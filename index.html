@@ -22,7 +22,20 @@
       <button class="btn large" id="btn-join">部屋に入る</button>
       <button class="btn large" id="btn-local">ローカル / CPU</button>
       <button class="btn ghost" id="btn-howto">遊び方</button>
+      <button class="btn ghost" id="btn-patch-notes" title="最近の更新内容">パッチノート</button>
       <button class="btn ghost" id="btn-results-archive" title="保存した試合結果JSONを表示">試合結果</button>
+    </div>
+  </section>
+
+  <!-- PATCH NOTES -->
+  <section id="screen-patch-notes" class="screen">
+    <div class="panel howto patch-notes">
+      <h2>パッチノート</h2>
+      <p class="howto-lead">最近の更新内容です。部屋に入るときはホストと<strong>同じバージョン</strong>である必要があります。</p>
+      <div id="patch-notes-list" class="patch-notes-list"></div>
+      <div class="row-actions">
+        <button class="btn primary" id="btn-patch-notes-back">戻る</button>
+      </div>
     </div>
   </section>
 
