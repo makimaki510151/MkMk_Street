@@ -674,7 +674,18 @@ describe('MkMk Street engine', () => {
     const shops = g.map.filter((n) => n.type === 'shop');
     assert.ok(shops.length >= 16);
     assert.ok(Object.keys(g.areas).length >= 4);
-    assert.equal(g.players[0].cash, 2500);
+    assert.equal(g.players[0].cash, 2200);
+  });
+
+  it('honors createGame cash override for lobby start funds', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      goal: 10000,
+      cash: 3500,
+    });
+    assert.equal(g.players[0].cash, 3500);
+    assert.equal(g.players[1].cash, 3500);
   });
 
   it('computes toll multipliers by area size and ownership', () => {
