@@ -3318,7 +3318,21 @@ function maybeOpenAnyShopBuy(g, p) {
   return true;
 }
 
-function minigameParticipants(g, starterId) {
+/** 共通の結果にみんなで賭けるタイプ（スロット等の個人挑戦は含めない） */
+export const PARTY_MINIGAME_GAMES = new Set([
+  'guess_dice',
+  'coin',
+  'high_low',
+  'horse_race',
+  'roulette',
+]);
+
+export function isPartyMinigame(game) {
+  return PARTY_MINIGAME_GAMES.has(game || '');
+}
+
+function minigameParticipants(g, starterId, game) {
+  if (!isPartyMinigame(game)) return [starterId];
   const alive = g.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
   if (!alive.includes(starterId)) return alive;
   return [starterId, ...alive.filter((id) => id !== starterId)];
@@ -3328,19 +3342,26 @@ function maybeOpenMinigame(g, p) {
   const mg = p.flags?.pendingMinigame;
   if (!mg) return false;
   p.flags.pendingMinigame = null;
-  const participantIds = minigameParticipants(g, p.id);
+  const game = mg.game || 'guess_dice';
+  const participantIds = minigameParticipants(g, p.id, game);
   if (!participantIds.length) return false;
+  const party = participantIds.length > 1;
   g.phase = 'await_choice';
   g.pending = {
     type: 'minigame',
     playerId: participantIds[0],
     starterId: p.id,
-    game: mg.game || 'guess_dice',
+    game,
     label: mg.label || 'ミニゲーム',
     participantIds,
     picks: {},
+    party,
   };
-  addLog(g, `みんなのミニゲーム「${g.pending.label}」！（${p.name}が開催・${participantIds.length}人参加）`, 'event');
+  if (party) {
+    addLog(g, `みんなのミニゲーム「${g.pending.label}」！（${p.name}が開催・${participantIds.length}人参加）`, 'event');
+  } else {
+    addLog(g, `${p.name} のミニゲーム「${g.pending.label}」！`, 'event');
+  }
   return true;
 }
 
