@@ -1558,7 +1558,7 @@ export function getForwardNexts(g, pos, prevPos) {
 }
 
 /** ワープ着地なら転送先（1段）。それ以外はそのマス。 */
-function resolveLandingDestId(g, pos) {
+export function resolveLandingDestId(g, pos) {
   const n = getNode(g, pos);
   if (n?.type === 'warp' && n.warpTo != null && getNode(g, n.warpTo)) {
     return n.warpTo;
@@ -1595,6 +1595,29 @@ export function getLandingCandidates(g, fromPos, prevPos, steps) {
 
   walk(fromPos, prevPos, left0);
   return [...ends];
+}
+
+/**
+ * 分岐中に最終停止マスをクリックしたとき、そのマスへ向かう次の一歩を返す。
+ * @param {number[]} [optionIds] 省略時は from の前進候補
+ * @returns {number|null}
+ */
+export function findForkNextForLanding(g, fromPos, prevPos, stepsLeft, landingId, optionIds = null) {
+  const target = Number(landingId);
+  const left = Math.max(0, Math.floor(Number(stepsLeft) || 0));
+  if (!Number.isFinite(target) || left <= 0) return null;
+  const options = Array.isArray(optionIds) && optionIds.length
+    ? optionIds.map(Number)
+    : getForwardNexts(g, fromPos, prevPos);
+  for (const nextId of options) {
+    if (left === 1) {
+      if (nextId === target || resolveLandingDestId(g, nextId) === target) return nextId;
+      continue;
+    }
+    const ends = getLandingCandidates(g, nextId, fromPos, left - 1);
+    if (ends.includes(target)) return nextId;
+  }
+  return null;
 }
 
 function onPassThrough(g, p, nodeId) {

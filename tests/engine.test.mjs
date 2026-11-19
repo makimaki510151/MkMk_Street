@@ -37,6 +37,7 @@ import {
   chooseFork,
   getForwardNexts,
   getLandingCandidates,
+  findForkNextForLanding,
   continueMove,
   updateAreaStockPrices,
   buildGameResults,
@@ -1072,6 +1073,25 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(getLandingCandidates(g, 0, null, 1).sort((a, b) => a - b), [1, 2]);
     // 0→1→3(warp→4) と 0→2→4 の両経路とも最終は 4
     assert.deepEqual(getLandingCandidates(g, 0, null, 2), [4]);
+  });
+
+  it('findForkNextForLanding maps a final stop click to the next fork step', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 3,
+    });
+    const bank = g.startId;
+    const arms = getForwardNexts(g, bank, null);
+    assert.ok(arms.length >= 2);
+    // 残り1: 停止マス＝隣マス → その隣を選ぶ
+    assert.equal(findForkNextForLanding(g, bank, null, 1, arms[0], arms), arms[0]);
+    // 残り2以上: 遠い停止マスから最初の一歩を逆引き
+    const far = getLandingCandidates(g, bank, null, 3);
+    assert.ok(far.length >= 1);
+    const step = findForkNextForLanding(g, bank, null, 3, far[0], arms);
+    assert.ok(arms.includes(step));
+    const via = getLandingCandidates(g, step, bank, 2);
+    assert.ok(via.includes(far[0]));
   });
 
   it('can buy a vacant shop via choice', () => {
