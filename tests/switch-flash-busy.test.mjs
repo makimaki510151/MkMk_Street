@@ -37,14 +37,22 @@ function presentSwitchFx(state, moves, { remote = false } = {}) {
   }
 }
 
-function reconcileHoldingBusyOnly(state, phase) {
-  if (phase !== 'await_roll' && phase !== 'moving') return false;
-  if (!state.open && state.queue.length === 0 && state.holdingBusy) {
+/** Mirrors reconcileStaleEventFlash HoldingBusy-only path (any phase). */
+function reconcileHoldingBusyOnly(state, _phase) {
+  if (!state.open && state.queue.length === 0 && (state.holdingBusy || state.busy)) {
     state.holdingBusy = false;
     state.busy = false;
     return true;
   }
   return false;
+}
+
+/** Host/local always auto-force human flash; spectator must not skip the timer. */
+function shouldArmHumanAutoDismiss({ mode, canDismiss, npcReading }) {
+  if (npcReading) return 'npc';
+  if (mode === 'guest') return canDismiss ? 'guest-dismiss' : 'none';
+  // host/local: always arm (force), even when spectator (!canDismiss)
+  return 'force';
 }
 
 describe('switch land event-flash busy contract', () => {
@@ -82,6 +90,28 @@ describe('switch land event-flash busy contract', () => {
     assert.equal(reconcileHoldingBusyOnly(state, 'await_roll'), true);
     assert.equal(state.holdingBusy, false);
     assert.equal(state.busy, false);
+  });
+
+  it('clears HoldingBusy-only deadlock in await_choice (CPU confirm-wait stall)', () => {
+    const state = { stamps: [], queue: [], holdingBusy: true, busy: true, open: false };
+    assert.equal(reconcileHoldingBusyOnly(state, 'await_choice'), true);
+    assert.equal(state.holdingBusy, false);
+    assert.equal(state.busy, false);
+  });
+
+  it('host arms force auto-dismiss even when spectator (remote human reader)', () => {
+    assert.equal(
+      shouldArmHumanAutoDismiss({ mode: 'host', canDismiss: false, npcReading: false }),
+      'force',
+    );
+    assert.equal(
+      shouldArmHumanAutoDismiss({ mode: 'local', canDismiss: true, npcReading: false }),
+      'force',
+    );
+    assert.equal(
+      shouldArmHumanAutoDismiss({ mode: 'guest', canDismiss: false, npcReading: false }),
+      'none',
+    );
   });
 
   it('regression: old enqueueBanner ignoring silentStamp would stick confirm busy', () => {
