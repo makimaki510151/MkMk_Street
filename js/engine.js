@@ -1831,7 +1831,7 @@ export function rollDice(g) {
   // 店休は自分のターン開始で解除（1ターン休み）
   if (p.shopsClosed) {
     p.shopsClosed = false;
-    addLog(g, `${p.name} のお店が営業再開`, 'system');
+    addLog(g, `${p.name} のお店が営業再開した`, 'system');
   }
 
   // ラッキーは「次の自分の番まで」。自分のターン開始で期限切れ
@@ -1879,7 +1879,7 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   }
 
   if (sq.type === 'junction') {
-    addLog(g, `${p.name} は分岐点に停止`, 'system');
+    addLog(g, `${p.name} は${sq.label || '分岐点'}に停止`, 'system');
     finishLanding(g, p);
     return;
   }
