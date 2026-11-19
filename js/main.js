@@ -2047,6 +2047,44 @@ function maybeDemoLanding() {
     refreshGameUI();
     return;
   }
+  if (demo === 'party-result') {
+    // 全員参加ミニゲーム結果ボードの見た目確認用
+    const players = app.game.players.filter((pl) => !pl.bankrupt);
+    const reveal = {
+      game: 'guess_dice',
+      label: 'サイコロ当て',
+      shared: { roll: 4 },
+      results: players.map((pl, i) => {
+        const exact = i === 0;
+        const near = i === 1;
+        return {
+          playerId: pl.id,
+          playerName: pl.name,
+          playerColor: pl.color,
+          pick: exact ? 4 : near ? 5 : (i + 1),
+          win: exact || near,
+          tier: exact ? 'exact' : near ? 'near' : 'miss',
+          title: exact ? 'ぴったり！' : near ? 'おしい！' : 'ハズレ…',
+          detail: exact ? 'ぴったり！出目4 → +180G' : near ? 'おしい！ → +70G' : '参加賞 +20G',
+          prizeWon: exact ? 180 : near ? 70 : 20,
+          messages: [],
+          outcome: { roll: 4 },
+        };
+      }),
+      playerId: players[0]?.id,
+      playerName: players[0]?.name || '',
+      playerColor: players[0]?.color || '#c4a574',
+      outcome: { roll: 4 },
+      tier: 'exact',
+      win: true,
+      title: 'ぴったり！',
+      detail: '',
+      messages: [],
+    };
+    refreshGameUI();
+    presentMinigameResult({ reveal, messages: [] });
+    return;
+  }
   if (demo === 'trade' || demo === 'trade-offer') {
     const shops = app.game.map.filter((s) => s.type === 'shop');
     const mine = shops.filter((_, i) => i % 2 === 0).slice(0, 2);
@@ -3567,9 +3605,7 @@ async function presentMinigameResult(result) {
   broadcastFx({ kind: 'minigameReveal', reveal });
   await playMinigameReveal(reveal);
   const color = reveal.playerColor || '#ffe08a';
-  const summary = (reveal.results || [])
-    .map((r) => `${r.playerName}: ${r.title}`)
-    .join(' ／ ')
+  const summary = summarizeMinigameResults(reveal)
     || (reveal.messages || result.messages || []).join(' / ');
   enqueueBanner({
     kicker: reveal.label || 'ミニゲーム',
@@ -3593,18 +3629,85 @@ async function presentMinigameResult(result) {
   clearBusyUnlessEventUi();
 }
 
+/** 全員参加ミニゲームの共通結果一行（出目・着順など） */
+function formatMinigameSharedLine(reveal) {
+  const s = reveal?.shared || reveal?.outcome || {};
+  const game = reveal?.game || '';
+  if (game === 'guess_dice' && s.roll != null) return `出目 ${s.roll}`;
+  if (game === 'high_low' && s.secret != null) {
+    return `数字 ${s.secret}（${s.band === 'high' ? 'ハイ' : 'ロー'}）`;
+  }
+  if (game === 'coin' && s.face) return s.face === 'heads' ? '表' : '裏';
+  if (game === 'roulette' && s.spin != null) {
+    const colorLabel = { red: '赤', black: '黒', green: '緑' };
+    return `${colorLabel[s.color] || ''}${s.spin}`;
+  }
+  if (game === 'horse_race' && Array.isArray(s.order)) {
+    const horses = s.horses || [];
+    return s.order.slice(0, 3).map((idx, i) => `${i + 1}着 ${horses[idx] || '?'}`).join(' · ');
+  }
+  return '';
+}
+
+function formatMinigamePrize(amount) {
+  const n = Math.max(0, Math.floor(Number(amount) || 0));
+  return `+${n.toLocaleString('ja-JP')}G`;
+}
+
+/** 全員参加向けの結果ボードHTML（金額・勝敗が一目で分かる） */
+function renderPartyMinigameResults(reveal) {
+  const rows = [...(reveal.results || [])].sort((a, b) => {
+    const pa = Number(a.prizeWon) || 0;
+    const pb = Number(b.prizeWon) || 0;
+    if (pb !== pa) return pb - pa;
+    return Number(!!b.win) - Number(!!a.win);
+  });
+  const shared = formatMinigameSharedLine(reveal);
+  const board = rows.map((r, i) => {
+    const win = !!r.win;
+    const prize = formatMinigamePrize(r.prizeWon);
+    const verdict = r.title || (win ? '当たり！' : '参加賞');
+    return `<li class="mg-result-row ${win ? 'is-win' : 'is-miss'}" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
+      <span class="mg-result-rank" aria-hidden="true">${i + 1}</span>
+      <span class="mg-result-name">${escapeHtml(r.playerName || '')}</span>
+      <span class="mg-result-verdict">${escapeHtml(verdict)}</span>
+      <span class="mg-result-prize">${escapeHtml(prize)}</span>
+    </li>`;
+  }).join('');
+  return `<div class="mg-results">
+    ${shared ? `<div class="mg-shared-line">${escapeHtml(shared)}</div>` : ''}
+    <ol class="mg-result-board">${board}</ol>
+  </div>`;
+}
+
+function summarizeMinigameResults(reveal) {
+  const rows = reveal?.results || [];
+  if (rows.length > 1) {
+    return rows
+      .map((r) => `${r.playerName} ${r.title || ''} ${formatMinigamePrize(r.prizeWon)}`.trim())
+      .join(' · ');
+  }
+  return (reveal?.messages || []).join(' / ');
+}
+
 async function playMinigameReveal(reveal) {
   const overlay = $('#minigame-overlay');
+  const stage = overlay?.querySelector('.mg-stage');
   const body = $('#mg-body');
   const title = $('#mg-title');
   const detail = $('#mg-detail');
   const kicker = $('#mg-kicker');
   if (!overlay || !body) return;
 
+  const party = (reveal.results?.length || 0) > 1;
   overlay.hidden = false;
-  overlay.classList.remove('show-result', 'tier-jackpot', 'tier-exact', 'tier-pair', 'tier-near', 'tier-win', 'tier-miss');
+  overlay.classList.remove('show-result', 'tier-jackpot', 'tier-exact', 'tier-pair', 'tier-near', 'tier-win', 'tier-miss', 'party');
+  stage?.classList.toggle('party', party);
+  if (party) overlay.classList.add('party');
   if (reveal.tier) overlay.classList.add(`tier-${reveal.tier}`);
-  kicker.textContent = `${reveal.playerName || ''} の${reveal.label || 'ミニゲーム'}`;
+  kicker.textContent = party
+    ? `全員参加・${reveal.label || 'ミニゲーム'}`
+    : `${reveal.playerName || ''} の${reveal.label || 'ミニゲーム'}`;
   title.textContent = '';
   detail.textContent = '';
   body.innerHTML = '';
@@ -3636,17 +3739,18 @@ async function playMinigameReveal(reveal) {
     await wait(400);
   }
 
-  title.textContent = reveal.results?.length > 1
+  title.textContent = party
     ? 'みんなの結果'
     : (reveal.title || (reveal.win ? '当たり！' : '結果発表'));
-  if (reveal.results?.length) {
-    detail.innerHTML = reveal.results.map((r) =>
-      `<div class="mg-result-row" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
-        <strong>${escapeHtml(r.playerName || '')}</strong>
-        <span>${escapeHtml(r.title || '')}</span>
-        <small>${escapeHtml(r.detail || '')}</small>
-      </div>`
-    ).join('');
+  if (party) {
+    detail.innerHTML = renderPartyMinigameResults(reveal);
+  } else if (reveal.results?.length === 1) {
+    const r = reveal.results[0];
+    detail.innerHTML = `<div class="mg-solo-result" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
+      <span class="mg-result-verdict">${escapeHtml(r.title || reveal.title || '')}</span>
+      <span class="mg-result-prize">${escapeHtml(formatMinigamePrize(r.prizeWon))}</span>
+      <small>${escapeHtml(r.detail || reveal.detail || '')}</small>
+    </div>`;
   } else {
     detail.textContent = reveal.detail || (reveal.messages || []).join(' / ');
   }
@@ -3661,10 +3765,13 @@ async function playMinigameReveal(reveal) {
   }
 
   const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'fullhouse';
-  await wait(bigHold ? 1600 : 1100);
+  const holdMs = party ? 2600 : (bigHold ? 1600 : 1100);
+  await wait(holdMs);
   overlay.hidden = true;
-  overlay.classList.remove('show-result');
+  overlay.classList.remove('show-result', 'party');
+  stage?.classList.remove('party');
   body.innerHTML = '';
+  detail.innerHTML = '';
   pumpEventFlash();
 }
 
