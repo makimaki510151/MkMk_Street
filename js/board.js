@@ -1161,6 +1161,200 @@ export function buildTorima() {
   });
 }
 
+/**
+ * マップ案「弾丸」：19×11（grid-map-maker JSON どおり）。
+ * 転送は記号ごと（転／て／テ）に出現順で対にして warpTo を結ぶ。
+ * 凡例: 銀銀行 / Ａ〜Ｈ店 / 削スクラッチ / スロット / 株 / ララッキー / イイベント
+ *       当サイコロ当て / 転・て・テ＝転送 / ♠♥♦♣
+ */
+export function buildBullet() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　',
+    '　ラ♠ＡＡＡ転　　　ＤＤＤス　　Ｇ転Ｇ',
+    '　Ｃ　　　　　Ａ　　テ　　Ｆ　　♦　♠',
+    '　Ｃ　　　　　　イ　Ｄ　　Ｆ　　Ｇ　Ｇ',
+    '　♦　　　　　　　銀　　　♥　　削　テ',
+    '　Ｃ　　　　　　イ　Ｅ　　Ｆ　　Ｈ　Ｈ',
+    '　Ｃ　　　　　Ｂ　　Ｅ　　Ｆ　　♥　♣',
+    '　当♣ＢてＢＢ　　　削ＥＥ株　　ＨてＨ',
+    '　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　',
+  ];
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5, Ｆ: 6, Ｇ: 7, Ｈ: 8,
+  };
+  const shopNames = {
+    1: ['薬莢カフェ', 'ケース屋', '装填みやげ', '薬室茶屋'],
+    2: ['弾帯マーケット', 'ベルト屋', '連射屋台', '補給みやげ'],
+    3: ['撃鉄ホテル', 'ハンマー屋', 'トリガー食堂', '安全装置屋'],
+    4: ['銃身ブティック', 'バレル屋', 'ライフリング屋', '照準みやげ'],
+    5: ['薬室工房', 'チャンバー屋', 'ブリーチ屋', '閉鎖機構屋'],
+    6: ['照星通り', 'サイト屋', 'スコープ屋', '照準器みやげ'],
+    7: ['弾頭ホテル', 'チップ屋', '尖端カフェ', 'ノーズみやげ'],
+    8: ['弾痕横丁', 'ターゲット屋', '命中屋', 'スコアみやげ'],
+  };
+  const shopPrice = {
+    1: [220, 180, 160, 260],
+    2: [230, 190, 170, 270],
+    3: [210, 175, 155, 250],
+    4: [300, 250, 220, 340],
+    5: [280, 230, 200, 320],
+    6: [240, 200, 180, 280],
+    7: [320, 270, 240, 360],
+    8: [260, 215, 190, 300],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** 転送記号ごとの出現順ラベル（対の1件目／2件目） */
+  const warpLabels = {
+    転: ['弾倉上ワープ', '弾頭上ワープ'],
+    て: ['弾倉下ワープ', '弾頭下ワープ'],
+    テ: ['薬室ワープ', '撃鉄ワープ'],
+  };
+  /** @type {Record<string, object[]>} */
+  const warpsByKind = { 転: [], て: [], テ: [] };
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+
+  let bank = null;
+  let slotCount = 0;
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== 19) {
+      throw new Error(`弾丸: 行${row}の幅が${chars.length}（19であるべき）`);
+    }
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        const area = areaFromChar[ch];
+        const i = shopIdx[area]++;
+        const names = shopNames[area];
+        const prices = shopPrice[area];
+        put(col, row, N('shop', {
+          label: names[i % names.length],
+          area,
+          basePrice: prices[i % prices.length],
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '銀') {
+        bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+        continue;
+      }
+      if (ch === '♠') {
+        put(col, row, N('mark', { label: '♠', mark: 0, col, row }));
+        continue;
+      }
+      if (ch === '♥') {
+        put(col, row, N('mark', { label: '♥', mark: 1, col, row }));
+        continue;
+      }
+      if (ch === '♦') {
+        put(col, row, N('mark', { label: '♦', mark: 2, col, row }));
+        continue;
+      }
+      if (ch === '♣') {
+        put(col, row, N('mark', { label: '♣', mark: 3, col, row }));
+        continue;
+      }
+      if (ch === '削') {
+        put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+        continue;
+      }
+      if (ch === 'ス') {
+        slotCount += 1;
+        put(col, row, N('minigame', {
+          label: slotCount === 1 ? 'スロット' : `スロット${'ⅡⅢⅣⅤ'[slotCount - 2] || slotCount}`,
+          game: 'slot',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '当') {
+        put(col, row, N('minigame', {
+          label: 'サイコロ当て',
+          game: 'guess_dice',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '株') {
+        put(col, row, N('stockbroker', { label: '証券', col, row }));
+        continue;
+      }
+      if (ch === 'ラ') {
+        put(col, row, N('lucky', { label: '★', col, row }));
+        continue;
+      }
+      if (ch === 'イ') {
+        put(col, row, N('event', { label: 'イベント', col, row }));
+        continue;
+      }
+      if (warpLabels[ch]) {
+        const list = warpsByKind[ch];
+        const labels = warpLabels[ch];
+        const w = put(col, row, N('warp', {
+          label: labels[list.length] || `転送${list.length + 1}`,
+          col,
+          row,
+        }));
+        list.push(w);
+        continue;
+      }
+      throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
+    }
+  }
+
+  if (!bank) throw new Error('弾丸マップに銀行がありません');
+  for (const [area, count] of Object.entries(shopIdx)) {
+    if (count !== 4) throw new Error(`弾丸: エリア${area}の店が${count}件（4であるべき）`);
+  }
+
+  // 同記号の転送を出現順で対にする（3種×2マス）
+  for (const [kind, list] of Object.entries(warpsByKind)) {
+    if (list.length !== 2) {
+      throw new Error(`弾丸: 転送「${kind}」が${list.length}件（2であるべき）`);
+    }
+    list[0].warpTo = list[1].id;
+    list[1].warpTo = list[0].id;
+  }
+
+  // 直交＋隙間対角（とりまと同じ規則。銀行まわりは斜めブリッジ必須）
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, bank, 19, gridRows.length, {
+    mapId: 'bullet',
+    mapName: '弾丸',
+    goal: 15000,
+    initialCash: 2100,
+    areaOverrides: {
+      1: { name: '薬莢通り' },
+      2: { name: '弾帯通り' },
+      3: { name: '撃鉄坂' },
+      4: { name: '銃身通り' },
+      5: { name: '薬室横丁' },
+      6: { name: '照星通り' },
+      7: { name: '弾頭通り' },
+      8: { name: '弾痕横丁' },
+    },
+  });
+}
+
 /** 選択可能なマップ一覧 */
 export const MAP_CATALOG = [
   {
@@ -1210,6 +1404,14 @@ export const MAP_CATALOG = [
     defaultGoal: 13000,
     defaultCash: 2200,
     build: buildTorima,
+  },
+  {
+    id: 'bullet',
+    name: '弾丸',
+    blurb: '弾の形。転送3組で弾倉側と弾頭側を往復する中〜大会戦マップ',
+    defaultGoal: 15000,
+    defaultCash: 2100,
+    build: buildBullet,
   },
 ];
 

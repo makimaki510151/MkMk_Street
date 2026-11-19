@@ -152,6 +152,7 @@ describe('MkMk Street engine', () => {
     assert.ok(ids.has('bin'));
     assert.ok(ids.has('thumbs_up'));
     assert.ok(ids.has('torima'));
+    assert.ok(ids.has('bullet'));
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -550,7 +551,7 @@ describe('MkMk Street engine', () => {
           mapId: def.id,
         });
         if (state === 1) toggleBoardSwitch(g);
-        const allowGapDiag = def.id === 'torima';
+        const allowGapDiag = def.id === 'torima' || def.id === 'bullet';
         for (const n of g.map) {
           assert.ok(
             (n.nexts?.length || 0) >= 2,
@@ -1782,6 +1783,83 @@ describe('MkMk Street engine', () => {
     assert.equal(calcToll(g, shop), 0);
     g.players[0].shopsClosed = false;
     assert.ok(calcToll(g, shop) > 0);
+  });
+
+  it('bullet map builds with three warp pairs linked by kind', () => {
+    const board = buildBoard('bullet');
+    assert.equal(board.mapId, 'bullet');
+    assert.equal(board.mapName, '弾丸');
+    assert.equal(board.cols, 19);
+    assert.equal(board.rows, 11);
+    assert.equal(Object.keys(board.areas).length, 8);
+    for (const a of Object.keys(board.areas).map(Number)) {
+      assert.equal(
+        board.nodes.filter((n) => n.type === 'shop' && n.area === a).length,
+        4,
+        `area ${a}`,
+      );
+    }
+    const warps = board.nodes.filter((n) => n.type === 'warp');
+    assert.equal(warps.length, 6);
+    const byLabel = Object.fromEntries(warps.map((w) => [w.label, w]));
+    assert.equal(byLabel['弾倉上ワープ'].warpTo, byLabel['弾頭上ワープ'].id);
+    assert.equal(byLabel['弾頭上ワープ'].warpTo, byLabel['弾倉上ワープ'].id);
+    assert.equal(byLabel['弾倉下ワープ'].warpTo, byLabel['弾頭下ワープ'].id);
+    assert.equal(byLabel['弾頭下ワープ'].warpTo, byLabel['弾倉下ワープ'].id);
+    assert.equal(byLabel['薬室ワープ'].warpTo, byLabel['撃鉄ワープ'].id);
+    assert.equal(byLabel['撃鉄ワープ'].warpTo, byLabel['薬室ワープ'].id);
+    // JSON座標どおり
+    assert.equal(byLabel['弾倉上ワープ'].col, 6);
+    assert.equal(byLabel['弾倉上ワープ'].row, 2);
+    assert.equal(byLabel['弾頭上ワープ'].col, 17);
+    assert.equal(byLabel['弾頭上ワープ'].row, 2);
+    assert.equal(byLabel['弾倉下ワープ'].col, 4);
+    assert.equal(byLabel['弾倉下ワープ'].row, 8);
+    assert.equal(byLabel['弾頭下ワープ'].col, 17);
+    assert.equal(byLabel['弾頭下ワープ'].row, 8);
+    assert.equal(byLabel['薬室ワープ'].col, 10);
+    assert.equal(byLabel['薬室ワープ'].row, 3);
+    assert.equal(byLabel['撃鉄ワープ'].col, 18);
+    assert.equal(byLabel['撃鉄ワープ'].row, 5);
+
+    const bank = board.nodes.find((n) => n.type === 'bank');
+    assert.equal(bank?.col, 9);
+    assert.equal(bank?.row, 5);
+    // 銀行は直交が空なので斜めブリッジでイベント／店とつながる
+    assert.ok(bank.nexts.length >= 4, `bank deg=${bank.nexts.length}`);
+
+    // 転送を辺として全マス到達可能
+    const byId = new Map(board.nodes.map((n) => [n.id, n]));
+    const seen = new Set([bank.id]);
+    const q = [bank.id];
+    while (q.length) {
+      const id = q.shift();
+      const n = byId.get(id);
+      for (const nid of n.nexts) {
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          q.push(nid);
+        }
+      }
+      if (n.type === 'warp' && n.warpTo != null && !seen.has(n.warpTo)) {
+        seen.add(n.warpTo);
+        q.push(n.warpTo);
+      }
+    }
+    assert.equal(seen.size, board.nodes.length, 'all squares reachable via links+warps');
+
+    // 異種転送どうしは結ばない
+    for (const w of warps) {
+      const dest = byId.get(w.warpTo);
+      assert.ok(dest && dest.type === 'warp');
+      const pairOk = (
+        (w.label.includes('上') && dest.label.includes('上'))
+        || (w.label.includes('下') && dest.label.includes('下'))
+        || (w.label.includes('薬室') && dest.label.includes('撃鉄'))
+        || (w.label.includes('撃鉄') && dest.label.includes('薬室'))
+      );
+      assert.ok(pairOk, `${w.label} -> ${dest.label}`);
+    }
   });
 
   it('torima map builds with holiday squares that close own shops for one turn', () => {
