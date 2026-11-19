@@ -674,7 +674,18 @@ describe('MkMk Street engine', () => {
     const shops = g.map.filter((n) => n.type === 'shop');
     assert.ok(shops.length >= 16);
     assert.ok(Object.keys(g.areas).length >= 4);
-    assert.equal(g.players[0].cash, 2500);
+    assert.equal(g.players[0].cash, 2200);
+  });
+
+  it('honors createGame cash override for lobby start funds', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      goal: 10000,
+      cash: 3500,
+    });
+    assert.equal(g.players[0].cash, 3500);
+    assert.equal(g.players[1].cash, 3500);
   });
 
   it('computes toll multipliers by area size and ownership', () => {
@@ -722,6 +733,52 @@ describe('MkMk Street engine', () => {
     assert.equal(added, rem);
     assert.equal(getRemainingInvest(g, sq), 0);
     assert.equal(applyCappedShopBoost(g, sq, 50), 0);
+  });
+
+  it('invest stays numeric even if extraInvest was missing', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 19,
+      cash: 3000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    delete shop.extraInvest;
+    shop.price = shop.basePrice;
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    assert.equal(advanceMove(g).ok, true);
+    const r = applyChoice(g, { action: 'invest', shopId: shop.id, amount: 80 });
+    assert.equal(r.ok, true);
+    assert.equal(shop.extraInvest, 80);
+    assert.equal(shop.price, shop.basePrice + 80);
+    assert.equal(Number.isFinite(calcToll(g, shop)), true);
+  });
+
+  it('CPU invest respects half coupon when budgeting spend', () => {
+    const g = createGame({
+      players: [{ name: 'CPU', isCPU: true }, { name: 'B' }],
+      seed: 23,
+      cash: 900,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    shop.extraInvest = 0;
+    shop.price = shop.basePrice;
+    g.players[0].flags.investCoupon = true;
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    assert.equal(advanceMove(g).ok, true);
+    assert.equal(g.pending?.type, 'invest');
+    const before = g.players[0].cash;
+    const r = cpuAct(g);
+    assert.equal(r?.ok, true);
+    // 半額クーポンを活かして何らかの増資をする（スキップしない）
+    assert.ok(shop.extraInvest > 0, `expected invest, got extra=${shop.extraInvest}`);
+    assert.ok(g.players[0].cash < before);
+    assert.equal(g.players[0].flags.investCoupon, false);
   });
 
   it('lets owner invest any owned shop when landing on own shop', () => {

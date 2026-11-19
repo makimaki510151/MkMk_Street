@@ -55,7 +55,14 @@ import {
   kickDisconnectedPlayer,
   getGoalPressurePlayers,
 } from './engine.js';
-import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState } from './board.js';
+import {
+  AREA_META,
+  SUIT_LABELS,
+  MAP_CATALOG,
+  DEFAULT_MAP_ID,
+  DEFAULT_CASH,
+  applySwitchState,
+} from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
   pendingFingerprint,
@@ -767,7 +774,7 @@ function getMapDefName(mapId) {
   return MAP_CATALOG.find((m) => m.id === mapId)?.name || '中央クロス';
 }
 
-function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null) {
+function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null, cashInputId = null) {
   const box = document.getElementById(containerId);
   if (!box) return;
   const current = preferredId || DEFAULT_MAP_ID;
@@ -780,23 +787,36 @@ function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId 
       </span>
     </label>
   `).join('');
-  const syncGoal = () => {
-    if (!goalInputId) return;
-    const input = document.getElementById(goalInputId);
+  const syncMapDefaults = () => {
     const def = MAP_CATALOG.find((m) => m.id === selectedMapId(`#${containerId}`));
-    if (input && def?.defaultGoal) input.value = String(def.defaultGoal);
+    if (!def) return;
+    if (goalInputId) {
+      const goalInput = document.getElementById(goalInputId);
+      if (goalInput && def.defaultGoal != null) goalInput.value = String(def.defaultGoal);
+    }
+    if (cashInputId) {
+      const cashInput = document.getElementById(cashInputId);
+      if (cashInput && def.defaultCash != null) cashInput.value = String(def.defaultCash);
+    }
   };
   box.querySelectorAll('input[name="map-id"]').forEach((el) => {
-    el.addEventListener('change', syncGoal);
+    el.addEventListener('change', syncMapDefaults);
   });
-  syncGoal();
+  syncMapDefaults();
+}
+
+/** ロビー／セットアップの初期資金入力（未入力・不正は既定へ） */
+function readStartCash(inputId) {
+  const raw = Number(document.getElementById(inputId)?.value);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_CASH;
+  return Math.floor(raw);
 }
 
 function openSetupLocal() {
   showScreen('screen-setup');
   $('#setup-online-only').hidden = true;
   $('#setup-title').textContent = 'ローカル対戦';
-  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal');
+  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal', 'setup-cash');
   renderSeatEditors(2);
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
@@ -902,7 +922,7 @@ async function openLobby(role, prefill = {}) {
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
-  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal');
+  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash');
   const nameInput = $('#lobby-name');
   const savedName = loadSavedPlayerName();
   const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || prefill.room || '').toUpperCase()) : null;
@@ -1032,6 +1052,7 @@ async function openLobby(role, prefill = {}) {
     if (!app.net) return toast('先に「部屋作成」してください');
     if (app.lobbyPlayers.length < 2) return toast('あと1人以上待ってください（またはCPUを追加）');
     const goal = Number($('#lobby-goal').value) || 10000;
+    const cash = readStartCash('lobby-cash');
     const mapId = selectedMapId('#lobby-map-options');
     resyncLobbyColors();
     const players = app.lobbyPlayers.map((p) => ({
@@ -1041,7 +1062,7 @@ async function openLobby(role, prefill = {}) {
       isCPU: !!p.isCPU,
       key: p.peerId,
     }));
-    beginOrderRoll({ players, goal, mapId, mode: 'host' });
+    beginOrderRoll({ players, goal, cash, mapId, mode: 'host' });
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -1327,6 +1348,11 @@ function handleNetEvent({ from, data }) {
         app.renderer?.animateToken(data.anim.pid, data.anim.from, data.anim.to, 380);
         audio.sfx.step();
       }
+      // リモート演出中 busy でも、自分の購入/増資待ちなら UI を出す
+      if (isLocalPendingChoice(app.game)) {
+        app.busy = false;
+        app.eventFlashHoldingBusy = false;
+      }
       refreshGameUI();
       return;
     }
@@ -1540,7 +1566,7 @@ function syncGoalPressureBgm(g) {
 }
 
 /** 順番決めダイスを開始（ホスト／ローカル） */
-function beginOrderRoll({ players, goal, mapId, mode }) {
+function beginOrderRoll({ players, goal, cash, mapId, mode }) {
   const list = players.map((p, i) => ({
     key: p.key || p.peerId || `p-${i}`,
     peerId: p.peerId || null,
@@ -1556,6 +1582,7 @@ function beginOrderRoll({ players, goal, mapId, mode }) {
     awaitingConfirm: false,
     finalOrder: null,
     goal,
+    cash: cash ?? DEFAULT_CASH,
     mapId,
     mode,
   };
@@ -1591,6 +1618,7 @@ function serializeOrderRoll() {
     awaitingConfirm: !!o.awaitingConfirm,
     finalOrder: o.finalOrder || null,
     goal: o.goal,
+    cash: o.cash ?? DEFAULT_CASH,
     mapId: o.mapId,
   };
 }
@@ -1604,6 +1632,7 @@ function applyOrderRollSync(data) {
     awaitingConfirm: !!data.awaitingConfirm,
     finalOrder: Array.isArray(data.finalOrder) ? data.finalOrder : null,
     goal: data.goal,
+    cash: data.cash ?? DEFAULT_CASH,
     mapId: data.mapId,
     mode: 'guest',
   };
@@ -1842,13 +1871,14 @@ function confirmOrderRollStart() {
     isCPU: !!p.isCPU,
   }));
   const goal = o.goal;
+  const cash = o.cash ?? DEFAULT_CASH;
   const mapId = o.mapId;
   const mode = o.mode;
   app.orderRoll = null;
 
   if (mode === 'local') {
     app.mode = 'local';
-    app.game = createGame({ players, goal, mapId });
+    app.game = createGame({ players, goal, cash, mapId });
     app.localSeat = players.findIndex((p) => !p.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -1856,7 +1886,7 @@ function confirmOrderRollStart() {
   }
 
   // host online
-  app.game = createGame({ players, goal, mapId });
+  app.game = createGame({ players, goal, cash, mapId });
   app.localSeat = app.game.players.findIndex((p) => p.peerId === app.net?.peerId);
   if (app.localSeat < 0) app.localSeat = 0;
   app.net.broadcast({
@@ -1883,9 +1913,12 @@ function startLocal(seats) {
   const goal = mapFromDemo
     ? (mapDef?.defaultGoal)
     : (goalFromUi || mapDef?.defaultGoal || 10000);
+  const cash = mapFromDemo
+    ? (mapDef?.defaultCash ?? DEFAULT_CASH)
+    : readStartCash('setup-cash');
   // デモ直入れは順番ダイスを飛ばす
   if (demo) {
-    app.game = createGame({ players: seats, goal, mapId });
+    app.game = createGame({ players: seats, goal, cash, mapId });
     app.localSeat = seats.findIndex((s) => !s.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -1897,7 +1930,7 @@ function startLocal(seats) {
     peerId: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
     key: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
   }));
-  beginOrderRoll({ players, goal, mapId, mode: 'local' });
+  beginOrderRoll({ players, goal, cash, mapId, mode: 'local' });
 }
 
 function maybeDemoLanding() {
@@ -3163,6 +3196,7 @@ async function resolveForkChoice(nextId) {
   if (!result.ok) return toast(result.error || '失敗');
   if (result.state) app.game = restoreState(result.state);
   hideModal();
+  app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
   app.renderer?.animateToken(pid, from, nextId, 400);
@@ -3172,6 +3206,12 @@ async function resolveForkChoice(nextId) {
   await wait(420);
   await continueAdvancing();
   resumeAfterMovement();
+  // 着地が購入/増資待ちなら確実に選択UIを再掲（busy 残留や告知での欠落防止）
+  if (isLocalPendingChoice(app.game)) {
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
+    refreshGameUI();
+  }
 }
 
 async function runDiceAndMove(face) {
@@ -4665,9 +4705,21 @@ function refreshGameUI() {
   }
 
   const humanTurn = app.mode === 'local' ? !cur?.isCPU : isMyTurn();
+  // ログ告知は選択UIより先に処理し、直後の flush で購入/増資モーダルを塞がないようにする
+  announceNewLogs(g);
   // 料金確認などが手番移行後に残り、ホストだけ止まる／次が振れないのを解放
   if (reconcileStaleEventFlash(g)) {
     /* busy / flash をクリア済み */
+  }
+  const choiceMine = isLocalPendingChoice(g);
+  // 自分の選択待ち（分かれ道直後の購入/増資など）は移動演出 busy より優先
+  if (choiceMine) {
+    if (isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+    }
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
   }
   const eventBlocked = isEventUiBlocking();
   const canRoll = !app.busy && !eventBlocked && g.phase === 'await_roll' && humanTurn && !cur?.resting;
@@ -4698,15 +4750,8 @@ function refreshGameUI() {
   }
 
   if ((g.phase === 'await_choice' || g.phase === 'await_fork') && g.pending) {
-    const mine = app.mode === 'local' ? !g.players[g.pending.playerId]?.isCPU : g.pending.playerId === app.localSeat;
     const actor = g.players[g.pending.playerId];
-    // 選択UIを優先。マーク確認などの残留フラッシュが busy のままだとモーダルが出ず通信停止する
-    if (mine && isEventUiBlocking()) {
-      flushEventFlashImmediate();
-      if (app.mode === 'guest') requestHostEventFlashFlush();
-      app.busy = false;
-    }
-    if (mine && !app.busy) {
+    if (choiceMine) {
       app.modalActive = true;
       if (app.modalMode === 'hidden') {
         $('#modal').hidden = true;
@@ -4716,7 +4761,7 @@ function refreshGameUI() {
       }
       $('#wait-hint').hidden = true;
       setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
-    } else if (!mine && !app.busy) {
+    } else if (!app.busy) {
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
@@ -4747,7 +4792,6 @@ function refreshGameUI() {
   renderStockPanel(g);
   updateInspectPanel();
   maybeYourTurnChime();
-  announceNewLogs(g);
   updateNudgeButton();
   // ログ再フラッシュでホスト／次手番が止まるのを防ぐ
   if (reconcileStaleEventFlash(g)) {
@@ -4759,6 +4803,15 @@ function refreshGameUI() {
     }
   }
   maybeAutoSkipRest();
+}
+
+/** このクライアントが今すぐ選択UIを出すべきか（購入・増資・分岐など） */
+function isLocalPendingChoice(g) {
+  if (!g || (g.phase !== 'await_choice' && g.phase !== 'await_fork') || !g.pending) return false;
+  const pl = g.players[g.pending.playerId];
+  if (!pl || pl.bankrupt) return false;
+  if (app.mode === 'local') return !pl.isCPU;
+  return g.pending.playerId === app.localSeat;
 }
 
 function pendingStatusLabel(pend) {
@@ -5045,6 +5098,8 @@ function queueEventFlash(payload) {
   app.eventFlashQueue.push(payload);
   // 移動中はキューに積むだけ（着地前に busy を掴むとマス選択UIが出ない）
   if (app.deferEventFlash) return;
+  // 自分の購入/増資/分岐待ち中は確認フラッシュでモーダルを塞がない（選択後に pump）
+  if (isLocalPendingChoice(app.game)) return;
   // 待ち行列に入った時点で進行を止める（ホスト／ローカル）
   if (app.mode !== 'guest') {
     app.eventFlashHoldingBusy = true;
@@ -5057,6 +5112,7 @@ function queueEventFlash(payload) {
 function pumpEventFlash() {
   if (app.deferEventFlash) return;
   if (app.eventFlashOpen) return;
+  if (isLocalPendingChoice(app.game)) return;
   if (eventFlashBlocked()) return;
   const payload = app.eventFlashQueue.shift();
   if (!payload) {
@@ -5077,6 +5133,17 @@ function pumpEventFlash() {
 /** 移動完了後: 遅延したイベントUIを出し、なければ選択UI／次手番へ */
 function resumeAfterMovement() {
   app.deferEventFlash = false;
+  // 分かれ道直後の購入/増資など、選択待ちなら演出 busy を先に解放してモーダルを出す
+  if (isLocalPendingChoice(app.game)) {
+    if (isEventUiBlocking()) {
+      flushEventFlashImmediate();
+      if (app.mode === 'guest') requestHostEventFlashFlush();
+    }
+    app.busy = false;
+    app.eventFlashHoldingBusy = false;
+    refreshGameUI();
+    return;
+  }
   refreshGameUI();
   if (app.eventFlashQueue.length > 0 || app.eventFlashOpen) {
     if (app.mode !== 'guest') {

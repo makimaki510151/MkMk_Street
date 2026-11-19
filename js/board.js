@@ -34,7 +34,7 @@ export const AREA_SHOP_BASE = 4;
 export const SUIT_LABELS = ['♠', '♥', '♦', '♣'];
 
 export const DEFAULT_GOAL = 10000;
-export const DEFAULT_CASH = 2500;
+export const DEFAULT_CASH = 2200;
 export const DEFAULT_MAP_ID = 'central_cross';
 
 function link(...pairs) {
@@ -1168,7 +1168,7 @@ export const MAP_CATALOG = [
     name: '中央クロス',
     blurb: '銀行中心の十字＋外周。定番の分岐マップ',
     defaultGoal: 10000,
-    defaultCash: 2500,
+    defaultCash: 2200,
     build: buildCentralCross,
   },
   {
