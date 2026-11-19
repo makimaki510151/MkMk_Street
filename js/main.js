@@ -5,6 +5,7 @@ import {
   serializeState,
   restoreState,
   rollDice,
+  getMoveDiceMax,
   advanceMove,
   applyChoice,
   chooseFork,
@@ -3216,10 +3217,11 @@ async function playDiceOverlay(face, remote = false) {
   const overlay = $('#dice-overlay');
   const faceEl = $('#dice-overlay-face');
   const label = $('#dice-overlay-label');
+  const diceMax = Math.max(6, Number(getMoveDiceMax(app.game)) || 6);
   app.hideDiceResult = true;
   overlay.hidden = false;
   overlay.classList.remove('landed');
-  label.textContent = 'サイコロ…';
+  label.textContent = diceMax > 6 ? `サイコロ（1〜${diceMax}）…` : 'サイコロ…';
   faceEl.textContent = '?';
   $('#dice-face').textContent = '?';
   $('#dice-face').classList.remove('pop');
@@ -3227,7 +3229,7 @@ async function playDiceOverlay(face, remote = false) {
 
   const start = performance.now();
   while (performance.now() - start < 1100) {
-    faceEl.textContent = String(1 + Math.floor(Math.random() * 6));
+    faceEl.textContent = String(1 + Math.floor(Math.random() * diceMax));
     await wait(70);
   }
   faceEl.textContent = String(face);

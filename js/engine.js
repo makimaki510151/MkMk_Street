@@ -1802,6 +1802,19 @@ export function chooseFork(g, nextId) {
   };
 }
 
+/** エリア数が多いマップは移動ダイスの面数を広げる（11以上 → 1〜10） */
+export const LARGE_MAP_AREA_THRESHOLD = 11;
+export const MOVE_DICE_MAX_DEFAULT = 6;
+export const MOVE_DICE_MAX_LARGE = 10;
+
+export function getMoveDiceMax(gOrAreas) {
+  const areas = gOrAreas?.areas ?? gOrAreas;
+  const count = areas && typeof areas === 'object'
+    ? Object.keys(areas).length
+    : 0;
+  return count >= LARGE_MAP_AREA_THRESHOLD ? MOVE_DICE_MAX_LARGE : MOVE_DICE_MAX_DEFAULT;
+}
+
 /** サイコロを振る（移動は開始せず、演出後に advanceMove） */
 export function rollDice(g) {
   if (g.phase !== 'await_roll') return { ok: false, error: 'not_roll_phase' };
@@ -1833,7 +1846,8 @@ export function rollDice(g) {
   // 銀行にいるときは出発方向を自由に選べる
   if (p.pos === g.startId) p.prevPos = null;
 
-  const d = Math.floor(rngNext(g) * 6) + 1;
+  const diceMax = getMoveDiceMax(g);
+  const d = Math.floor(rngNext(g) * diceMax) + 1;
   g.dice = d;
   g.phase = 'moving';
   g.move = { stepsLeft: d, path: [], passedBank: false, startPos: p.pos };
@@ -1842,7 +1856,7 @@ export function rollDice(g) {
   // 出目数値は演出後に UI が表示。ログも演出中のネタバレを避けるため「？」で残し、UI が確定後に見せる
   addLog(g, `${p.name} がサイコロを振った`, 'dice');
 
-  return { ok: true, dice: d, needsAdvance: true, state: serializeState(g) };
+  return { ok: true, dice: d, diceMax, needsAdvance: true, state: serializeState(g) };
 }
 
 function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {

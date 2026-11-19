@@ -32,6 +32,10 @@ import {
   STOCK_BUY_BOOST_MIN,
   STOCK_BUY_B_RATE,
   rollDice,
+  getMoveDiceMax,
+  MOVE_DICE_MAX_DEFAULT,
+  MOVE_DICE_MAX_LARGE,
+  LARGE_MAP_AREA_THRESHOLD,
   advanceMove,
   applyChoice,
   chooseFork,
@@ -986,6 +990,39 @@ describe('MkMk Street engine', () => {
     assert.equal(g.phase, 'await_fork');
     assert.equal(g.pending?.type, 'fork');
     assert.ok(g.pending.options.length >= 2);
+  });
+
+  it('uses d10 move dice on maps with 11+ areas, otherwise d6', () => {
+    const small = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      mapId: 'central_cross',
+    });
+    assert.ok(Object.keys(small.areas).length < LARGE_MAP_AREA_THRESHOLD);
+    assert.equal(getMoveDiceMax(small), MOVE_DICE_MAX_DEFAULT);
+
+    const large = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      mapId: 'bin',
+    });
+    assert.ok(Object.keys(large.areas).length >= LARGE_MAP_AREA_THRESHOLD);
+    assert.equal(getMoveDiceMax(large), MOVE_DICE_MAX_LARGE);
+
+    let sawHigh = false;
+    for (let seed = 1; seed <= 80 && !sawHigh; seed++) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed,
+        mapId: 'thumbs_up',
+      });
+      const r = rollDice(g);
+      assert.equal(r.ok, true);
+      assert.equal(r.diceMax, MOVE_DICE_MAX_LARGE);
+      assert.ok(r.dice >= 1 && r.dice <= MOVE_DICE_MAX_LARGE);
+      if (r.dice > MOVE_DICE_MAX_DEFAULT) sawHigh = true;
+    }
+    assert.ok(sawHigh, 'expected at least one roll above 6 on a large map');
   });
 
   it('continues movement after choosing a fork', () => {
