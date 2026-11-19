@@ -4959,19 +4959,42 @@ function canDismissEventFlash() {
   });
 }
 
+/** 人間の出来事ポップ：無操作ならこの時間で自動閉じ */
+const EVENT_FLASH_HUMAN_AUTO_MS = 5000;
+
 function scheduleNpcEventFlashIfNeeded() {
   clearTimeout(app.eventFlashNpcTimer);
   if (!app.eventFlashOpen) return;
-  if (app.mode === 'guest') return; // ホスト側のNPCが進める
   const reader = app.game?.players?.[app.eventFlashReaderId];
-  if (!reader?.isCPU) return;
-  const delay = 1200 + Math.random() * 600;
+  const npcReading = !!reader?.isCPU;
+
+  // ゲスト: NPC確認はホストが進める。自分が閉じられるポップだけ自動閉じ→ホストへ通知
+  if (app.mode === 'guest') {
+    if (npcReading || !canDismissEventFlash()) return;
+    app.eventFlashNpcTimer = setTimeout(() => {
+      if (!app.eventFlashOpen || !canDismissEventFlash()) return;
+      dismissEventFlash();
+    }, EVENT_FLASH_HUMAN_AUTO_MS);
+    return;
+  }
+
+  if (npcReading) {
+    const delay = 1200 + Math.random() * 600;
+    app.eventFlashNpcTimer = setTimeout(() => {
+      if (!app.eventFlashOpen) return;
+      const r = app.game?.players?.[app.eventFlashReaderId];
+      if (!r?.isCPU) return;
+      dismissEventFlash({ force: true });
+    }, delay);
+    return;
+  }
+
+  // 人間の確認担当: 5秒クリックがなければ自然に閉じる
+  if (!canDismissEventFlash()) return;
   app.eventFlashNpcTimer = setTimeout(() => {
-    if (!app.eventFlashOpen) return;
-    const r = app.game?.players?.[app.eventFlashReaderId];
-    if (!r?.isCPU) return;
+    if (!app.eventFlashOpen || !canDismissEventFlash()) return;
     dismissEventFlash({ force: true });
-  }, delay);
+  }, EVENT_FLASH_HUMAN_AUTO_MS);
 }
 
 function resolveEventVisual(payload) {
@@ -5424,8 +5447,8 @@ function presentEventFlash(payload) {
       hint.textContent = `${readerName} が確認するまで待機`;
     } else {
       hint.textContent = queued
-        ? `確認したら「つづける」（残り ${queued}）`
-        : '確認したら「つづける」';
+        ? `確認したら「つづける」（残り ${queued}）· 5秒で自動`
+        : '確認したら「つづける」· 5秒で自動';
     }
   }
   if (btn) {
