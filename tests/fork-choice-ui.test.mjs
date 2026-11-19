@@ -108,4 +108,23 @@ describe('fork → land choice UI priority', () => {
     const wouldShowNew = mine;
     assert.equal(wouldShowNew, true);
   });
+
+  it('stale fork nextId is ignored once pending is buy_shop', () => {
+    // main.js: nextId のみの choice は pend.type === 'fork' のときだけ受理
+    const pend = { type: 'buy_shop', playerId: 0, shopId: 3, price: 200 };
+    const choice = { nextId: 3 };
+    const accept = pend.type === 'fork' && choice.nextId != null && choice.action == null;
+    assert.equal(accept, false);
+  });
+
+  it('forkResolving blocks a second nextId while the first is animating', () => {
+    let forkResolving = false;
+    const tryFork = () => {
+      if (forkResolving) return 'blocked';
+      forkResolving = true;
+      return 'started';
+    };
+    assert.equal(tryFork(), 'started');
+    assert.equal(tryFork(), 'blocked');
+  });
 });

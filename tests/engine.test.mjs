@@ -3334,6 +3334,54 @@ describe('MkMk Street engine', () => {
     assert.equal(shop.owner, 1);
   });
 
+  it('fork double-click nextId does not skip buy_shop after landing', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 42,
+      mapId: 'central_cross',
+      cash: 5000,
+    });
+    g.phase = 'moving';
+    g.move = { stepsLeft: 1, path: [], passedBank: false, startPos: g.players[0].pos };
+    const forked = advanceMove(g);
+    assert.equal(forked.forked, true);
+    const shopOpt = g.pending.options.find((o) => {
+      const n = g.map.find((x) => x.id === o.id);
+      return n?.type === 'shop' && n.owner < 0;
+    });
+    assert.ok(shopOpt, 'expected vacant shop fork option');
+    const land = chooseFork(g, shopOpt.id);
+    assert.equal(land.ok, true);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'buy_shop');
+
+    // 分岐ボタンの二重送信（nextId のみ）が来ても見送りにしない
+    const stale = applyChoice(g, { nextId: shopOpt.id });
+    assert.equal(stale.ok, false);
+    assert.equal(stale.error, 'bad_choice');
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'buy_shop');
+
+    const buy = applyChoice(g, { action: 'buy' });
+    assert.equal(buy.ok, true);
+    const shop = g.map.find((n) => n.id === shopOpt.id);
+    assert.equal(shop.owner, 0);
+  });
+
+  it('explicit skip still dismisses buy_shop', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 7,
+    });
+    const shop = g.map.find((n) => n.type === 'shop' && n.owner < 0);
+    g.phase = 'await_choice';
+    g.pending = { type: 'buy_shop', playerId: 0, shopId: shop.id, price: shop.price };
+    const skip = applyChoice(g, { action: 'skip' });
+    assert.equal(skip.ok, true);
+    assert.equal(shop.owner, -1);
+    assert.equal(g.pending, null);
+  });
+
   it('tracks player stats and builds endgame results with awards', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],

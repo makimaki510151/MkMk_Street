@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.8.8',
+    date: '2026-11-19',
+    items: [
+      '分かれ道直後の店で、分岐の二重操作が購入を「見送り」にしてしまう問題を修正',
+    ],
+  },
+  {
     version: '1.8.7',
     date: '2026-11-19',
     items: [

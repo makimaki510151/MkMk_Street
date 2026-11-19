@@ -162,6 +162,8 @@ const app = {
   archivePayload: null,
   /** 選択モーダル再描画抑制用（数値入力中の巻き戻り防止） */
   modalPendingKey: null,
+  /** 分岐選択の演出中（二重クリックで購入見送りになるのを防ぐ） */
+  forkResolving: false,
   /** 株パネル／プレイヤーカードでピン留めしたエリア（クリックで盤面ハイライト） */
   stockPeekArea: null,
 };
@@ -2838,6 +2840,7 @@ function renderForkRails(pend) {
   `;
   rails.querySelectorAll('[data-next]').forEach((btn) => {
     btn.onclick = () => {
+      if (app.forkResolving || app.busy) return;
       hideForkRails();
       hideModal();
       sendAction({ type: 'choice', choice: { nextId: Number(btn.dataset.next) } });
@@ -2922,7 +2925,7 @@ function bindBoardZoomControls(canvas) {
     if (!hit) return;
     app.inspectedId = hit.id;
     updateInspectPanel();
-    if (app.busy) return;
+    if (app.busy || app.forkResolving) return;
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
         ? !app.game.players[app.game.pending.playerId]?.isCPU
@@ -3128,8 +3131,19 @@ async function applyLocalAction(action) {
     if (app.mode === 'guest') return;
     noteActionActor(pend.playerId ?? app.game.currentPlayerIdx);
 
+    // 分岐演出中の二重 nextId、または着地後に遅れて届いた nextId は無視
+    if (action.choice?.nextId != null && action.choice.action == null) {
+      if (pend.type !== 'fork' || app.forkResolving) return;
+    }
+
     if (pend.type === 'fork') {
-      await resolveForkChoice(Number(action.choice.nextId));
+      if (app.forkResolving) return;
+      app.forkResolving = true;
+      try {
+        await resolveForkChoice(Number(action.choice.nextId));
+      } finally {
+        app.forkResolving = false;
+      }
       return;
     }
 
@@ -4319,8 +4333,18 @@ async function handleHostAction(from, data) {
       return;
     }
     noteActionActor(seat);
+    // 分岐演出中の二重 nextId、または着地後に遅れて届いた nextId は無視
+    if (action.choice?.nextId != null && action.choice.action == null) {
+      if (pend.type !== 'fork' || app.forkResolving) return;
+    }
     if (pend.type === 'fork') {
-      await resolveForkChoice(Number(action.choice.nextId));
+      if (app.forkResolving) return;
+      app.forkResolving = true;
+      try {
+        await resolveForkChoice(Number(action.choice.nextId));
+      } finally {
+        app.forkResolving = false;
+      }
       return;
     }
     if (app.game.phase !== 'await_choice') {
@@ -4547,6 +4571,7 @@ function maybeYourTurnChime() {
 function choiceErrorMessage(err) {
   if (err === 'still_short') return 'まだ目標金額に足りません。売却か破産を選んでください';
   if (err === 'insufficient') return '資金が足りません';
+  if (err === 'bad_choice') return 'その操作は今できません';
   if (err === 'cannot_trade') return '今は物件取引できません（双方に店が必要です）';
   if (err === 'need_shops') return '渡す店と受け取る店をそれぞれ1軒以上選んでください';
   if (err === 'bad_target') return '取引相手を選んでください';
@@ -5856,11 +5881,19 @@ function bindSpaceShortcuts() {
       }
     }
 
-    // 選択ダイアログのスキップ（表示中のみ）
+    // 選択ダイアログ：購入は確定、それ以外はスキップ（表示中のみ）
     if (app.modalActive && app.modalMode !== 'hidden') {
+      e.preventDefault();
+      const pend = app.game?.pending;
+      if (pend?.type === 'buy_shop') {
+        const buy = $('#m-buy');
+        if (buy && !buy.disabled) {
+          buy.click();
+          return;
+        }
+      }
       const skip = $('#btn-skip-choice');
       if (skip && !skip.hidden && !skip.disabled) {
-        e.preventDefault();
         skip.click();
       }
     }
@@ -6145,10 +6178,15 @@ function showChoiceModal(g) {
 
   if (pend.type === 'buy_shop') {
     const sq = getNode(g, pend.shopId);
+    const buyer = g.players[pend.playerId];
+    const price = Number(pend.price ?? sq?.price) || 0;
+    const canAfford = (buyer?.cash || 0) >= price;
     title.textContent = 'お店を購入？';
+    $('#btn-skip-choice').textContent = '見送る';
     body.innerHTML = `
-      <p class="modal-lead"><strong>${sq.label}</strong>（${AREA_META[sq.area]?.name}）</p>
-      <p>価格 <strong>${sq.price.toLocaleString()}G</strong></p>
+      <p class="modal-lead"><strong>${escapeHtml(sq?.label || 'お店')}</strong>（${AREA_META[sq?.area]?.name || '？'}）</p>
+      <p>価格 <strong>${price.toLocaleString()}G</strong></p>
+      <p class="hint">所持金 ${(buyer?.cash || 0).toLocaleString()}G${canAfford ? '' : '（不足時は資金調達へ）'}</p>
       <div class="modal-actions">
         <button class="btn primary" id="m-buy">購入する</button>
       </div>`;
