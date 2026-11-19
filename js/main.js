@@ -2869,19 +2869,56 @@ function requestHostEventFlashFlush() {
 /**
  * 手番が移ったあとに残った料金確認などで進行が止まるのを防ぐ。
  * クライアントだけ解放してホストが止まらないよう、ゲストはホストへも通知する。
+ * 「確認待ち」なのに中央UIが出ていない HoldingBusy 残留もここで解放する。
  */
 function reconcileStaleEventFlash(g) {
   if (!g || !isEventUiBlocking()) return false;
-  if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
-  // HoldingBusy だけ残ってキューも表示もない＝スイッチ演出後などに起こる残留デッドロック
+
+  // HoldingBusy だけ残ってキューも表示もない＝確認UI無しで CPU/手番が止まるデッドロック
+  // （スイッチ演出後・オーバーレイ競合後など。フェーズを問わず解放）
   if (!app.eventFlashOpen && !(app.eventFlashQueue?.length > 0)) {
-    if (app.eventFlashHoldingBusy) {
+    if (app.eventFlashHoldingBusy || app.busy) {
       app.eventFlashHoldingBusy = false;
       app.busy = false;
+      app.eventFlashReaderId = null;
       return true;
     }
     return false;
   }
+
+  // キューがあるのに表示できていない → 再 pump。deferred 中は着地待ちなので触らない
+  if (!app.eventFlashOpen && app.eventFlashQueue?.length > 0) {
+    if (app.deferEventFlash) return false;
+    pumpEventFlash();
+    if (app.eventFlashOpen) return true;
+    // 他演出にブロックされていないのに出せない＝壊れたペイロード。捨てて進行
+    if (!eventFlashBlocked()) {
+      app.eventFlashQueue.shift();
+      pumpEventFlash();
+      if (!isEventUiBlocking()) {
+        app.busy = false;
+        return true;
+      }
+      return app.eventFlashOpen;
+    }
+    return false;
+  }
+
+  // open なのに DOM が hidden＝不整合。フラグを下ろして再 pump
+  const overlay = $('#event-flash');
+  if (app.eventFlashOpen && overlay?.hidden) {
+    app.eventFlashOpen = false;
+    app.eventFlashHoldingBusy = false;
+    pumpEventFlash();
+    if (!isEventUiBlocking()) {
+      app.busy = false;
+      app.eventFlashReaderId = null;
+      return true;
+    }
+    return !!app.eventFlashOpen;
+  }
+
+  if (g.phase !== 'await_roll' && g.phase !== 'moving') return false;
   // 未表示の deferred キューだけなら消さない（着地後に pump するため）
   if (!app.eventFlashOpen) return false;
   const readerId = app.eventFlashReaderId;
@@ -4221,6 +4258,10 @@ function noteActionActor(pid = app.game?.currentPlayerIdx) {
 
 function scheduleCpu() {
   clearTimeout(app.cpuTimer);
+  // 確認UIが無いのに busy/HoldingBusy だけ残っていると CPU が永久停止する
+  if (app.game && isEventUiBlocking()) {
+    reconcileStaleEventFlash(app.game);
+  }
   // イベント確認中は次のNPCを絶対に動かさない
   if (isEventUiBlocking()) return;
   if (!app.game || app.game.phase === 'gameover' || app.busy) return;
@@ -5010,10 +5051,13 @@ function scheduleNpcEventFlashIfNeeded() {
     return;
   }
 
-  // 人間の確認担当: 5秒クリックがなければ自然に閉じる
-  if (!canDismissEventFlash()) return;
+  // ホスト／ローカル: 人間ポップは必ず自動進行する。
+  // 確認担当クライアントにUIが出なかった場合でも、観戦側ホストが永久「確認待ち」で
+  // CPU手番を止めないよう、読めない側も force で閉じる（正規の5秒タイムアウト）。
   app.eventFlashNpcTimer = setTimeout(() => {
-    if (!app.eventFlashOpen || !canDismissEventFlash()) return;
+    if (!app.eventFlashOpen) return;
+    const r = app.game?.players?.[app.eventFlashReaderId];
+    if (r?.isCPU) return;
     dismissEventFlash({ force: true });
   }, EVENT_FLASH_HUMAN_AUTO_MS);
 }
