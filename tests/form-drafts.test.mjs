@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pendingFingerprint,
+  modalContentKey,
   snapshotEditableFields,
   restoreEditableFields,
 } from '../js/formDrafts.js';
@@ -14,6 +15,21 @@ describe('formDrafts', () => {
     assert.equal(pendingFingerprint(a), pendingFingerprint(b));
     assert.notEqual(pendingFingerprint(a), pendingFingerprint(c));
     assert.equal(pendingFingerprint(null), '');
+  });
+
+  it('modalContentKey for raise_funds changes when cash or holdings change', () => {
+    const pend = { type: 'raise_funds', playerId: 0, targetCash: 500, reason: 'toll' };
+    const g = {
+      players: [{ id: 0, cash: 100, stocks: { 1: 5 } }],
+      map: [{ id: 10, type: 'shop', owner: 0 }],
+    };
+    const a = modalContentKey(g, pend);
+    g.players[0].cash = 400;
+    const b = modalContentKey(g, pend);
+    assert.notEqual(a, b);
+    g.players[0].stocks[1] = 2;
+    const c = modalContentKey(g, pend);
+    assert.notEqual(b, c);
   });
 
   it('snapshot/restore keeps number drafts across rebuild', () => {

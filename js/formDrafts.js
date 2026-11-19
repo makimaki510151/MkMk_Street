@@ -13,6 +13,30 @@ export function pendingFingerprint(pend) {
 }
 
 /**
+ * モーダル再描画判定用。pending に現れないプレイヤー資産も見る
+ * （資金調達の売却後に所持金／ボタン状態が更新されないのを防ぐ）
+ */
+export function modalContentKey(g, pend) {
+  const base = pendingFingerprint(pend);
+  if (!base || !g || !pend) return base;
+  const p = g.players?.[pend.playerId];
+  if (!p) return base;
+  if (pend.type === 'raise_funds') {
+    const shops = (g.map || [])
+      .filter((s) => s.type === 'shop' && s.owner === p.id)
+      .map((s) => s.id)
+      .join(',');
+    const stocks = Object.keys(p.stocks || {})
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map((a) => `${a}:${Math.max(0, Math.floor(Number(p.stocks[a]) || 0))}`)
+      .join(',');
+    return `${base}|cash:${p.cash}|stocks:${stocks}|shops:${shops}`;
+  }
+  return base;
+}
+
+/**
  * input/textarea の現在値を安定キーで保存。
  * @param {ParentNode|null|undefined} root
  * @param {{ activeElement?: Element|null }} [opts]

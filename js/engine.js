@@ -299,7 +299,9 @@ function bumpStat(p, key, n = 1) {
 function getStockAssetOnly(g, p) {
   let stockAsset = 0;
   for (const [a, cnt] of Object.entries(p.stocks || {})) {
-    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * cnt;
+    const n = Math.max(0, Math.floor(Number(cnt) || 0));
+    if (n <= 0) continue;
+    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * n;
   }
   return stockAsset;
 }
@@ -876,10 +878,7 @@ export function previewStockBuy(g, area, count) {
 }
 
 export function getPlayerAssets(g, p) {
-  let stockAsset = 0;
-  for (const [a, cnt] of Object.entries(p.stocks || {})) {
-    stockAsset += (g.areas[Number(a)]?.stockPrice || 0) * cnt;
-  }
+  const stockAsset = getStockAssetOnly(g, p);
   const shopAsset = g.map
     .filter((s) => s.type === 'shop' && s.owner === p.id)
     .reduce((s, sq) => s + sq.price, 0);
@@ -2497,13 +2496,29 @@ export function cpuShouldAcceptShopTrade(g, responder, pending) {
   return receive + 1e-6 >= pay * Math.max(0.75, threshold);
 }
 
+/** 所持枚数を超えない売却枚数。0枚所持なら必ず 0。 */
+function clampStockSellCount(have, count) {
+  const h = Math.max(0, Math.floor(Number(have) || 0));
+  if (h <= 0) return 0;
+  const want = Math.max(1, Math.floor(Number(count) || 1));
+  return Math.min(h, want);
+}
+
+function setStockHolding(p, area, next) {
+  const a = Number(area);
+  const n = Math.max(0, Math.floor(Number(next) || 0));
+  if (!p.stocks || typeof p.stocks !== 'object') p.stocks = {};
+  if (n <= 0) delete p.stocks[a];
+  else p.stocks[a] = n;
+}
+
 function sellStockForCash(g, p, area, count) {
   const a = Number(area);
-  const have = p.stocks[a] || 0;
-  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  const have = Math.max(0, Math.floor(Number(p.stocks?.[a]) || 0));
+  const n = clampStockSellCount(have, count);
   if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
   const got = g.areas[a].stockPrice * n;
-  p.stocks[a] -= n;
+  setStockHolding(p, a, have - n);
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
@@ -2555,10 +2570,32 @@ export function kickDisconnectedPlayer(g, pid) {
   if (!p || p.bankrupt) return { ok: false, error: 'invalid' };
   addLog(g, `${p.name} をキック`, 'system');
   declareBankrupt(g, p);
-  if (g.pending?.playerId === pid) {
+
+  // 全員参加ミニゲーム中に参加者をキック → 残メンバーで継続／精算（開催者に再ロールを渡さない）
+  if (g.pending?.type === 'minigame') {
+    const pending = g.pending;
+    pending.participantIds = (pending.participantIds || []).filter((id) => id !== pid);
+    if (pending.picks && Object.prototype.hasOwnProperty.call(pending.picks, pid)) {
+      delete pending.picks[pid];
+    }
+    const waiting = pending.participantIds.filter((id) => {
+      const pl = g.players[id];
+      return pl && !pl.bankrupt && pending.picks?.[id] == null;
+    });
+    if (waiting.length) {
+      pending.playerId = waiting[0];
+    } else if (pending.participantIds.some((id) => pending.picks?.[id] != null)) {
+      return { ...finalizeMinigame(g, pending), kicked: true };
+    } else {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, kicked: true, state: serializeState(g) };
+    }
+  } else if (g.pending?.playerId === pid) {
     g.pending = null;
     g.phase = 'await_roll';
   }
+
   if (g.currentPlayerIdx === pid || g.players.filter((x) => !x.bankrupt).length <= 1) {
     endTurn(g);
   }
@@ -2645,6 +2682,9 @@ export function applyChoice(g, choice) {
   if (pending.type === 'buy_shop') {
     const sq = getNode(g, pending.shopId);
     if (choice.action === 'buy') {
+      if (!sq || sq.type !== 'shop' || sq.owner >= 0) {
+        return { ok: false, error: 'bad_shop' };
+      }
       if (getLiquidatableValue(g, p) < sq.price) {
         return { ok: false, error: 'insufficient' };
       }
@@ -2666,7 +2706,7 @@ export function applyChoice(g, choice) {
       endTurn(g);
       return { ok: true, ...(mono || {}), state: serializeState(g) };
     } else {
-      addLog(g, `${p.name} は「${sq.label}」の購入を見送り`, 'system');
+      addLog(g, `${p.name} は「${sq?.label || 'お店'}」の購入を見送り`, 'system');
     }
     g.pending = null;
     endTurn(g);
@@ -2906,14 +2946,14 @@ export function applyChoice(g, choice) {
       const area = Number(choice.area);
       if (!g.areas[area]) return { ok: false, error: 'bad_area' };
       const price = g.areas[area].stockPrice;
-      const maxAfford = Math.floor(p.cash / price);
+      const maxAfford = Math.max(0, Math.floor(p.cash / Math.max(1, price)));
       // 1種類購入時は持ち金の限り（証券・銀行とも）
-      const hardCap = Math.max(1, maxAfford);
-      const count = Math.max(1, Math.min(hardCap, Number(choice.count) || 1));
+      const want = Math.max(1, Math.floor(Number(choice.count) || 1));
+      const count = Math.min(maxAfford, want);
       const cost = price * count;
-      if (p.cash < cost) return { ok: false, error: 'insufficient' };
+      if (count <= 0 || p.cash < cost) return { ok: false, error: 'insufficient' };
       p.cash -= cost;
-      p.stocks[area] = (p.stocks[area] || 0) + count;
+      setStockHolding(p, area, (Math.max(0, Math.floor(Number(p.stocks?.[area]) || 0)) + count));
       bumpStat(p, 'stockBought', count);
       bumpStat(p, 'stockSpent', cost);
       syncStockValueSnap(g, p);
@@ -2937,11 +2977,12 @@ export function applyChoice(g, choice) {
     } else if (choice.action === 'sell') {
       if (bankVisit) return { ok: false, error: 'bank_buy_only' };
       const area = Number(choice.area);
-      const have = p.stocks[area] || 0;
-      const count = Math.max(1, Math.min(have, Number(choice.count) || 1));
+      if (!g.areas[area]) return { ok: false, error: 'bad_area' };
+      const have = Math.max(0, Math.floor(Number(p.stocks?.[area]) || 0));
+      const count = clampStockSellCount(have, choice.count);
       if (count <= 0) return { ok: false, error: 'no_stock' };
       const got = g.areas[area].stockPrice * count;
-      p.stocks[area] -= count;
+      setStockHolding(p, area, have - count);
       p.cash += got;
       bumpStat(p, 'stockSold', count);
       bumpStat(p, 'stockIncome', got);
@@ -3205,6 +3246,10 @@ export function applyChoice(g, choice) {
       if (!target || target.bankrupt) return { ok: false, error: 'bad_target' };
       const giveShopIds = [...(pending.giveShopIds || [])];
       const takeShopIds = [...(pending.takeShopIds || [])];
+      // 入力欄から直接渡された差額を優先（change 未発火でも反映）
+      if (choice.cashDelta != null && Number.isFinite(Number(choice.cashDelta))) {
+        pending.cashDelta = Math.floor(Number(choice.cashDelta) || 0);
+      }
       const cashDelta = Math.floor(Number(pending.cashDelta) || 0);
       const check = validateShopTradeSides(g, p.id, targetId, giveShopIds, takeShopIds);
       if (!check.ok) return check;
@@ -3819,7 +3864,7 @@ export function canSellStockOnTurn(g, playerId) {
   if (g.currentPlayerIdx !== playerId) return false;
   const p = g.players[playerId];
   if (!p || p.bankrupt || p.resting) return false;
-  return Object.values(p.stocks || {}).some((n) => (n || 0) > 0);
+  return Object.values(p.stocks || {}).some((n) => Math.max(0, Math.floor(Number(n) || 0)) > 0);
 }
 
 /** 自分のターン中いつでも株売却できる（サイコロ前・選択中・分岐中） */
@@ -3829,11 +3874,11 @@ export function preTurnSell(g, playerId, area, count) {
   const p = g.players[playerId];
   if (!p || p.bankrupt) return { ok: false, error: 'bankrupt' };
   const a = Number(area);
-  const have = p.stocks[a] || 0;
-  const n = Math.max(1, Math.min(have, Number(count) || 1));
+  const have = Math.max(0, Math.floor(Number(p.stocks?.[a]) || 0));
+  const n = clampStockSellCount(have, count);
   if (n <= 0 || !g.areas[a]) return { ok: false, error: 'no_stock' };
   const got = g.areas[a].stockPrice * n;
-  p.stocks[a] -= n;
+  setStockHolding(p, a, have - n);
   p.cash += got;
   bumpStat(p, 'stockSold', n);
   bumpStat(p, 'stockIncome', got);
@@ -4354,42 +4399,22 @@ function cpuPickInvestShop(g, p, ids, traits, { preferId = null, requireRem = fa
 export function cpuAct(g) {
   if (g.phase === 'gameover') return null;
 
-  // 手番以外でも pending 担当がCPUなら応答（物件取引の承諾など）
-  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_offer') {
-    const responder = g.players[g.pending.playerId];
-    if (responder?.isCPU && !responder.bankrupt) {
-      const ok = cpuShouldAcceptShopTrade(g, responder, g.pending);
-      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
-    }
-  }
-  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_compose') {
-    const composer = g.players[g.pending.playerId];
-    if (composer?.isCPU && !composer.bankrupt) {
-      return applyChoice(g, { action: 'cancel' });
-    }
-  }
-
-  const p = currentPlayer(g);
-  if (!p?.isCPU || p.bankrupt) return null;
-  const traits = getCpuPersonality(p);
-  const phase = cpuGamePhase(g, p);
-
-  if (g.phase === 'await_roll') {
-    return rollDice(g);
-  }
-
-  if (g.phase === 'moving' && g.move) {
-    return advanceMove(g);
-  }
-
-  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
-    const nextId = cpuPickFork(g, p, g.pending.options);
-    return chooseFork(g, nextId);
-  }
-
+  // 選択待ちは pending.playerId のCPUが応答（手番プレイヤーと違うこともある：
+  // 全員参加ミニゲーム・物件取引の承諾など）
   if (g.phase === 'await_choice' && g.pending) {
     const pend = g.pending;
-    if (pend.playerId !== p.id) return null;
+    const p = g.players[pend.playerId];
+    if (!p?.isCPU || p.bankrupt) return null;
+    const traits = getCpuPersonality(p);
+    const phase = cpuGamePhase(g, p);
+
+    if (pend.type === 'shop_trade_offer') {
+      const ok = cpuShouldAcceptShopTrade(g, p, pend);
+      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
+    }
+    if (pend.type === 'shop_trade_compose') {
+      return applyChoice(g, { action: 'cancel' });
+    }
     if (pend.type === 'level_up') {
       return applyChoice(g, { action: 'celebrate' });
     }
@@ -4578,7 +4603,25 @@ export function cpuAct(g) {
       }
       return applyChoice(g, { action: 'spin' });
     }
+    return null;
   }
+
+  const p = currentPlayer(g);
+  if (!p?.isCPU || p.bankrupt) return null;
+
+  if (g.phase === 'await_roll') {
+    return rollDice(g);
+  }
+
+  if (g.phase === 'moving' && g.move) {
+    return advanceMove(g);
+  }
+
+  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
+    const nextId = cpuPickFork(g, p, g.pending.options);
+    return chooseFork(g, nextId);
+  }
+
   return null;
 }
 

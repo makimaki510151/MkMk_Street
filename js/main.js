@@ -57,6 +57,7 @@ import { AREA_META, SUIT_LABELS, MAP_CATALOG, DEFAULT_MAP_ID, applySwitchState }
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
   pendingFingerprint,
+  modalContentKey,
   snapshotEditableFields,
   restoreEditableFields,
 } from './formDrafts.js';
@@ -5637,12 +5638,16 @@ function showChoiceModal(g) {
     applyModalMode();
     return;
   }
-  // pending が変わっていなければ作り直さない（催促／state 同期での数値巻き戻り防止）
-  const fp = pendingFingerprint(pend);
+  // pending／関連資産が変わっていなければ作り直さない（催促での数値巻き戻り防止）
+  // raise_funds は売却で cash/stocks が変わるので modalContentKey で再描画する
+  const fp = modalContentKey(g, pend) || pendingFingerprint(pend);
   if (fp && fp === app.modalPendingKey && !modal.hidden && body?.childNodes?.length) {
     applyModalMode();
     return;
   }
+  const drafts = (!modal.hidden && body?.childNodes?.length)
+    ? snapshotEditableFields(body)
+    : [];
   app.modalPendingKey = fp;
   modal.hidden = false;
   applyModalMode();
@@ -5748,8 +5753,10 @@ function showChoiceModal(g) {
       cashInput.addEventListener('change', commitCash);
     }
     $('#m-trade-propose')?.addEventListener('click', () => {
-      sendAction({ type: 'choice', choice: { action: 'propose' } });
+      const cashDelta = Number($('#trade-cash-delta')?.value) || 0;
+      sendAction({ type: 'choice', choice: { action: 'propose', cashDelta } });
     });
+    if (drafts.length) restoreEditableFields(body, drafts);
     return;
   }
 
@@ -6139,15 +6146,20 @@ function showChoiceModal(g) {
       btn.onclick = () => {
         const area = Number(btn.dataset.doSellStock);
         const input = body.querySelector(`input[data-sell-stock="${area}"]`);
-        const count = Math.max(1, Number(input?.value) || 1);
+        const have = Math.max(0, Math.floor(Number(p?.stocks[area]) || 0));
+        if (have <= 0) return toast('売却できる株がありません');
+        const want = Math.max(1, Math.floor(Number(input?.value) || 1));
+        const count = Math.min(have, want);
+        if (count <= 0) return toast('売却できる株がありません');
         sendAction({ type: 'choice', choice: { action: 'sell_stock', area, count } });
       };
     });
     body.querySelectorAll('input[data-sell-stock]').forEach((input) => {
       const sync = () => {
         const area = Number(input.dataset.sellStock);
-        const have = p?.stocks[area] || 0;
-        const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+        const have = Math.max(0, Math.floor(Number(p?.stocks[area]) || 0));
+        const want = Math.max(1, Math.floor(Number(input.value) || 1));
+        const count = have > 0 ? Math.min(have, want) : 0;
         const el = body.querySelector(`[data-sell-preview="${area}"]`);
         if (el) {
           el.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
@@ -6179,6 +6191,18 @@ function showChoiceModal(g) {
       if (!confirm('破産すると店も株も失います。よろしいですか？')) return;
       sendAction({ type: 'choice', choice: { action: 'bankrupt' } });
     };
+    if (drafts.length) {
+      restoreEditableFields(body, drafts);
+      body.querySelectorAll('input[data-sell-stock]').forEach((input) => {
+        const area = Number(input.dataset.sellStock);
+        const have = Math.max(0, Math.floor(Number(p?.stocks[area]) || 0));
+        if (have > 0) {
+          input.max = String(have);
+          if (Number(input.value) > have) input.value = String(have);
+        }
+        input.dispatchEvent(new Event('input'));
+      });
+    }
     return;
   }
 
@@ -7227,8 +7251,11 @@ function renderStockPanel(g) {
       if (seat == null || app.busy) return;
       const area = Number(btn.dataset.turnSell);
       const input = el.querySelector(`input[data-sell-count="${area}"]`);
-      const have = me?.stocks[area] || 0;
-      const count = Math.max(1, Math.min(have, Number(input?.value) || 1));
+      const have = Math.max(0, Math.floor(Number(me?.stocks[area]) || 0));
+      if (have <= 0) return toast('売却できる株がありません');
+      const want = Math.max(1, Math.floor(Number(input?.value) || 1));
+      const count = Math.min(have, want);
+      if (count <= 0) return toast('売却できる株がありません');
       sendAction({ type: 'sell', playerId: seat, area, count });
     };
   });
@@ -7236,8 +7263,9 @@ function renderStockPanel(g) {
   el.querySelectorAll('input[data-sell-count]').forEach((input) => {
     const sync = () => {
       const area = Number(input.dataset.sellCount);
-      const have = me?.stocks[area] || 0;
-      const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+      const have = Math.max(0, Math.floor(Number(me?.stocks[area]) || 0));
+      const want = Math.max(1, Math.floor(Number(input.value) || 1));
+      const count = have > 0 ? Math.min(have, want) : 0;
       const preview = el.querySelector(`[data-sell-preview="${area}"]`);
       if (preview) {
         preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
@@ -7253,8 +7281,13 @@ function renderStockPanel(g) {
   restoreEditableFields(el, drafts);
   el.querySelectorAll('input[data-sell-count]').forEach((input) => {
     const area = Number(input.dataset.sellCount);
-    const have = me?.stocks[area] || 0;
-    const count = Math.max(1, Math.min(have, Number(input.value) || 1));
+    const have = Math.max(0, Math.floor(Number(me?.stocks[area]) || 0));
+    const want = Math.max(1, Math.floor(Number(input.value) || 1));
+    const count = have > 0 ? Math.min(have, want) : 0;
+    if (have > 0) {
+      input.max = String(have);
+      if (Number(input.value) > have) input.value = String(have);
+    }
     const preview = el.querySelector(`[data-sell-preview="${area}"]`);
     if (preview) {
       preview.className = `sell-preview${previewStockSell(g, area, count)?.drops ? ' drop' : ''}`;
