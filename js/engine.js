@@ -612,8 +612,10 @@ export function calcToll(g, sq) {
   if (owner?.shopsClosed) return 0;
   const areaSize = getAreaShops(g, sq.area).length;
   const cnt = getPlayerAreaCount(g, sq.owner, sq.area);
+  const extra = Math.max(0, Number(sq.extraInvest) || 0);
+  const base = Math.max(1, Number(sq.basePrice) || 1);
   return Math.floor(
-    sq.baseToll * (1 + (sq.extraInvest / sq.basePrice) * 2) * getTollMulti(cnt, areaSize),
+    sq.baseToll * (1 + (extra / base) * 2) * getTollMulti(cnt, areaSize),
   );
 }
 
@@ -1539,6 +1541,17 @@ export function restoreState(data) {
   if (Array.isArray(g.players) && g.players.length) {
     const normalized = normalizeLobbyColors(g.players);
     g.players = g.players.map((p, i) => ({ ...p, color: normalized[i].color }));
+  }
+  // 店の増資・価格を数値として正規化（欠損で NaN 増資にならないように）
+  for (const sq of g.map || []) {
+    if (!sq || sq.type !== 'shop') continue;
+    const base = Math.max(0, Math.floor(Number(sq.basePrice) || 0));
+    const extra = Math.max(0, Math.floor(Number(sq.extraInvest) || 0));
+    sq.basePrice = base || sq.basePrice || 0;
+    sq.extraInvest = extra;
+    if (!Number.isFinite(Number(sq.price)) || Number(sq.price) < base) {
+      sq.price = base + extra;
+    }
   }
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
@@ -2783,8 +2796,8 @@ export function applyChoice(g, choice) {
         const usedCoupon = !!p.flags.investCoupon;
         if (usedCoupon) p.flags.investCoupon = false;
         p.cash -= pay;
-        sq.extraInvest += amount;
-        sq.price += amount;
+        sq.extraInvest = (Number(sq.extraInvest) || 0) + amount;
+        sq.price = (Number(sq.basePrice) || 0) + sq.extraInvest;
         bumpStat(p, 'investTotal', amount);
         updateAreaStockPrices(g);
         addLog(
@@ -4484,12 +4497,16 @@ export function cpuAct(g) {
       const rem = target ? getRemainingInvest(g, target) : 0;
       // 増資は現金クッション内だけで行い、資金調達（店売り）には入らない
       const reserve = cpuCashReserve(g, p);
-      const spendable = Math.max(0, p.cash - reserve);
+      const half = !!p.flags?.investCoupon;
+      // 半額クーポン時は支払いで換算した予算から増資額を決める
+      const spendablePay = Math.max(0, p.cash - reserve);
+      const spendableValue = half ? spendablePay * 2 : spendablePay;
       let rate = traits.investRate;
       if (phase.nearGoal) rate *= 0.45;
       if (target && focusBoostInvest(g, p, target, traits)) rate = Math.min(0.85, rate + 0.18);
-      const amount = Math.min(rem, Math.floor(spendable * rate));
-      if (amount >= 20 && cpuCanAffordSpend(g, p, amount)) {
+      const amount = Math.min(rem, Math.floor(spendableValue * rate));
+      const pay = half ? Math.ceil(amount / 2) : amount;
+      if (amount >= 20 && cpuCanAffordSpend(g, p, pay)) {
         return applyChoice(g, { action: 'invest', shopId: best, amount });
       }
       return applyChoice(g, { action: 'skip' });
