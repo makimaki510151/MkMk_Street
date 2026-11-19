@@ -7425,7 +7425,7 @@ if (bootDemo === 'results-json') {
       },
     ],
     worthHistory: [
-      { turn: 1, values: { 0: 2000, 1: 2000 } },
+      { turn: 1, values: { 0: 2500, 1: 2500 } },
       { turn: 9, values: { 0: 5500, 1: 4800 } },
       { turn: 18, values: { 0: 9900, 1: 8100 } },
     ],
