@@ -1875,7 +1875,8 @@ function startLocal(seats) {
     : demo === 'map-shell' ? 'shell_harbor'
       : demo === 'map-bin' ? 'bin'
       : demo === 'map-thumbs-up' ? 'thumbs_up'
-        : params.get('map');
+        : demo === 'map-torima' ? 'torima'
+          : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);
@@ -4809,9 +4810,21 @@ function bannerFromLog(g, l) {
       detail = l.text;
     }
   } else if (kind === 'system') {
-    if (/休み|店休|休憩|営業再開|破産|売却|休み中/.test(l.text)) {
+    if (/営業再開/.test(l.text)) {
       kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
-      title = /店休|休み中/.test(l.text) ? 'お店が休み' : (/休憩|次ターン休み|復帰/.test(l.text) ? '休憩' : 'お知らせ');
+      title = 'お店が再開';
+      detail = l.text;
+    } else if (/店休|休み中/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = 'お店が休み';
+      detail = l.text;
+    } else if (/休憩|次ターン休み|復帰/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = '休憩';
+      detail = l.text;
+    } else if (/破産|売却/.test(l.text)) {
+      kicker = mine ? 'ステータス' : `${player?.name || ''} の状況`;
+      title = /破産/.test(l.text) ? '破産' : '売却';
       detail = l.text;
     } else {
       return null;
@@ -5035,12 +5048,15 @@ function resolveEventVisual(payload) {
     if (amt) chips.unshift(`${amt}G`);
     chips.unshift('支払い');
   } else if (kind === 'system') {
-    if (/休憩|休み/.test(text)) {
-      base.glyph = 'Z';
-      chips.unshift('休憩');
-    } else if (/店休|営業/.test(text)) {
+    if (/営業再開/.test(text)) {
+      base.glyph = '開';
+      chips.unshift('再開');
+    } else if (/店休|休み中/.test(text)) {
       base.glyph = '休';
       chips.unshift('店休');
+    } else if (/休憩|次ターン休み|復帰/.test(text)) {
+      base.glyph = 'Z';
+      chips.unshift('休憩');
     } else if (/破産/.test(text)) {
       base.glyph = '×';
       chips.unshift('破産');

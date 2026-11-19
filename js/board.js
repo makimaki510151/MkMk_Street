@@ -950,6 +950,198 @@ export function buildThumbsUp() {
   });
 }
 
+/**
+ * マップ案「とりま」：19×11。中央銀行から上下左右に枝分かれ。
+ * 凡例: 銀銀行 / Ａ〜Ｊ店 / 削スクラッチ / スロット / 株 / ララッキー / イイベント
+ *       当サイコロ当て / 休＝止まると自分の店が1ターン休店 / ♠♥♦♣
+ */
+export function buildTorima() {
+  const { nodes, N } = makeNodeFactory();
+  // 案JSONは斜め隣接前提の箇所があるため、直交リンクで閉じるよう
+  // 上下アーチ化し、銀行まわりは通路（岐）でつなぐ。
+  // 記号「道」= junction（停止のみの通路）
+  const gridRows = [
+    '　　　　　　　ＣＣ休ＣＣ　　　　　　　',
+    '　♦ＥＥ削ＥＥスＡ　ＡラＨＨイＨＨ♠　',
+    '　Ｇ　　　　　　道　道　　　　　　Ｊ　',
+    '　Ｇ　　　　　　Ａ銀Ａ　　　　　　Ｊ　',
+    '　株　　　　　　Ｂ道Ｂ　　　　　　当　',
+    '　Ｇ　　　　　　Ｂ道Ｂ　　　　　　Ｊ　',
+    '　Ｇ　　　　　　　　　　　　　　　Ｊ　',
+    '　♥ＦＦイＦＦラ　　　スＩＩ削ＩＩ♣　',
+    '　　　　　　　ＤＤ休ＤＤ　　　　　　　',
+  ];
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5,
+    Ｆ: 6, Ｇ: 7, Ｈ: 8, Ｉ: 9, Ｊ: 10,
+  };
+  const shopNames = {
+    1: ['巣箱カフェ', 'ひなみやげ', 'とまり木茶屋', '羽根ペン屋'],
+    2: ['砂浴び場屋台', 'ひなたパン', 'むく毛屋', '雛の雑貨'],
+    3: ['てっぺん枝ホテル', '梢の展望台', '風切り食堂', '雲見みやげ'],
+    4: ['根もとの市場', '落ち葉茶屋', '地べた屋台', '巣材屋'],
+    5: ['左翼ブティック', '風切り屋', '羽ばたき屋', 'エアロみやげ'],
+    6: ['右翼マーケット', 'バランス屋', '羽軸屋', 'グライダー屋'],
+    7: ['くちばし坂食堂', 'ついばみ屋', '種ひろい屋', 'くちばしみやげ'],
+    8: ['風切り羽工房', 'ダウン屋', '羽繕い屋', 'フライト屋'],
+    9: ['尾羽横丁', '舵取り屋', '尾羽根みやげ', '方向屋'],
+    10: ['とまり木通り', '止まり木カフェ', '見晴らし屋', 'さえずり屋'],
+  };
+  const shopPrice = {
+    1: [220, 180, 160, 260],
+    2: [220, 180, 160, 260],
+    3: [300, 250, 220, 340],
+    4: [300, 250, 220, 340],
+    5: [200, 170, 150, 240],
+    6: [200, 170, 150, 240],
+    7: [190, 160, 140, 230],
+    8: [240, 200, 180, 280],
+    9: [240, 200, 180, 280],
+    10: [210, 175, 155, 250],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+
+  let bank = null;
+  let slotCount = 0;
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== 19) {
+      throw new Error(`とりま: 行${row}の幅が${chars.length}（19であるべき）`);
+    }
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        const area = areaFromChar[ch];
+        const i = shopIdx[area]++;
+        const names = shopNames[area];
+        const prices = shopPrice[area];
+        put(col, row, N('shop', {
+          label: names[i % names.length],
+          area,
+          basePrice: prices[i % prices.length],
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '銀') {
+        bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+        continue;
+      }
+      if (ch === '♠') {
+        put(col, row, N('mark', { label: '♠', mark: 0, col, row }));
+        continue;
+      }
+      if (ch === '♥') {
+        put(col, row, N('mark', { label: '♥', mark: 1, col, row }));
+        continue;
+      }
+      if (ch === '♦') {
+        put(col, row, N('mark', { label: '♦', mark: 2, col, row }));
+        continue;
+      }
+      if (ch === '♣') {
+        put(col, row, N('mark', { label: '♣', mark: 3, col, row }));
+        continue;
+      }
+      if (ch === '削') {
+        put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+        continue;
+      }
+      if (ch === 'ス') {
+        slotCount += 1;
+        put(col, row, N('minigame', {
+          label: slotCount === 1 ? 'スロット' : 'スロットⅡ',
+          game: 'slot',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '当') {
+        put(col, row, N('minigame', {
+          label: 'サイコロ当て',
+          game: 'guess_dice',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '株') {
+        put(col, row, N('stockbroker', { label: '証券', col, row }));
+        continue;
+      }
+      if (ch === 'ラ') {
+        put(col, row, N('lucky', { label: '★', col, row }));
+        continue;
+      }
+      if (ch === 'イ') {
+        put(col, row, N('event', { label: 'イベント', col, row }));
+        continue;
+      }
+      if (ch === '休') {
+        // 止まると自分の店が1ターン休店（買い物料0）
+        put(col, row, N('holiday', { label: '店休', col, row }));
+        continue;
+      }
+      if (ch === '道') {
+        put(col, row, N('junction', { label: '道', col, row }));
+        continue;
+      }
+      throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
+    }
+  }
+
+  if (!bank) throw new Error('とりまマップに銀行がありません');
+  for (const [area, count] of Object.entries(shopIdx)) {
+    if (count !== 4) throw new Error(`とりま: エリア${area}の店が${count}件（4であるべき）`);
+  }
+
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
+      for (const [dc, dr] of dirs) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        link([a, b]);
+      }
+    }
+  }
+
+  return packBoard(nodes, bank, 19, gridRows.length, {
+    mapId: 'torima',
+    mapName: 'とりま',
+    goal: 13000,
+    initialCash: 2200,
+    areaOverrides: {
+      1: { name: '巣のまわり' },
+      2: { name: 'ひな広場' },
+      3: { name: 'てっぺん枝' },
+      4: { name: '根もとの道' },
+      5: { name: '左翼通り' },
+      6: { name: '右翼通り' },
+      7: { name: 'くちばし坂' },
+      8: { name: '風切り羽' },
+      9: { name: '尾羽横丁' },
+      10: { name: 'とまり木通り' },
+    },
+  });
+}
+
 /** 選択可能なマップ一覧 */
 export const MAP_CATALOG = [
   {
@@ -991,6 +1183,14 @@ export const MAP_CATALOG = [
     defaultGoal: 18000,
     defaultCash: 1900,
     build: buildThumbsUp,
+  },
+  {
+    id: 'torima',
+    name: 'とりま',
+    blurb: '中央銀行から上下左右に広がる交差マップ。休みマスは自分の店が1ターン休店',
+    defaultGoal: 13000,
+    defaultCash: 2200,
+    build: buildTorima,
   },
 ];
 

@@ -144,13 +144,14 @@ describe('MkMk Street engine', () => {
   });
 
   it('offers multiple maps including a detached island board', () => {
-    assert.ok(MAP_CATALOG.length >= 5);
+    assert.ok(MAP_CATALOG.length >= 6);
     const ids = new Set(MAP_CATALOG.map((m) => m.id));
     assert.ok(ids.has('central_cross'));
     assert.ok(ids.has('shell_harbor'));
     assert.ok(ids.has('cliff_isle'));
     assert.ok(ids.has('bin'));
     assert.ok(ids.has('thumbs_up'));
+    assert.ok(ids.has('torima'));
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -1707,6 +1708,47 @@ describe('MkMk Street engine', () => {
     assert.equal(calcToll(g, shop), 0);
     g.players[0].shopsClosed = false;
     assert.ok(calcToll(g, shop) > 0);
+  });
+
+  it('torima map builds with holiday squares that close own shops for one turn', () => {
+    const board = buildBoard('torima');
+    assert.equal(board.mapId, 'torima');
+    assert.equal(board.cols, 19);
+    assert.equal(board.rows, 9);
+    assert.equal(Object.keys(board.areas).length, 10);
+    const holidays = board.nodes.filter((n) => n.type === 'holiday');
+    assert.equal(holidays.length, 2);
+    assert.ok(holidays.every((h) => h.label === '店休'));
+
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 12,
+      mapId: 'torima',
+    });
+    const holiday = g.map.find((n) => n.type === 'holiday');
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 0;
+    g.players[0].pos = holiday.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [holiday.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+    assert.equal(g.players[0].shopsClosed, true);
+    assert.equal(calcToll(g, shop), 0);
+    assert.ok(g.logs.some((l) => /店休|休み/.test(l.text)));
+
+    // 次ターン開始（サイコロ）で店休解除
+    g.phase = 'await_roll';
+    g.currentPlayerIdx = 0;
+    g.pending = null;
+    g.move = null;
+    const rolled = rollDice(g);
+    assert.equal(rolled.ok, true);
+    assert.equal(g.players[0].shopsClosed, false);
+    const reopen = g.logs.find((l) => /営業再開/.test(l.text));
+    assert.ok(reopen, 'reopen log expected');
+    assert.equal(reopen.kind, 'system');
+    assert.match(reopen.text, /営業再開した/);
+    assert.doesNotMatch(reopen.text, /店休マス/);
   });
 
   it('toll debt opens manual raise_funds instead of auto-selling', () => {
