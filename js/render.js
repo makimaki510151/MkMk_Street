@@ -331,66 +331,24 @@ export function createRenderer(canvas) {
     return new Set(ids);
   }
 
-  /** 着地候補マスを強調（縁＋帯＋「止」バッジ） */
+  /** 着地候補マスを強調（ハイライト縁のみ） */
   function drawLandingCandidateMarks(g, landSet) {
     if (!landSet?.size) return;
     const { size } = layout;
-    const pulse = 0.55 + Math.sin(anim.pulse) * 0.25;
+    const pulse = 0.55 + Math.sin(anim.pulse) * 0.2;
     for (const n of g.map) {
       if (!landSet.has(n.id)) continue;
       const vg = visualGridPos(n);
       const x = layout.ox + vg.col * size;
       const y = layout.oy + vg.row * size - vg.hop * size;
-      const pad = size * 0.03;
+      const pad = size * 0.04;
       const r = size * 0.1;
       ctx.save();
-      // 外光（候補が一目で浮かぶ）
-      ctx.shadowColor = 'rgba(94, 240, 200, 0.85)';
-      ctx.shadowBlur = size * 0.28;
-      ctx.globalAlpha = 0.28 + pulse * 0.22;
-      ctx.fillStyle = '#5ef0c8';
-      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.9;
-      ctx.strokeStyle = '#e8fff7';
-      ctx.lineWidth = Math.max(3.5, size * 0.1);
-      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
-      ctx.stroke();
-      ctx.setLineDash([Math.max(4, size * 0.12), Math.max(3, size * 0.08)]);
       ctx.globalAlpha = 0.7 + pulse * 0.25;
       ctx.strokeStyle = '#5ef0c8';
-      ctx.lineWidth = Math.max(2, size * 0.05);
-      roundRect(ctx, x + pad * 2.4, y + pad * 2.4, size - pad * 4.8, size - pad * 4.8, r * 0.8);
+      ctx.lineWidth = Math.max(3, size * 0.08);
+      roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
       ctx.stroke();
-      ctx.setLineDash([]);
-
-      // 下帯「停止候補」
-      const bandH = Math.max(12, size * 0.26);
-      ctx.globalAlpha = 0.92;
-      ctx.fillStyle = 'rgba(8, 42, 38, 0.92)';
-      roundRect(ctx, x + pad, y + size - pad - bandH, size - pad * 2, bandH, r * 0.6);
-      ctx.fill();
-      ctx.fillStyle = '#b8ffe8';
-      ctx.font = `800 ${Math.max(9, size * 0.168)}px "Zen Maru Gothic", sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('停止候補', x + size / 2, y + size - pad - bandH / 2);
-
-      const badge = Math.max(14, size * 0.34);
-      const bx = x + size - pad - badge * 0.2;
-      const by = y + pad + badge * 0.55;
-      ctx.globalAlpha = 1;
-      ctx.beginPath();
-      ctx.arc(bx, by, badge * 0.58, 0, Math.PI * 2);
-      ctx.fillStyle = '#062e28';
-      ctx.fill();
-      ctx.strokeStyle = '#9fffe0';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      ctx.fillStyle = '#e8fff7';
-      ctx.font = `900 ${Math.max(11, size * 0.24)}px "Zen Maru Gothic", sans-serif`;
-      ctx.fillText('止', bx, by + 0.5);
       ctx.restore();
     }
   }
@@ -790,10 +748,10 @@ export function createRenderer(canvas) {
         ctx.restore();
       }
 
-      // 出目後：着地候補以外を抑え、候補が一目で分かるようにする
+      // 出目後：着地候補以外を少し抑えつつ、マス情報は読める明るさを残す
       if (landDim) {
         ctx.save();
-        ctx.fillStyle = 'rgba(4, 10, 14, 0.52)';
+        ctx.fillStyle = 'rgba(4, 10, 14, 0.32)';
         roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
         ctx.fill();
         ctx.restore();

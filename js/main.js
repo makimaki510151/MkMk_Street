@@ -8,6 +8,7 @@ import {
   advanceMove,
   applyChoice,
   chooseFork,
+  findForkNextForLanding,
   preTurnSell,
   canSellStockOnTurn,
   canOpenShopTrade,
@@ -2824,8 +2825,24 @@ function bindBoardZoomControls(canvas) {
       const mine = app.mode === 'local'
         ? !app.game.players[app.game.pending.playerId]?.isCPU
         : app.game.pending.playerId === app.localSeat;
-      if (mine && app.game.pending.options.some((o) => o.id === hit.id)) {
-        sendAction({ type: 'choice', choice: { nextId: hit.id } });
+      if (!mine) return;
+      // 隣マス（分岐オプション）または最終停止候補マスをクリックして進む
+      let nextId = app.game.pending.options.some((o) => o.id === hit.id) ? hit.id : null;
+      if (nextId == null) {
+        const actor = app.game.players[app.game.pending.playerId]
+          || app.game.players[app.game.currentPlayerIdx];
+        const steps = Number(app.game.pending.stepsLeft ?? app.game.move?.stepsLeft) || 0;
+        nextId = findForkNextForLanding(
+          app.game,
+          actor?.pos,
+          actor?.prevPos,
+          steps,
+          hit.id,
+          app.game.pending.options.map((o) => o.id),
+        );
+      }
+      if (nextId != null) {
+        sendAction({ type: 'choice', choice: { nextId } });
       }
     }
   };
@@ -5664,7 +5681,7 @@ function showChoiceModal(g) {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
     $('#modal-card').classList.add('fork-hint-only');
     body.innerHTML = `
-      <p class="hint">左右（上下）の端に進路があります。盤面のマスをクリックしても選べます。タイトルをドラッグで移動できます。</p>`;
+      <p class="hint">端の進路ボタンか、盤上の<strong>ハイライトされた停止マス</strong>を直接クリックしても進めます。タイトルをドラッグで移動できます。</p>`;
     $('#btn-skip-choice').hidden = true;
     renderForkRails(pend);
     return;
