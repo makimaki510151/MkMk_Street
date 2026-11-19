@@ -2021,8 +2021,11 @@ function maybeDemoLanding() {
       coin: 'コイントス',
       high_low: 'ハイ＆ロー',
     };
-    const participantIds = app.game.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
-    const ordered = [p.id, ...participantIds.filter((id) => id !== p.id)];
+    const partyGames = new Set(['guess_dice', 'coin', 'high_low', 'horse_race', 'roulette']);
+    const alive = app.game.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
+    const ordered = partyGames.has(game)
+      ? [p.id, ...alive.filter((id) => id !== p.id)]
+      : [p.id];
     app.game.phase = 'await_choice';
     app.game.pending = {
       type: 'minigame',
@@ -2032,6 +2035,7 @@ function maybeDemoLanding() {
       label: labels[game] || 'ミニゲーム',
       participantIds: ordered,
       picks: {},
+      party: ordered.length > 1,
     };
     app.game.move = null;
     refreshGameUI();
@@ -6436,9 +6440,10 @@ function showChoiceModal(g) {
     $('#btn-end-choice').hidden = true;
     $('#modal-card').classList.add('wide');
     const game = pend.game || 'guess_dice';
+    const party = !!(pend.party || ((pend.participantIds || []).length > 1));
     const participants = (pend.participantIds || [pend.playerId]).map((id) => g.players[id]).filter(Boolean);
     const picks = pend.picks || {};
-    const statusHtml = participants.length
+    const statusHtml = party
       ? `<ul class="mg-roster">${participants.map((pl) => {
         const done = picks[pl.id] != null;
         const current = pl.id === pend.playerId;
@@ -6448,11 +6453,14 @@ function showChoiceModal(g) {
         </li>`;
       }).join('')}</ul>`
       : '';
-    const partyHint = '全員が選んだあと共通の結果で精算します。最後の人まで選択できます。';
+    const partyTag = party ? '（全員参加）' : '';
+    const partyHint = party
+      ? '全員が選んだあと共通の結果で精算します。最後の人まで選択できます。'
+      : '';
     if (game === 'guess_dice') {
       body.innerHTML = `
-        <p class="modal-lead">出目を当てよう！（全員参加）</p>
-        <p class="hint">${partyHint} ぴったりで高額、おしい（±1）でも報酬。ハズレは参加賞。</p>
+        <p class="modal-lead">出目を当てよう！${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}ぴったりで高額、おしい（±1）でも報酬。ハズレは参加賞。</p>
         ${statusHtml}
         <div class="mini-pick-grid">
           ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="btn primary mini-pick" data-pick="${n}">${n}</button>`).join('')}
@@ -6465,8 +6473,8 @@ function showChoiceModal(g) {
       });
     } else if (game === 'dice_battle') {
       body.innerHTML = `
-        <p class="modal-lead">ハウスとダイスバトル！（全員参加）</p>
-        <p class="hint">${partyHint} 攻めは2d6、守りは1d6+3。共通のハウス出目に挑みます。</p>
+        <p class="modal-lead">ハウスとダイスバトル！</p>
+        <p class="hint">攻めは2d6、守りは1d6+3。ハウスの2d6を上回れば勝ち。外れは参加賞。</p>
         ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-rush">攻め（2d6）</button>
@@ -6477,8 +6485,8 @@ function showChoiceModal(g) {
     } else if (game === 'horse_race') {
       const horses = ['ハヤテ', 'ライジン', 'カゼ', 'ツキ'];
       body.innerHTML = `
-        <p class="modal-lead">ミニ競馬！乗る馬を選ぼう（全員参加）</p>
-        <p class="hint">${partyHint} 1着は高額、2着も入賞。それ以外は参加賞。</p>
+        <p class="modal-lead">ミニ競馬！乗る馬を選ぼう${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}1着は高額、2着も入賞。それ以外は参加賞。</p>
         ${statusHtml}
         <div class="mini-pick-grid">
           ${horses.map((name, i) => `<button type="button" class="btn primary mini-pick" data-pick="${i}">${name}</button>`).join('')}
@@ -6491,8 +6499,8 @@ function showChoiceModal(g) {
       });
     } else if (game === 'high_low') {
       body.innerHTML = `
-        <p class="modal-lead">次の数字はハイ？ ロー？（全員参加）</p>
-        <p class="hint">${partyHint} 1〜10のうち、6以上がハイ・5以下がロー。</p>
+        <p class="modal-lead">次の数字はハイ？ ロー？${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}1〜10のうち、6以上がハイ・5以下がロー。</p>
         ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
@@ -6502,9 +6510,8 @@ function showChoiceModal(g) {
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
     } else if (game === 'rps_duel') {
       body.innerHTML = `
-        <p class="modal-lead">じゃんけん勝負！（全員参加）</p>
-        <p class="hint">${partyHint} 共通の相手の手にみんなで挑みます。</p>
-        ${statusHtml}
+        <p class="modal-lead">じゃんけん勝負！</p>
+        <p class="hint">勝ちで本賞、あいこは引き分け賞。負けは参加賞。</p>
         <div class="modal-actions">
           <button class="btn primary" id="m-rock">グー</button>
           <button class="btn primary" id="m-paper">パー</button>
@@ -6515,8 +6522,8 @@ function showChoiceModal(g) {
       $('#m-scissors').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'scissors' } }); };
     } else if (game === 'coin') {
       body.innerHTML = `
-        <p class="modal-lead">コインの裏表を予想！（全員参加）</p>
-        <p class="hint">${partyHint} 当たればボーナス。外れは参加賞。</p>
+        <p class="modal-lead">コインの裏表を予想！${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}当たればボーナス。外れは参加賞。</p>
         ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-heads">おもて</button>
@@ -6526,8 +6533,8 @@ function showChoiceModal(g) {
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
     } else if (game === 'roulette') {
       body.innerHTML = `
-        <p class="modal-lead">ルーレットに賭けよう！（全員参加）</p>
-        <p class="hint">${partyHint} 赤／黒は通常配当、緑(0)は大当り。</p>
+        <p class="modal-lead">ルーレットに賭けよう！${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}赤／黒は通常配当、緑(0)は大当り。</p>
         ${statusHtml}
         <div class="modal-actions">
           <button class="btn primary" id="m-red">赤</button>
@@ -6539,9 +6546,8 @@ function showChoiceModal(g) {
       $('#m-green').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'green' } }); };
     } else if (game === 'heist') {
       body.innerHTML = `
-        <p class="modal-lead">金庫破り（全員参加）</p>
-        <p class="hint">${partyHint} 用心は成功しやすいが少額。大胆は高配当だが失敗しやすい。</p>
-        ${statusHtml}
+        <p class="modal-lead">金庫破り</p>
+        <p class="hint">用心は成功しやすいが少額。大胆は高配当だが失敗しやすい。失敗時は慰労金。</p>
         <div class="modal-actions">
           <button class="btn" id="m-safe">用心（高確率）</button>
           <button class="btn primary" id="m-normal">普通</button>
@@ -6552,9 +6558,8 @@ function showChoiceModal(g) {
       $('#m-bold').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'bold' } }); };
     } else if (game === 'balloon_dash') {
       body.innerHTML = `
-        <p class="modal-lead">バルーンチャレンジ！（全員参加）</p>
-        <p class="hint">${partyHint} ポンプ回数が多いほど高配当。限界超えで破裂（参加賞）。</p>
-        ${statusHtml}
+        <p class="modal-lead">バルーンチャレンジ！</p>
+        <p class="hint">ポンプ回数が多いほど高配当。限界超えで破裂（参加賞）。</p>
         <div class="modal-actions">
           <button class="btn" id="m-p3">3回（安全寄り）</button>
           <button class="btn primary" id="m-p5">5回</button>
@@ -6565,9 +6570,8 @@ function showChoiceModal(g) {
       $('#m-p7').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 7 } }); };
     } else {
       body.innerHTML = `
-        <p class="modal-lead">スロットを回そう！（全員参加）</p>
-        <p class="hint">${partyHint} 共通の5リール結果でみんな精算。</p>
-        ${statusHtml}
+        <p class="modal-lead">スロットを回そう！</p>
+        <p class="hint">5リールの役（5揃い／4揃い／フルハウスなど）で報酬。外れは参加賞。</p>
         <div class="modal-actions">
           <button class="btn primary large" id="m-spin">回す！</button>
         </div>`;
