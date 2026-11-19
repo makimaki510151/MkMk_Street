@@ -2530,10 +2530,32 @@ export function kickDisconnectedPlayer(g, pid) {
   if (!p || p.bankrupt) return { ok: false, error: 'invalid' };
   addLog(g, `${p.name} をキック`, 'system');
   declareBankrupt(g, p);
-  if (g.pending?.playerId === pid) {
+
+  // 全員参加ミニゲーム中に参加者をキック → 残メンバーで継続／精算（開催者に再ロールを渡さない）
+  if (g.pending?.type === 'minigame') {
+    const pending = g.pending;
+    pending.participantIds = (pending.participantIds || []).filter((id) => id !== pid);
+    if (pending.picks && Object.prototype.hasOwnProperty.call(pending.picks, pid)) {
+      delete pending.picks[pid];
+    }
+    const waiting = pending.participantIds.filter((id) => {
+      const pl = g.players[id];
+      return pl && !pl.bankrupt && pending.picks?.[id] == null;
+    });
+    if (waiting.length) {
+      pending.playerId = waiting[0];
+    } else if (pending.participantIds.some((id) => pending.picks?.[id] != null)) {
+      return { ...finalizeMinigame(g, pending), kicked: true };
+    } else {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, kicked: true, state: serializeState(g) };
+    }
+  } else if (g.pending?.playerId === pid) {
     g.pending = null;
     g.phase = 'await_roll';
   }
+
   if (g.currentPlayerIdx === pid || g.players.filter((x) => !x.bankrupt).length <= 1) {
     endTurn(g);
   }
@@ -3184,6 +3206,10 @@ export function applyChoice(g, choice) {
       if (!target || target.bankrupt) return { ok: false, error: 'bad_target' };
       const giveShopIds = [...(pending.giveShopIds || [])];
       const takeShopIds = [...(pending.takeShopIds || [])];
+      // 入力欄から直接渡された差額を優先（change 未発火でも反映）
+      if (choice.cashDelta != null && Number.isFinite(Number(choice.cashDelta))) {
+        pending.cashDelta = Math.floor(Number(choice.cashDelta) || 0);
+      }
       const cashDelta = Math.floor(Number(pending.cashDelta) || 0);
       const check = validateShopTradeSides(g, p.id, targetId, giveShopIds, takeShopIds);
       if (!check.ok) return check;
@@ -4333,42 +4359,22 @@ function cpuPickInvestShop(g, p, ids, traits, { preferId = null, requireRem = fa
 export function cpuAct(g) {
   if (g.phase === 'gameover') return null;
 
-  // 手番以外でも pending 担当がCPUなら応答（物件取引の承諾など）
-  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_offer') {
-    const responder = g.players[g.pending.playerId];
-    if (responder?.isCPU && !responder.bankrupt) {
-      const ok = cpuShouldAcceptShopTrade(g, responder, g.pending);
-      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
-    }
-  }
-  if (g.phase === 'await_choice' && g.pending?.type === 'shop_trade_compose') {
-    const composer = g.players[g.pending.playerId];
-    if (composer?.isCPU && !composer.bankrupt) {
-      return applyChoice(g, { action: 'cancel' });
-    }
-  }
-
-  const p = currentPlayer(g);
-  if (!p?.isCPU || p.bankrupt) return null;
-  const traits = getCpuPersonality(p);
-  const phase = cpuGamePhase(g, p);
-
-  if (g.phase === 'await_roll') {
-    return rollDice(g);
-  }
-
-  if (g.phase === 'moving' && g.move) {
-    return advanceMove(g);
-  }
-
-  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
-    const nextId = cpuPickFork(g, p, g.pending.options);
-    return chooseFork(g, nextId);
-  }
-
+  // 選択待ちは pending.playerId のCPUが応答（手番プレイヤーと違うこともある：
+  // 全員参加ミニゲーム・物件取引の承諾など）
   if (g.phase === 'await_choice' && g.pending) {
     const pend = g.pending;
-    if (pend.playerId !== p.id) return null;
+    const p = g.players[pend.playerId];
+    if (!p?.isCPU || p.bankrupt) return null;
+    const traits = getCpuPersonality(p);
+    const phase = cpuGamePhase(g, p);
+
+    if (pend.type === 'shop_trade_offer') {
+      const ok = cpuShouldAcceptShopTrade(g, p, pend);
+      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
+    }
+    if (pend.type === 'shop_trade_compose') {
+      return applyChoice(g, { action: 'cancel' });
+    }
     if (pend.type === 'level_up') {
       return applyChoice(g, { action: 'celebrate' });
     }
@@ -4557,7 +4563,25 @@ export function cpuAct(g) {
       }
       return applyChoice(g, { action: 'spin' });
     }
+    return null;
   }
+
+  const p = currentPlayer(g);
+  if (!p?.isCPU || p.bankrupt) return null;
+
+  if (g.phase === 'await_roll') {
+    return rollDice(g);
+  }
+
+  if (g.phase === 'moving' && g.move) {
+    return advanceMove(g);
+  }
+
+  if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
+    const nextId = cpuPickFork(g, p, g.pending.options);
+    return chooseFork(g, nextId);
+  }
+
   return null;
 }
 

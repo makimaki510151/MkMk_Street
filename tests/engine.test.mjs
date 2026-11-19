@@ -2865,6 +2865,97 @@ describe('MkMk Street engine', () => {
     assert.equal(blocked.error, 'bad_phase');
   });
 
+  it('party minigame lets CPU participants pick while human is current player', () => {
+    const g = createGame({
+      players: [
+        { name: 'H', isCPU: false },
+        { name: 'C1', isCPU: true },
+        { name: 'C2', isCPU: true },
+      ],
+      seed: 11,
+    });
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'minigame',
+      playerId: 0,
+      starterId: 0,
+      game: 'coin',
+      label: 'コイン',
+      participantIds: [0, 1, 2],
+      picks: {},
+      party: true,
+    };
+    assert.equal(applyChoice(g, { action: 'pick', value: 'heads' }).ok, true);
+    assert.equal(g.pending?.playerId, 1);
+    const first = cpuAct(g);
+    assert.equal(first?.ok, true);
+    assert.equal(first?.minigamePick, true);
+    assert.equal(g.pending?.playerId, 2);
+    const last = cpuAct(g);
+    assert.equal(last?.ok, true);
+    assert.equal(last?.minigame, true);
+    assert.equal(g.pending, null);
+  });
+
+  it('kicking a party-minigame waiter continues with remaining players', () => {
+    const g = createGame({
+      players: [
+        { name: 'H', isCPU: false },
+        { name: 'G', isCPU: false },
+        { name: 'C', isCPU: true },
+      ],
+      seed: 12,
+    });
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'minigame',
+      playerId: 1,
+      starterId: 0,
+      game: 'coin',
+      label: 'コイン',
+      participantIds: [0, 1, 2],
+      picks: { 0: 'heads' },
+      party: true,
+    };
+    const kicked = kickDisconnectedPlayer(g, 1);
+    assert.equal(kicked.ok, true);
+    assert.equal(g.players[1].bankrupt, true);
+    assert.equal(g.pending?.type, 'minigame');
+    assert.deepEqual(g.pending.participantIds, [0, 2]);
+    assert.equal(g.pending.playerId, 2);
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.currentPlayerIdx, 0);
+  });
+
+  it('shop trade propose accepts cashDelta from the choice payload', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 13,
+    });
+    const shopA = g.map.find((n) => n.type === 'shop');
+    const shopB = g.map.filter((n) => n.type === 'shop')[1];
+    shopA.owner = 0;
+    shopB.owner = 1;
+    g.players[0].cash = 5000;
+    g.players[1].cash = 5000;
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'shop_trade_compose',
+      playerId: 0,
+      targetId: 1,
+      giveShopIds: [shopA.id],
+      takeShopIds: [shopB.id],
+      cashDelta: 0,
+    };
+    const offered = applyChoice(g, { action: 'propose', cashDelta: 250 });
+    assert.equal(offered.ok, true);
+    assert.equal(g.pending?.type, 'shop_trade_offer');
+    assert.equal(g.pending.cashDelta, 250);
+  });
+
   it('rejects stock sell when holding zero shares (no phantom cash)', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
