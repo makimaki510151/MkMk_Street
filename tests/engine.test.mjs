@@ -32,6 +32,10 @@ import {
   STOCK_BUY_BOOST_MIN,
   STOCK_BUY_B_RATE,
   rollDice,
+  getMoveDiceMax,
+  MOVE_DICE_MAX_DEFAULT,
+  MOVE_DICE_MAX_LARGE,
+  LARGE_MAP_AREA_THRESHOLD,
   advanceMove,
   applyChoice,
   chooseFork,
@@ -64,6 +68,7 @@ import {
   getCpuPersonality,
   CPU_PERSONALITY_KEYS,
   scaleDiceSlotPrize,
+  capMinigamePrize,
   MAX_WILDCARDS,
   grantWildcard,
   applyWildcardsToMarks,
@@ -651,7 +656,7 @@ describe('MkMk Street engine', () => {
     const shops = g.map.filter((n) => n.type === 'shop');
     assert.ok(shops.length >= 16);
     assert.ok(Object.keys(g.areas).length >= 4);
-    assert.equal(g.players[0].cash, 2000);
+    assert.equal(g.players[0].cash, 2500);
   });
 
   it('computes toll multipliers by area size and ownership', () => {
@@ -985,6 +990,39 @@ describe('MkMk Street engine', () => {
     assert.equal(g.phase, 'await_fork');
     assert.equal(g.pending?.type, 'fork');
     assert.ok(g.pending.options.length >= 2);
+  });
+
+  it('uses d10 move dice on maps with 11+ areas, otherwise d6', () => {
+    const small = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      mapId: 'central_cross',
+    });
+    assert.ok(Object.keys(small.areas).length < LARGE_MAP_AREA_THRESHOLD);
+    assert.equal(getMoveDiceMax(small), MOVE_DICE_MAX_DEFAULT);
+
+    const large = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      mapId: 'bin',
+    });
+    assert.ok(Object.keys(large.areas).length >= LARGE_MAP_AREA_THRESHOLD);
+    assert.equal(getMoveDiceMax(large), MOVE_DICE_MAX_LARGE);
+
+    let sawHigh = false;
+    for (let seed = 1; seed <= 80 && !sawHigh; seed++) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed,
+        mapId: 'thumbs_up',
+      });
+      const r = rollDice(g);
+      assert.equal(r.ok, true);
+      assert.equal(r.diceMax, MOVE_DICE_MAX_LARGE);
+      assert.ok(r.dice >= 1 && r.dice <= MOVE_DICE_MAX_LARGE);
+      if (r.dice > MOVE_DICE_MAX_DEFAULT) sawHigh = true;
+    }
+    assert.ok(sawHigh, 'expected at least one roll above 6 on a large map');
   });
 
   it('continues movement after choosing a fork', () => {
@@ -1936,26 +1974,29 @@ describe('MkMk Street engine', () => {
       seen.add(my.tier);
       const prize = g.players[0].cash - before;
       if (my.tier === 'jackpot') {
-        assert.ok(prize >= 1020);
+        assert.ok(prize >= 400);
+        assert.ok(prize <= capMinigamePrize(99999, g.goal));
         assert.equal(my.win, true);
       } else if (my.tier === 'quad') {
-        assert.ok(prize >= 480);
+        assert.ok(prize >= 240);
         assert.equal(my.win, true);
       } else if (my.tier === 'pair') {
-        assert.ok(prize >= 55);
+        assert.ok(prize >= 35);
         assert.equal(my.win, true);
       } else if (my.tier === 'miss') {
         assert.equal(my.win, false);
-        assert.ok(prize >= 22);
+        assert.ok(prize >= 18);
       }
     }
     assert.ok(seen.has('pair') || seen.has('two_pair') || seen.has('triple'));
   });
 
-  it('scales dice/slot minigame prizes by player level', () => {
+  it('scales dice/slot minigame prizes gently by level and caps jackpots', () => {
     assert.equal(scaleDiceSlotPrize(100, 1), 100);
-    assert.equal(scaleDiceSlotPrize(100, 3), 300);
-    assert.equal(scaleDiceSlotPrize(115, 2), 230);
+    assert.equal(scaleDiceSlotPrize(100, 3), 150);
+    assert.equal(scaleDiceSlotPrize(115, 2), 143);
+    assert.equal(capMinigamePrize(5000, 10000), 800);
+    assert.equal(capMinigamePrize(100, 10000), 100);
 
     let foundExact = false;
     for (let seed = 1; seed <= 80 && !foundExact; seed++) {
@@ -1972,7 +2013,7 @@ describe('MkMk Street engine', () => {
         const mine = r.reveal?.results?.find((x) => x.playerId === 0);
         if (mine?.tier !== 'exact') continue;
         const gained = g2.players[0].cash - before;
-        assert.equal(gained, 320 * 3);
+        assert.equal(gained, scaleDiceSlotPrize(180, 3));
         foundExact = true;
         break;
       }
@@ -1993,7 +2034,7 @@ describe('MkMk Street engine', () => {
       const mine = r.reveal?.results?.find((x) => x.playerId === 0);
       if (mine?.tier !== 'pair') continue;
       const gained = g.players[0].cash - before;
-      assert.equal(gained, 55 * 3);
+      assert.equal(gained, scaleDiceSlotPrize(35, 3));
       foundPair = true;
     }
     assert.ok(foundPair, 'expected a slot pair within seeds');
