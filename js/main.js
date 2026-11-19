@@ -5681,7 +5681,7 @@ function showChoiceModal(g) {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
     $('#modal-card').classList.add('fork-hint-only');
     body.innerHTML = `
-      <p class="hint">端の進路ボタンか、盤上の<strong>停止マス（止）</strong>を直接クリックしても進めます。タイトルをドラッグで移動できます。</p>`;
+      <p class="hint">端の進路ボタンか、盤上の<strong>ハイライトされた停止マス</strong>を直接クリックしても進めます。タイトルをドラッグで移動できます。</p>`;
     $('#btn-skip-choice').hidden = true;
     renderForkRails(pend);
     return;

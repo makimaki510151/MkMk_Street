@@ -331,53 +331,24 @@ export function createRenderer(canvas) {
     return new Set(ids);
   }
 
-  /** 着地候補マスを強調（縁のみ。マス内の店名／料は隠さない） */
+  /** 着地候補マスを強調（ハイライト縁のみ） */
   function drawLandingCandidateMarks(g, landSet) {
     if (!landSet?.size) return;
     const { size } = layout;
-    const pulse = 0.55 + Math.sin(anim.pulse) * 0.25;
+    const pulse = 0.55 + Math.sin(anim.pulse) * 0.2;
     for (const n of g.map) {
       if (!landSet.has(n.id)) continue;
       const vg = visualGridPos(n);
       const x = layout.ox + vg.col * size;
       const y = layout.oy + vg.row * size - vg.hop * size;
-      const pad = size * 0.03;
+      const pad = size * 0.04;
       const r = size * 0.1;
       ctx.save();
-      // 外光のみ（塗りつぶしはマス情報を潰すので使わない）
-      ctx.shadowColor = 'rgba(94, 240, 200, 0.9)';
-      ctx.shadowBlur = size * 0.22;
-      ctx.globalAlpha = 0.95;
-      ctx.strokeStyle = '#e8fff7';
-      ctx.lineWidth = Math.max(3.5, size * 0.1);
+      ctx.globalAlpha = 0.7 + pulse * 0.25;
+      ctx.strokeStyle = '#5ef0c8';
+      ctx.lineWidth = Math.max(3, size * 0.08);
       roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
       ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.setLineDash([Math.max(4, size * 0.12), Math.max(3, size * 0.08)]);
-      ctx.globalAlpha = 0.65 + pulse * 0.3;
-      ctx.strokeStyle = '#5ef0c8';
-      ctx.lineWidth = Math.max(2, size * 0.045);
-      roundRect(ctx, x + pad * 2.2, y + pad * 2.2, size - pad * 4.4, size - pad * 4.4, r * 0.8);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // 角の小さな「止」印（店名・料テキストと重ならないよう左上）
-      const badge = Math.max(11, size * 0.24);
-      const bx = x + pad + badge * 0.55;
-      const by = y + pad + badge * 0.55;
-      ctx.globalAlpha = 0.95;
-      ctx.beginPath();
-      ctx.arc(bx, by, badge * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(6, 46, 40, 0.88)';
-      ctx.fill();
-      ctx.strokeStyle = '#9fffe0';
-      ctx.lineWidth = 1.8;
-      ctx.stroke();
-      ctx.fillStyle = '#e8fff7';
-      ctx.font = `900 ${Math.max(9, size * 0.18)}px "Zen Maru Gothic", sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('止', bx, by + 0.5);
       ctx.restore();
     }
   }
