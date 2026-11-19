@@ -153,6 +153,8 @@ const app = {
   archivePayload: null,
   /** 選択モーダル再描画抑制用（数値入力中の巻き戻り防止） */
   modalPendingKey: null,
+  /** 株パネル／プレイヤーカードでピン留めしたエリア（クリックで盤面ハイライト） */
+  stockPeekArea: null,
 };
 
 const LAST_RESULTS_KEY = 'mkmk-street-last-results';
@@ -4429,7 +4431,10 @@ function refreshGameUI() {
       .map((area) => {
         const meta = g.areas[area];
         const n = p.stocks[area];
-        return `<span class="pc-stock" style="--ac:${meta.color}" title="${escapeHtml(meta.name)} ${meta.stockPrice}G">A${area}×${n}</span>`;
+        const peek = app.stockPeekArea === area ? ' peek-on' : '';
+        return `<button type="button" class="pc-stock${peek}" data-hold-area="${area}"
+          style="--ac:${meta.color}"
+          title="${escapeHtml(meta.name)} ${meta.stockPrice}G（クリックで盤面のエリアを表示）">A${area}×${n}</button>`;
       });
     const stockLine = stockBits.length
       ? `<div class="pc-stocks">${stockBits.join('')}</div>`
@@ -4446,6 +4451,7 @@ function refreshGameUI() {
       </div>
     `;
   }).join('');
+  bindStockAreaPeek(box, g);
   renderDisconnectPanel(g);
   maybePresentMoneyFx(g);
   flushPendingMoneyFx();
@@ -7189,6 +7195,63 @@ function localHumanSeat(g) {
   return null;
 }
 
+/** 株チップ／所持表から盤面のエリアをハイライト（自分・他人どちらでも可） */
+function bindStockAreaPeek(root, g) {
+  if (!root?.querySelectorAll) return;
+  const highlight = (area) => {
+    if (!Number.isFinite(area)) return;
+    app.renderer?.setStockHighlight(area, true);
+  };
+  const restoreHighlight = () => {
+    if (g.phase === 'await_choice' && g.pending?.type === 'stock') {
+      const sel = document.querySelector('.stock-card.selected, .stock-card[aria-pressed="true"]');
+      const keep = sel ? Number(sel.dataset.area) : null;
+      app.renderer?.setStockHighlight(keep, true);
+      return;
+    }
+    if (app.stockPeekArea != null) {
+      app.renderer?.setStockHighlight(app.stockPeekArea, true);
+      return;
+    }
+    app.renderer?.clearStockHighlight();
+  };
+  const syncPeekClass = () => {
+    root.querySelectorAll('[data-hold-area]').forEach((node) => {
+      const area = Number(node.dataset.holdArea);
+      node.classList.toggle('peek-on', app.stockPeekArea === area);
+    });
+  };
+  syncPeekClass();
+  if (app.stockPeekArea != null) highlight(app.stockPeekArea);
+
+  root.querySelectorAll('[data-hold-area]').forEach((node) => {
+    const area = Number(node.dataset.holdArea);
+    if (!Number.isFinite(area)) return;
+    node.addEventListener('mouseenter', () => highlight(area));
+    node.addEventListener('mouseleave', restoreHighlight);
+    node.addEventListener('focus', () => highlight(area));
+    node.addEventListener('blur', restoreHighlight);
+    node.addEventListener('click', (ev) => {
+      // 売却UIの操作は覗き見トグルにしない
+      if (ev.target.closest('input, label, [data-turn-sell], .sell-row .btn')) return;
+      if (!node.classList.contains('pc-stock')
+        && !node.classList.contains('stock-chip')
+        && !node.classList.contains('sh-row')
+        && !node.classList.contains('sh-count')
+        && !node.classList.contains('sell-row')) {
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      app.stockPeekArea = app.stockPeekArea === area ? null : area;
+      document.querySelectorAll('#players-panel [data-hold-area], #stocks-panel [data-hold-area]').forEach((el) => {
+        el.classList.toggle('peek-on', app.stockPeekArea === Number(el.dataset.holdArea));
+      });
+      restoreHighlight();
+    });
+  });
+}
+
 function renderStockPanel(g) {
   const el = $('#stocks-panel');
   const drafts = snapshotEditableFields(el);
@@ -7200,7 +7263,8 @@ function renderStockPanel(g) {
 
   const priceChips = areas.map((area) => {
     const meta = g.areas[area];
-    return `<button type="button" class="stock-chip" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}">
+    const peek = app.stockPeekArea === area ? ' peek-on' : '';
+    return `<button type="button" class="stock-chip${peek}" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}（クリックで盤面表示）">
       <b>A${area}</b> ${meta.stockPrice}G
     </button>`;
   }).join('');
@@ -7213,11 +7277,15 @@ function renderStockPanel(g) {
 
   const rows = areas.map((area) => {
     const meta = g.areas[area];
+    const peek = app.stockPeekArea === area ? ' peek-on' : '';
     const cells = players.map((p) => {
       const n = p.stocks[area] || 0;
-      return `<span class="sh-count ${n > 0 ? 'has' : ''}" style="--pc:${p.color}">${n > 0 ? `×${n}` : '—'}</span>`;
+      return `<button type="button" class="sh-count ${n > 0 ? 'has' : ''}${peek}" style="--pc:${p.color}"
+        data-hold-area="${area}"
+        title="${escapeHtml(p.name)} · ${escapeHtml(meta.name)}（クリックで盤面のエリアを表示）"
+        ${n > 0 ? '' : 'disabled'}>${n > 0 ? `×${n}` : '—'}</button>`;
     }).join('');
-    return `<div class="sh-row" data-hold-area="${area}" style="--ac:${meta.color}">
+    return `<div class="sh-row${peek}" data-hold-area="${area}" style="--ac:${meta.color}">
       <span class="sh-area" title="${escapeHtml(meta.name)}">
         <b>A${area}</b>
         <small>${meta.stockPrice}G</small>
@@ -7257,32 +7325,12 @@ function renderStockPanel(g) {
     <div class="stocks-prices">${priceChips}</div>
     <div class="stocks-holdings">
       <div class="sh-title">株の所持（全員）</div>
-      <p class="hint">そのエリアで買い物料が発生すると、保有に応じてわけ前が入ります</p>
+      <p class="hint">マス／枚数をクリックすると盤面でエリアが光ります（自分・他人どちらでも可）。そのエリアで買い物料が発生すると、保有に応じてわけ前が入ります</p>
       <div class="sh-table" style="--sh-cols:${players.length}">${head}${rows}</div>
     </div>
     ${sellBlock}`;
 
-  const highlight = (area) => {
-    app.renderer?.setStockHighlight(area, true);
-  };
-  const clear = () => {
-    // 株購入モーダル中はハイライトを維持
-    if (g.phase === 'await_choice' && g.pending?.type === 'stock') {
-      const sel = document.querySelector('.stock-card.selected, .stock-card[aria-pressed="true"]');
-      const keep = sel ? Number(sel.dataset.area) : null;
-      app.renderer?.setStockHighlight(keep, true);
-      return;
-    }
-    app.renderer?.clearStockHighlight();
-  };
-
-  el.querySelectorAll('[data-hold-area]').forEach((node) => {
-    const area = Number(node.dataset.holdArea);
-    node.addEventListener('mouseenter', () => highlight(area));
-    node.addEventListener('mouseleave', clear);
-    node.addEventListener('focus', () => highlight(area));
-    node.addEventListener('blur', clear);
-  });
+  bindStockAreaPeek(el, g);
 
   el.querySelectorAll('[data-turn-sell]').forEach((btn) => {
     btn.onclick = (ev) => {
