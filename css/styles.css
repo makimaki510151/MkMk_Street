@@ -2312,17 +2312,110 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .mg-roster-name { color: var(--ink); }
 .mg-roster-state { color: var(--muted); font-size: 0.72rem; }
+.mg-results {
+  display: grid;
+  gap: 0.55rem;
+  width: min(100%, 28rem);
+  margin: 0 auto;
+  text-align: left;
+}
+.mg-shared-line {
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  color: #ffe08a;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, #ffe08a 14%, rgba(12, 14, 16, 0.55));
+  border: 1px solid color-mix(in srgb, #ffe08a 35%, transparent);
+}
+.mg-result-board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
 .mg-result-row {
   display: grid;
-  gap: 0.1rem;
+  grid-template-columns: 1.4rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem 0.55rem;
   text-align: left;
-  padding: 0.35rem 0.45rem;
-  border-left: 3px solid var(--pc);
-  margin: 0.25rem 0;
-  background: color-mix(in srgb, var(--pc) 10%, transparent);
+  padding: 0.48rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--pc) 42%, rgba(255,255,255,0.08));
+  border-left: 4px solid var(--pc);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--pc) 18%, transparent), transparent 58%),
+    rgba(12, 14, 16, 0.55);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
 }
-.mg-result-row strong { color: var(--pc); }
-.mg-result-row small { color: var(--muted); font-weight: 600; }
+.mg-result-row.is-miss {
+  opacity: 0.88;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--pc) 10%, transparent), transparent 50%),
+    rgba(12, 14, 16, 0.42);
+}
+.mg-result-row.is-win {
+  outline: 1px solid color-mix(in srgb, #ffe08a 45%, transparent);
+}
+.mg-result-rank {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #1a1814;
+  background: color-mix(in srgb, var(--pc) 75%, #fff8e0);
+}
+.mg-result-name {
+  font-weight: 800;
+  color: var(--pc);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mg-result-verdict {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fff8e0;
+  white-space: nowrap;
+}
+.mg-result-row.is-miss .mg-result-verdict { color: #d7c7b0; }
+.mg-result-prize {
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #9ef0c8;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  justify-self: end;
+}
+.mg-result-row.is-miss .mg-result-prize { color: #cbb89a; }
+.mg-solo-result {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: center;
+  text-align: center;
+}
+.mg-solo-result .mg-result-verdict {
+  font-size: 1rem;
+  color: var(--pc);
+}
+.mg-solo-result .mg-result-prize {
+  font-size: 1.35rem;
+  color: #9ef0c8;
+}
+.mg-solo-result small {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.88rem;
+}
 .fork-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
 .fork-btn {
   border-radius: 4px !important;
@@ -2858,6 +2951,19 @@ body.your-turn #btn-roll:not(:disabled) {
   padding: 1rem 1.25rem;
   max-width: min(92%, 420px);
 }
+.mg-stage.party {
+  max-width: min(94%, 520px);
+  padding: 1.1rem 1.15rem 1.25rem;
+  border-radius: 14px;
+  background: rgba(10, 12, 14, 0.42);
+  border: 1px solid rgba(255, 224, 138, 0.18);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+#minigame-overlay.party {
+  background:
+    radial-gradient(ellipse at 50% 36%, rgba(255, 224, 138, 0.22), transparent 52%),
+    rgba(8, 10, 12, 0.62);
+}
 .mg-kicker {
   color: var(--accent);
   font-weight: 800;
@@ -2891,6 +2997,20 @@ body.your-turn #btn-roll:not(:disabled) {
   opacity: 0;
   transition: opacity .3s ease .05s;
   max-width: min(92vw, 420px);
+}
+.mg-stage.party .mg-detail {
+  max-width: none;
+  width: 100%;
+  margin-top: 0.65rem;
+  text-shadow: none;
+}
+.mg-stage.party .mg-title {
+  font-size: clamp(1.45rem, 3.6vw, 1.95rem);
+  margin-bottom: 0.15rem;
+}
+.mg-stage.party .mg-body {
+  min-height: 88px;
+  margin-bottom: 0.45rem;
 }
 #minigame-overlay.show-result .mg-title,
 #minigame-overlay.show-result .mg-detail {
