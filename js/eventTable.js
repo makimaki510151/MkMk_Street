@@ -1,6 +1,7 @@
 /** MkMk Street — 10×10 イベント表（1〜200番をランダム配置） */
 
 import { remainingInvest } from './investLimits.js';
+import { getAreaCode } from './board.js';
 
 export const TABLE_SIZE = 10;
 export const EVENT_COUNT = 200;
@@ -498,7 +499,7 @@ export function findRivalMonopolies(g, playerId) {
       area: a,
       ownerId: oid,
       shops,
-      name: g.areas[a]?.name || `A${a}`,
+      name: g.areas[a]?.name || getAreaCode(g, a),
     });
   }
   return out;
@@ -567,7 +568,7 @@ function applyStocks(g, player, count, messages) {
   if (!areas.length || !count) return;
   const a = pickRandom(areas);
   player.stocks[a] = (player.stocks[a] || 0) + count;
-  messages.push(`A${a}株 +${count}`);
+  messages.push(`${getAreaCode(g, a)}株 +${count}`);
 }
 
 function areaOwnedTotal(g, pid, area) {
@@ -1025,7 +1026,7 @@ function applyEventDef(g, player, def, messages) {
       const n = Math.min(def.amount || 5, victim.stocks[a] || 0);
       victim.stocks[a] -= n;
       player.stocks[a] = (player.stocks[a] || 0) + n;
-      messages.push(`${victim.name} から A${a}株×${n}`);
+      messages.push(`${victim.name} から ${getAreaCode(g, a)}株×${n}`);
       break;
     }
     case 'swap_pos': {
@@ -1121,7 +1122,7 @@ function applyEventDef(g, player, def, messages) {
           const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
           g.areas[a].stockPrice = Math.max(1, Math.floor((avg / 65536) * g.areas[a].B));
         }
-        messages.push(`A${a} の相場が${mult >= 1 ? '上昇' : '調整'}（${g.areas[a].stockPrice}G）`);
+        messages.push(`${getAreaCode(g, a)} の相場が${mult >= 1 ? '上昇' : '調整'}（${g.areas[a].stockPrice}G）`);
       }
       break;
     }
@@ -1138,7 +1139,7 @@ function applyEventDef(g, player, def, messages) {
           gained += add;
         }
       }
-      messages.push(n ? `A${a} の自分の店×${n} 価値+${gained}（枠内）` : `A${a} に自分の店なし／増資枠なし`);
+      messages.push(n ? `${getAreaCode(g, a)} の自分の店×${n} 価値+${gained}（枠内）` : `${getAreaCode(g, a)} に自分の店なし／増資枠なし`);
       if (!n) applyStocks(g, player, 5, messages);
       break;
     }
@@ -1175,7 +1176,7 @@ function applyEventDef(g, player, def, messages) {
       const price = g.areas[a]?.stockPrice || 20;
       const got = price * n;
       player.cash += got;
-      messages.push(`A${a}株×${n} を利確 +${got}G`);
+      messages.push(`${getAreaCode(g, a)}株×${n} を利確 +${got}G`);
       break;
     }
     case 'multi_stocks': {

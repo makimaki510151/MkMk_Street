@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.2',
+    date: '2026-11-20',
+    items: [
+      '田改のエリア表記をA1／B1〜B6／C1〜C6にし、エリア名から記号を外した',
+    ],
+  },
+  {
     version: '1.9.1',
     date: '2026-11-20',
     items: [

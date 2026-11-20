@@ -63,6 +63,7 @@ import {
   DEFAULT_CASH,
   applySwitchState,
   buildBoard,
+  getAreaCode,
 } from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
@@ -2260,7 +2261,7 @@ function maybeDemoLanding() {
   if (demo === 'stock-div' || demo === 'dividend') {
     // エリア収益の株わけ前デモ（ログ＋現金演出）
     const area = Number(Object.keys(app.game.areas)[0]);
-    const areaName = app.game.areas[area]?.name || `A${area}`;
+    const areaName = app.game.areas[area]?.name || getAreaCode(app.game, area);
     p.stocks[area] = Math.max(p.stocks[area] || 0, 3);
     const other = app.game.players[1];
     if (other) other.stocks[area] = Math.max(other.stocks[area] || 0, 1);
@@ -2270,7 +2271,7 @@ function maybeDemoLanding() {
       kicker: '株わけ前',
       title: 'エリア収益の分配',
       detail: app.game.logs.find((l) => /株わけ前/.test(l.text))?.text
-        || `A${area}「${areaName}」株わけ前（収益 1000G の一部）`,
+        || `${getAreaCode(app.game, area)}「${areaName}」株わけ前（収益 1000G の一部）`,
       kind: 'stock',
       color: '#3d8bfd',
       mine: true,
@@ -2674,7 +2675,7 @@ function updateInspectPanel() {
     const owner = sq.owner >= 0 ? g.players[sq.owner] : null;
     const toll = calcToll(g, sq);
     const closed = !!(owner?.shopsClosed);
-    const areaName = g.areas?.[sq.area]?.name || AREA_META[sq.area]?.name || `A${sq.area}`;
+    const areaName = g.areas?.[sq.area]?.name || AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
     const remInvest = getRemainingInvest(g, sq);
     const maxInvest = getMaxExtraInvest(g, sq);
     let mono = '';
@@ -4900,7 +4901,7 @@ function refreshGameUI() {
         const peek = app.stockPeekArea === area ? ' peek-on' : '';
         return `<button type="button" class="pc-stock${peek}" data-hold-area="${area}"
           style="--ac:${meta.color}"
-          title="${escapeHtml(meta.name)} ${meta.stockPrice}G（クリックで盤面のエリアを表示）">A${area}×${n}</button>`;
+          title="${escapeHtml(meta.name)} ${meta.stockPrice}G（クリックで盤面のエリアを表示）">${getAreaCode(g, area)}×${n}</button>`;
       });
     const stockLine = stockBits.length
       ? `<div class="pc-stocks">${stockBits.join('')}</div>`
@@ -6258,7 +6259,7 @@ function showChoiceModal(g) {
       <button type="button" class="btn tiny trade-shop${selected ? ' selected' : ''}"
         ${dataAttr}="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
         ${escapeHtml(sq.label)}
-        <span class="hint">${sq.price.toLocaleString()}G・A${sq.area}</span>
+        <span class="hint">${sq.price.toLocaleString()}G・${getAreaCode(g, sq.area)}</span>
       </button>`;
     body.innerHTML = `
       <p class="hint">渡す店と受け取る店を選び、差額を確認して提案します。相手は承認・拒否のほか、差額を変えて逆交渉できます。</p>
@@ -6441,7 +6442,7 @@ function showChoiceModal(g) {
       const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
       const multi = investMultiByMonopolyRate(rate);
       const pct = Math.round(rate * 100);
-      const area = AREA_META[sq.area]?.name || g.areas[sq.area]?.name || `A${sq.area}`;
+      const area = AREA_META[sq.area]?.name || g.areas[sq.area]?.name || getAreaCode(g, sq.area);
       return { sq, rem, maxInv, owned, total, multi, pct, area };
     };
 
@@ -6515,7 +6516,7 @@ function showChoiceModal(g) {
       const sq = getNode(g, id);
       if (!sq) return '';
       const rem = getRemainingInvest(g, sq);
-      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
       const capped = rem < amount;
       return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
         <strong>${escapeHtml(sq.label)}</strong>
@@ -6550,7 +6551,7 @@ function showChoiceModal(g) {
       const sq = getNode(g, id);
       if (!sq) return '';
       const got = Math.floor(sq.price * 0.5);
-      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
       return `<button type="button" class="btn pick-invest-shop force-sell-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
         <strong>${escapeHtml(sq.label)}</strong>
         <span class="pick-invest-gain">売却 +${got.toLocaleString()}G</span>
@@ -6591,7 +6592,7 @@ function showChoiceModal(g) {
       const owner = g.players[sq.owner];
       const price = sq.price * multi;
       const can = getLiquidatableValue(g, p) >= price;
-      const area = AREA_META[sq.area]?.name || `A${sq.area}`;
+      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
       return `<button type="button" class="btn pick-invest-shop any-shop-buy" data-shop="${sq.id}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
         <strong>${escapeHtml(sq.label)}</strong>
         <span class="pick-invest-gain">${price.toLocaleString()}G</span>
@@ -6668,7 +6669,7 @@ function showChoiceModal(g) {
       const price = g.areas[area].stockPrice;
       const initial = Math.min(have, Math.max(1, Math.ceil(short / Math.max(1, price))));
       return `<div class="raise-row" style="--ac:${g.areas[area].color}" data-raise-stock-row="${area}">
-        <span>A${area} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
+        <span>${getAreaCode(g, area)} ${escapeHtml(g.areas[area].name)} ×${have}（${price}G）</span>
         <label class="field tiny">枚数
           <input type="number" min="1" max="${have}" value="${initial}" data-sell-stock="${area}" />
         </label>
@@ -6832,7 +6833,7 @@ function showChoiceModal(g) {
       const have = p?.stocks[area] || 0;
       return `<button type="button" class="stock-card" style="--ac:${meta.color}" data-area="${area}" data-max-buy="${maxBuy}" data-have="${have}" ${maxBuy < 1 && !(broker && have) ? 'disabled' : ''}>
         <span class="sc-swatch" aria-hidden="true"></span>
-        <span class="sc-name">A${area} ${meta.name}</span>
+        <span class="sc-name">${getAreaCode(g, area)} ${meta.name}</span>
         <span class="sc-price">${price}G</span>
         <span class="sc-max">${maxBuy < 1 ? '資金不足' : `最大 ${maxBuy}枚`}</span>
         <span class="sc-have">持株 ${have}</span>
@@ -7790,7 +7791,7 @@ function renderStockPanel(g) {
     const meta = g.areas[area];
     const peek = app.stockPeekArea === area ? ' peek-on' : '';
     return `<button type="button" class="stock-chip${peek}" style="--ac:${meta.color}" data-hold-area="${area}" title="${escapeHtml(meta.name)}（クリックで盤面表示）">
-      <b>A${area}</b> ${meta.stockPrice}G
+      <b>${getAreaCode(g, area)}</b> ${meta.stockPrice}G
     </button>`;
   }).join('');
 
@@ -7812,7 +7813,7 @@ function renderStockPanel(g) {
     }).join('');
     return `<div class="sh-row${peek}" data-hold-area="${area}" style="--ac:${meta.color}">
       <span class="sh-area" title="${escapeHtml(meta.name)}">
-        <b>A${area}</b>
+        <b>${getAreaCode(g, area)}</b>
         <small>${meta.stockPrice}G</small>
       </span>
       ${cells}
@@ -7833,7 +7834,7 @@ function renderStockPanel(g) {
           const price = meta.stockPrice;
           const initial = Math.min(have, 10);
           return `<div class="sell-row" style="--ac:${meta.color}" data-hold-area="${area}">
-            <span class="sell-label">A${area} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
+            <span class="sell-label">${getAreaCode(g, area)} ${escapeHtml(meta.name)} <small>${price}G ×${have}</small></span>
             <label class="field tiny">枚数
               <input type="number" min="1" max="${have}" value="${initial}" data-sell-count="${area}" />
             </label>
