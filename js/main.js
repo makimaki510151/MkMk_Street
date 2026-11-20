@@ -2475,18 +2475,20 @@ function maybeDemoLanding() {
       results: players.map((pl, i) => {
         const exact = i === 0;
         const near = i === 1;
+        // 予想はそれぞれ異なる目（デモ用）。出目は共有の 4
+        const pick = exact ? 4 : near ? 5 : (i === 2 ? 3 : 2);
         return {
           playerId: pl.id,
           playerName: pl.name,
           playerColor: pl.color,
-          pick: exact ? 4 : near ? 5 : (i + 1),
+          pick,
           win: exact || near,
           tier: exact ? 'exact' : near ? 'near' : 'miss',
           title: exact ? 'ぴったり！' : near ? 'おしい！' : 'ハズレ…',
           detail: exact ? 'ぴったり！出目4 → +180G' : near ? 'おしい！ → +70G' : '参加賞 +20G',
           prizeWon: exact ? 180 : near ? 70 : 20,
           messages: [],
-          outcome: { roll: 4 },
+          outcome: { roll: 4, pick },
         };
       }),
       playerId: players[0]?.id,
@@ -4163,13 +4165,18 @@ function renderPartyMinigameResults(reveal) {
     return Number(!!b.win) - Number(!!a.win);
   });
   const shared = formatMinigameSharedLine(reveal);
+  const showPick = (reveal.game || '') === 'guess_dice';
   const board = rows.map((r, i) => {
     const win = !!r.win;
     const prize = formatMinigamePrize(r.prizeWon);
     const verdict = r.title || (win ? '当たり！' : '参加賞');
+    const pick = showPick && r.pick != null
+      ? `<span class="mg-result-pick" title="予想">予想${escapeHtml(String(r.pick))}</span>`
+      : '';
     return `<li class="mg-result-row ${win ? 'is-win' : 'is-miss'}" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
       <span class="mg-result-rank" aria-hidden="true">${i + 1}</span>
       <span class="mg-result-name">${escapeHtml(r.playerName || '')}</span>
+      ${pick}
       <span class="mg-result-verdict">${escapeHtml(verdict)}</span>
       <span class="mg-result-prize">${escapeHtml(prize)}</span>
     </li>`;
@@ -4329,14 +4336,52 @@ async function animateSlotReveal(body, reveal) {
 }
 
 async function animateDiceGuessReveal(body, reveal) {
-  const pickLabel = String(reveal.outcome?.pick ?? reveal.pick ?? '?');
-  const roll = reveal.outcome?.roll ?? 1;
-  body.innerHTML = `
-    <div class="mg-dice-row">
-      <div class="mg-dice-col"><small>予想</small><div class="mg-die">${pickLabel}</div></div>
-      <div class="mg-vs">VS</div>
-      <div class="mg-dice-col"><small>出目</small><div class="mg-die rolling" id="mg-roll-die">?</div></div>
-    </div>`;
+  const roll = reveal.shared?.roll ?? reveal.outcome?.roll ?? 1;
+  const partyRows = (reveal.results || [])
+    .map((r) => ({
+      name: r.playerName || '',
+      color: r.playerColor || '#c4a574',
+      pick: Number(r.pick ?? r.outcome?.pick),
+      win: !!r.win,
+    }))
+    .filter((r) => Number.isFinite(r.pick));
+  const party = partyRows.length > 1;
+
+  if (party) {
+    body.innerHTML = `
+      <div class="mg-dice-row mg-dice-party">
+        <div class="mg-dice-col mg-dice-picks">
+          <small>みんなの予想</small>
+          <div class="mg-dice-pick-grid">
+            ${partyRows.map((r) => `
+              <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
+                <div class="mg-die mg-die-sm">${r.pick}</div>
+                <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="mg-vs">VS</div>
+        <div class="mg-dice-col">
+          <small>出目</small>
+          <div class="mg-die rolling" id="mg-roll-die">?</div>
+        </div>
+      </div>`;
+  } else {
+    const pickLabel = String(
+      partyRows[0]?.pick
+      ?? reveal.outcome?.pick
+      ?? reveal.pick
+      ?? '?',
+    );
+    body.innerHTML = `
+      <div class="mg-dice-row">
+        <div class="mg-dice-col"><small>予想</small><div class="mg-die">${escapeHtml(pickLabel)}</div></div>
+        <div class="mg-vs">VS</div>
+        <div class="mg-dice-col"><small>出目</small><div class="mg-die rolling" id="mg-roll-die">?</div></div>
+      </div>`;
+  }
+
   const die = body.querySelector('#mg-roll-die');
   audio.sfx.dice();
   const start = performance.now();

@@ -2707,6 +2707,19 @@ body.your-turn #btn-roll:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mg-result-row:has(.mg-result-pick) {
+  grid-template-columns: 1.4rem minmax(0, 1fr) auto auto auto;
+}
+.mg-result-pick {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #ffe08a;
+  white-space: nowrap;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(255, 224, 138, 0.12);
+  border: 1px solid rgba(255, 224, 138, 0.28);
+}
 .mg-result-verdict {
   font-size: 0.82rem;
   font-weight: 700;
@@ -3429,12 +3442,50 @@ body.your-turn #btn-roll:not(:disabled) {
   justify-content: center;
   gap: 0.85rem;
 }
+.mg-dice-row.mg-dice-party {
+  gap: 0.7rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
 .mg-dice-col { text-align: center; }
 .mg-dice-col small {
   display: block;
   color: var(--muted);
   font-weight: 700;
   margin-bottom: 0.35rem;
+}
+.mg-dice-picks {
+  min-width: min(100%, 14rem);
+}
+.mg-dice-pick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem 0.55rem;
+  max-width: 16rem;
+}
+.mg-dice-pick {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: center;
+  min-width: 3.1rem;
+}
+.mg-dice-pick .mg-die {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--pc, #c4a574) 70%, transparent),
+    0 10px 24px rgba(0,0,0,0.35);
+}
+.mg-dice-pick.is-win .mg-die {
+  background: linear-gradient(160deg, #fff4c2, #ffc94a);
+}
+.mg-dice-pick-name {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--pc, #c4a574) 75%, #fff);
+  max-width: 3.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mg-die {
   width: 78px;
@@ -3449,6 +3500,11 @@ body.your-turn #btn-roll:not(:disabled) {
   color: #3a2400;
   box-shadow: 0 12px 32px rgba(0,0,0,0.35);
 }
+.mg-die.mg-die-sm {
+  width: 52px;
+  height: 52px;
+  font-size: 1.55rem;
+}
 .mg-die.rolling { animation: diceTumble 0.12s linear infinite; }
 .mg-die.landed { animation: dicePop .45s ease; }
 .mg-vs {
@@ -3456,6 +3512,10 @@ body.your-turn #btn-roll:not(:disabled) {
   font-weight: 700;
   color: var(--accent);
   font-size: 1.1rem;
+}
+.mg-dice-party .mg-vs {
+  align-self: center;
+  padding-bottom: 1.1rem;
 }
 
 /* high-low number */
