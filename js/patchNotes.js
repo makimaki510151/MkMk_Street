@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.0',
+    date: '2026-11-20',
+    items: [
+      'マップ「田改」を追加（中央A／左B／右C・上田下田は高め物件）',
+    ],
+  },
+  {
     version: '1.8.9',
     date: '2026-11-19',
     items: [

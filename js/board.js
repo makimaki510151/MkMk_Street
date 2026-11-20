@@ -1355,6 +1355,196 @@ export function buildBullet() {
   });
 }
 
+/**
+ * マップ案「田改」：19×11（grid-map-maker JSON どおり）。
+ * エリアは中央＝A／左＝B／右＝Cで上から番号（A1, B1…）。
+ * JSON の店記号 B/C/D/E は高め価格。
+ * 凡例: 銀銀行 / Ａ〜Ｍ店 / 削スクラッチ / スロット / ララッキー / イイベント
+ *       回もう一回 / 当サイコロ当て / 休＝店休 / ♠♥♦♣
+ */
+export function buildTagai() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　　　　　　　　',
+    '　　　ＪＪＦＦＦＦ回ＧＧＧＧＫＫ　　　',
+    '　　　Ｊ　　　　　Ａ　　　　　Ｋ　　　',
+    '　　　♦ＢＢ休ＢＢイＣＣ削ＣＣ♥　　　',
+    '　　　Ｊ　　　　　Ａ　　　　　Ｋ　　　',
+    '　　　当　　　　　銀　　　　　ス　　　',
+    '　　　Ｌ　　　　　Ａ　　　　　Ｍ　　　',
+    '　　　♠ＤＤ削ＤＤラＥＥ休ＥＥ♣　　　',
+    '　　　Ｌ　　　　　Ａ　　　　　Ｍ　　　',
+    '　　　ＬＬＨＨＨＨ回ＩＩＩＩＭＭ　　　',
+    '　　　　　　　　　　　　　　　　　　　',
+  ];
+  const BLANK = '　';
+  // 中央A・左B・右Cを上から番号。JSON記号→エリアID
+  // A1=Ａ / B1=Ｊ B2=Ｆ B3=Ｂ(高) B4=Ｄ(高) B5=Ｌ B6=Ｈ
+  // C1=Ｋ C2=Ｇ C3=Ｃ(高) C4=Ｅ(高) C5=Ｍ C6=Ｉ
+  const areaFromChar = {
+    Ａ: 1,
+    Ｊ: 2, Ｆ: 3, Ｂ: 4, Ｄ: 5, Ｌ: 6, Ｈ: 7,
+    Ｋ: 8, Ｇ: 9, Ｃ: 10, Ｅ: 11, Ｍ: 12, Ｉ: 13,
+  };
+  const shopNames = {
+    1: ['畦道カフェ', 'あぜみやげ', '田んぼ茶屋', '案山子屋'],
+    2: ['北西畔ホテル', '用水路食堂', 'かえるみやげ', '泥はね屋'],
+    3: ['北畦マーケット', '稲穂屋', '雀よけ屋', 'かかし茶屋'],
+    4: ['西の上田ブティック', '早稲屋', 'しろかき屋', '田植えみやげ'],
+    5: ['西の下田工房', '晩稲屋', '稲刈り屋', 'はさ架みやげ'],
+    6: ['南西畔横丁', 'どろんこ屋', '田舟屋', 'あめふらし屋'],
+    7: ['南畦通り', '収穫祭屋', 'もみすり屋', '玄米カフェ'],
+    8: ['北東畔ホテル', 'せせらぎ食堂', 'とんぼみやげ', '水路屋'],
+    9: ['北畦東マーケット', '青田屋', '葉ずれ屋', 'ひなた茶屋'],
+    10: ['東の上田ブティック', '苗代屋', 'しろみず屋', '田植え道具屋'],
+    11: ['東の下田工房', '脱穀屋', 'わら細工屋', '俵みやげ'],
+    12: ['南東畔横丁', 'かかし坂', 'ふくろみやげ', 'いなほ屋'],
+    13: ['南畦東通り', '新米カフェ', '米俵屋', 'かまど屋'],
+  };
+  // B/C/D/E（エリア4,5,10,11）は高め
+  const shopPrice = {
+    1: [240, 200, 180, 280],
+    2: [200, 170, 150, 240],
+    3: [210, 175, 155, 250],
+    4: [380, 340, 300, 420],
+    5: [370, 330, 290, 410],
+    6: [200, 170, 150, 240],
+    7: [210, 175, 155, 250],
+    8: [200, 170, 150, 240],
+    9: [210, 175, 155, 250],
+    10: [380, 340, 300, 420],
+    11: [370, 330, 290, 410],
+    12: [200, 170, 150, 240],
+    13: [210, 175, 155, 250],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+
+  let bank = null;
+  let rollonCount = 0;
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== 19) {
+      throw new Error(`田改: 行${row}の幅が${chars.length}（19であるべき）`);
+    }
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        const area = areaFromChar[ch];
+        const i = shopIdx[area]++;
+        const names = shopNames[area];
+        const prices = shopPrice[area];
+        put(col, row, N('shop', {
+          label: names[i % names.length],
+          area,
+          basePrice: prices[i % prices.length],
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '銀') {
+        bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+        continue;
+      }
+      if (ch === '♠') {
+        put(col, row, N('mark', { label: '♠', mark: 0, col, row }));
+        continue;
+      }
+      if (ch === '♥') {
+        put(col, row, N('mark', { label: '♥', mark: 1, col, row }));
+        continue;
+      }
+      if (ch === '♦') {
+        put(col, row, N('mark', { label: '♦', mark: 2, col, row }));
+        continue;
+      }
+      if (ch === '♣') {
+        put(col, row, N('mark', { label: '♣', mark: 3, col, row }));
+        continue;
+      }
+      if (ch === '削') {
+        put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+        continue;
+      }
+      if (ch === 'ス') {
+        put(col, row, N('minigame', { label: 'スロット', game: 'slot', col, row }));
+        continue;
+      }
+      if (ch === '当') {
+        put(col, row, N('minigame', {
+          label: 'サイコロ当て',
+          game: 'guess_dice',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === 'ラ') {
+        put(col, row, N('lucky', { label: '★', col, row }));
+        continue;
+      }
+      if (ch === 'イ') {
+        put(col, row, N('event', { label: 'イベント', col, row }));
+        continue;
+      }
+      if (ch === '回') {
+        rollonCount += 1;
+        put(col, row, N('rollon', {
+          label: rollonCount === 1 ? 'もう一回' : 'もう一回Ⅱ',
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '休') {
+        put(col, row, N('holiday', { label: '店休', col, row }));
+        continue;
+      }
+      throw new Error(`未知のマス記号: ${ch} @${col},${row}`);
+    }
+  }
+
+  if (!bank) throw new Error('田改マップに銀行がありません');
+  for (const [area, count] of Object.entries(shopIdx)) {
+    if (count !== 4) throw new Error(`田改: エリア${area}の店が${count}件（4であるべき）`);
+  }
+
+  // 直交＋隙間対角（銀行まわりの斜めブリッジ含む）
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, bank, 19, gridRows.length, {
+    mapId: 'tagai',
+    mapName: '田改',
+    goal: 16000,
+    initialCash: 2200,
+    areaOverrides: {
+      1: { name: 'A1 中央畦' },
+      2: { name: 'B1 北西畔' },
+      3: { name: 'B2 北畦' },
+      4: { name: 'B3 西の上田' },
+      5: { name: 'B4 西の下田' },
+      6: { name: 'B5 南西畔' },
+      7: { name: 'B6 南畦' },
+      8: { name: 'C1 北東畔' },
+      9: { name: 'C2 北畦東' },
+      10: { name: 'C3 東の上田' },
+      11: { name: 'C4 東の下田' },
+      12: { name: 'C5 南東畔' },
+      13: { name: 'C6 南畦東' },
+    },
+  });
+}
+
 /** 選択可能なマップ一覧 */
 export const MAP_CATALOG = [
   {
@@ -1412,6 +1602,14 @@ export const MAP_CATALOG = [
     defaultGoal: 15000,
     defaultCash: 2100,
     build: buildBullet,
+  },
+  {
+    id: 'tagai',
+    name: '田改',
+    blurb: '田んぼ形。中央A／左B／右Cの13エリア。上田・下田（B/C系）は高め物件',
+    defaultGoal: 16000,
+    defaultCash: 2200,
+    build: buildTagai,
   },
 ];
 
