@@ -1,6 +1,6 @@
 /** MkMk Street — ボード描画 */
 
-import { AREA_META, SUIT_LABELS } from './board.js';
+import { AREA_META, SUIT_LABELS, getAreaCode } from './board.js';
 import {
   calcToll,
   getRemainingInvest,
@@ -1124,7 +1124,9 @@ export function shopTooltip(g, sq) {
   const toll = calcToll(g, sq);
   const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中（買い物料0）' : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
+  const areaCode = getAreaCode(g, sq.area);
   const areaName = g.areas[sq.area]?.name || AREA_META[sq.area]?.name || '';
+  const areaTag = areaName ? `${areaCode} ${areaName}` : areaCode;
   let mono = '';
   if (sq.owner >= 0) {
     const areaSize = getAreaShops(g, sq.area).length;
@@ -1142,5 +1144,5 @@ export function shopTooltip(g, sq) {
   const rem = sq.owner >= 0
     ? ` / 残り増資 ${getRemainingInvest(g, sq).toLocaleString()}G`
     : '';
-  return `${ownTag} ${sq.label} / ${areaName} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}${rem}`;
+  return `${ownTag} ${sq.label} / ${areaTag} / 価格${sq.price.toLocaleString()}G / ${tollLabel}${mono}${closed}${rem}`;
 }

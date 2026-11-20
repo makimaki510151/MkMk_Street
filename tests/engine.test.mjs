@@ -98,7 +98,7 @@ import {
   cpuPickStockArea,
   getSharedEventTable,
 } from '../js/engine.js';
-import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG } from '../js/board.js';
+import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode } from '../js/board.js';
 import {
   unscratchedIds,
   EVENT_CATALOG,
@@ -1870,10 +1870,25 @@ describe('MkMk Street engine', () => {
     assert.equal(board.cols, 19);
     assert.equal(board.rows, 11);
     assert.equal(Object.keys(board.areas).length, 13);
-    assert.equal(board.areas[1].name, 'A1 中央畦');
-    assert.equal(board.areas[2].name, 'B1 北西畔');
-    assert.equal(board.areas[8].name, 'C1 北東畔');
-    assert.equal(board.areas[13].name, 'C6 南畦東');
+    assert.equal(board.areas[1].name, '中央畦');
+    assert.equal(board.areas[1].code, 'A1');
+    assert.equal(board.areas[2].name, '北西畔');
+    assert.equal(board.areas[2].code, 'B1');
+    assert.equal(board.areas[3].code, 'B2');
+    assert.equal(board.areas[7].code, 'B6');
+    assert.equal(board.areas[8].name, '北東畔');
+    assert.equal(board.areas[8].code, 'C1');
+    assert.equal(board.areas[11].code, 'C4');
+    assert.equal(board.areas[13].name, '南畦東');
+    assert.equal(board.areas[13].code, 'C6');
+    assert.equal(getAreaCode(board, 4), 'B3');
+    assert.equal(getAreaCode(board, 10), 'C3');
+    // 名前に B2/C4 などのコードを埋め込まない
+    for (const a of Object.keys(board.areas).map(Number)) {
+      assert.doesNotMatch(board.areas[a].name, /^[ABC]\d/);
+      assert.match(board.areas[a].code, /^[ABC]\d+$/);
+      assert.equal(getAreaCode(board, a), board.areas[a].code);
+    }
 
     for (const a of Object.keys(board.areas).map(Number)) {
       assert.equal(
