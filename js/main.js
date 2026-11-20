@@ -62,6 +62,7 @@ import {
   DEFAULT_MAP_ID,
   DEFAULT_CASH,
   applySwitchState,
+  buildBoard,
 } from './board.js';
 import { resolveWaitingSeatId } from './nudgeTarget.js';
 import {
@@ -876,21 +877,118 @@ function getMapDefName(mapId) {
   return MAP_CATALOG.find((m) => m.id === mapId)?.name || '中央クロス';
 }
 
-function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null, cashInputId = null) {
+/** 選択マップの大まかな配置（数値・店名なし）を canvas に描く */
+function renderMapSilhouette(canvas, mapId) {
+  if (!canvas?.getContext) return;
+  let board;
+  try {
+    board = buildBoard(mapId || DEFAULT_MAP_ID);
+  } catch {
+    return;
+  }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const cssW = canvas.clientWidth || canvas.width || 320;
+  const cssH = canvas.clientHeight || Math.round(cssW * 0.7) || 220;
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.fillStyle = '#12161b';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const nodes = (board.nodes || []).filter((n) => n.col != null && n.row != null);
+  if (!nodes.length) return;
+  let minC = Infinity;
+  let maxC = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
+  for (const n of nodes) {
+    minC = Math.min(minC, n.col);
+    maxC = Math.max(maxC, n.col);
+    minR = Math.min(minR, n.row);
+    maxR = Math.max(maxR, n.row);
+  }
+  const cols = Math.max(1, maxC - minC + 1);
+  const rows = Math.max(1, maxR - minR + 1);
+  const pad = 10;
+  const cell = Math.min((cssW - pad * 2) / cols, (cssH - pad * 2) / rows);
+  const ox = (cssW - cols * cell) / 2;
+  const oy = (cssH - rows * cell) / 2;
+  const gap = Math.max(0.8, cell * 0.12);
+  const size = Math.max(2, cell - gap);
+
+  const typeFill = (n) => {
+    if (n.type === 'shop') return board.areas?.[n.area]?.color || AREA_META[n.area]?.color || '#6a8299';
+    if (n.type === 'bank') return '#e9c85a';
+    if (n.type === 'mark') return '#c4c8d0';
+    if (n.type === 'warp') return '#63e6be';
+    if (n.type === 'scratch') return '#8a929c';
+    if (n.type === 'minigame') return '#b197fc';
+    if (n.type === 'lucky') return '#ffd43b';
+    if (n.type === 'event') return '#ffa94d';
+    if (n.type === 'rollon') return '#74c0fc';
+    if (n.type === 'holiday') return '#df909c';
+    if (n.type === 'stockbroker') return '#4fc3c7';
+    if (n.type === 'suit_fill') return '#ff8787';
+    if (n.type === 'switch') return '#ffe08a';
+    return '#5a6570';
+  };
+
+  for (const n of nodes) {
+    const x = ox + (n.col - minC) * cell + gap / 2;
+    const y = oy + (n.row - minR) * cell + gap / 2;
+    const r = Math.min(3, size * 0.22);
+    ctx.fillStyle = typeFill(n);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, size, size, r);
+    else ctx.rect(x, y, size, size);
+    ctx.fill();
+    if (n.type === 'bank') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = Math.max(1, size * 0.08);
+      ctx.stroke();
+    }
+  }
+}
+
+function updateMapPreview(mapId, {
+  canvasId = null,
+  nameId = null,
+  blurbId = null,
+} = {}) {
+  const def = MAP_CATALOG.find((m) => m.id === mapId) || MAP_CATALOG[0];
+  if (nameId) {
+    const el = document.getElementById(nameId);
+    if (el) el.textContent = def?.name || 'マップ';
+  }
+  if (blurbId) {
+    const el = document.getElementById(blurbId);
+    if (el) el.textContent = def?.blurb || '';
+  }
+  if (canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (canvas) renderMapSilhouette(canvas, def?.id || mapId);
+  }
+}
+
+function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId = null, cashInputId = null, preview = null) {
   const box = document.getElementById(containerId);
   if (!box) return;
   const current = preferredId || DEFAULT_MAP_ID;
+  const compact = box.classList.contains('map-picker-chips');
   box.innerHTML = MAP_CATALOG.map((m) => `
     <label class="map-option">
       <input type="radio" name="map-id" value="${escapeHtml(m.id)}" ${m.id === current ? 'checked' : ''} />
       <span class="map-option-body">
         <strong>${escapeHtml(m.name)}</strong>
-        <small>${escapeHtml(m.blurb)}</small>
+        ${compact ? '' : `<small>${escapeHtml(m.blurb)}</small>`}
       </span>
     </label>
   `).join('');
   const syncMapDefaults = () => {
-    const def = MAP_CATALOG.find((m) => m.id === selectedMapId(`#${containerId}`));
+    const id = selectedMapId(`#${containerId}`);
+    const def = MAP_CATALOG.find((m) => m.id === id);
     if (!def) return;
     if (goalInputId) {
       const goalInput = document.getElementById(goalInputId);
@@ -900,6 +998,7 @@ function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId 
       const cashInput = document.getElementById(cashInputId);
       if (cashInput && def.defaultCash != null) cashInput.value = String(def.defaultCash);
     }
+    if (preview) updateMapPreview(def.id, preview);
   };
   box.querySelectorAll('input[name="map-id"]').forEach((el) => {
     el.addEventListener('change', syncMapDefaults);
@@ -918,8 +1017,20 @@ function openSetupLocal() {
   showScreen('screen-setup');
   $('#setup-online-only').hidden = true;
   $('#setup-title').textContent = 'ローカル対戦';
-  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal', 'setup-cash');
+  renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal', 'setup-cash', {
+    canvasId: 'setup-map-preview',
+    nameId: 'setup-map-preview-name',
+    blurbId: 'setup-map-preview-blurb',
+  });
   renderSeatEditors(2);
+  // レイアウト確定後にプレビュー解像度を合わせる
+  requestAnimationFrame(() => {
+    updateMapPreview(selectedMapId('#setup-map-options'), {
+      canvasId: 'setup-map-preview',
+      nameId: 'setup-map-preview-name',
+      blurbId: 'setup-map-preview-blurb',
+    });
+  });
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
     if (seats.length < 2) return toast('2人以上必要です');
@@ -1024,7 +1135,18 @@ async function openLobby(role, prefill = {}) {
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
-  if (role === 'host') renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash');
+  if (role === 'host') {
+    renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash', {
+      canvasId: 'lobby-map-preview',
+      nameId: 'lobby-map-preview-name',
+    });
+    requestAnimationFrame(() => {
+      updateMapPreview(selectedMapId('#lobby-map-options'), {
+        canvasId: 'lobby-map-preview',
+        nameId: 'lobby-map-preview-name',
+      });
+    });
+  }
   const nameInput = $('#lobby-name');
   const savedName = loadSavedPlayerName();
   const rejoin = role === 'guest' ? readRejoinSession(($('#lobby-room')?.value || prefill.room || '').toUpperCase()) : null;

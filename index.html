@@ -182,23 +182,37 @@
 
   <!-- SETUP LOCAL -->
   <section id="screen-setup" class="screen">
-    <div class="panel">
+    <div class="panel setup-panel">
       <h2 id="setup-title">セットアップ</h2>
       <div id="setup-online-only"></div>
-      <label class="field">目標資産（G）
-        <input type="number" id="setup-goal" value="10000" min="3000" step="1000" />
-      </label>
-      <label class="field">初期資金（G）
-        <input type="number" id="setup-cash" value="2200" min="0" step="100" />
-      </label>
-      <fieldset class="map-picker" id="setup-map-picker">
-        <legend>マップ</legend>
-        <div class="map-picker-grid" id="setup-map-options"></div>
-      </fieldset>
-      <div id="seat-editors"></div>
-      <div class="row-actions">
-        <button class="btn" id="btn-setup-back">戻る</button>
-        <button class="btn primary" id="btn-start-game">ゲーム開始</button>
+      <div class="setup-layout">
+        <div class="setup-main">
+          <div class="setup-money-row">
+            <label class="field">目標資産（G）
+              <input type="number" id="setup-goal" value="10000" min="3000" step="1000" />
+            </label>
+            <label class="field">初期資金（G）
+              <input type="number" id="setup-cash" value="2200" min="0" step="100" />
+            </label>
+          </div>
+          <fieldset class="map-picker map-picker-compact" id="setup-map-picker">
+            <legend>マップ</legend>
+            <div class="map-picker-grid map-picker-chips" id="setup-map-options"></div>
+          </fieldset>
+          <div id="seat-editors" class="seat-editors-compact"></div>
+          <div class="row-actions">
+            <button class="btn" id="btn-setup-back">戻る</button>
+            <button class="btn primary" id="btn-start-game">ゲーム開始</button>
+          </div>
+        </div>
+        <aside class="map-preview" aria-live="polite">
+          <div class="map-preview-head">
+            <strong id="setup-map-preview-name">マップ</strong>
+            <span class="map-preview-hint">配置プレビュー（数値なし）</span>
+          </div>
+          <canvas id="setup-map-preview" class="map-preview-canvas" width="320" height="220" aria-label="選択中マップの配置"></canvas>
+          <p class="map-preview-blurb" id="setup-map-preview-blurb"></p>
+        </aside>
       </div>
     </div>
   </section>
@@ -226,16 +240,27 @@
           <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
           <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
         </div>
-        <label class="field">目標資産（G）
-          <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
-        </label>
-        <label class="field">初期資金（G）
-          <input type="number" id="lobby-cash" value="2200" min="0" step="100" />
-        </label>
-        <fieldset class="map-picker" id="lobby-map-picker">
-          <legend>マップ</legend>
-          <div class="map-picker-grid" id="lobby-map-options"></div>
-        </fieldset>
+        <div class="setup-money-row">
+          <label class="field">目標資産（G）
+            <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
+          </label>
+          <label class="field">初期資金（G）
+            <input type="number" id="lobby-cash" value="2200" min="0" step="100" />
+          </label>
+        </div>
+        <div class="lobby-map-layout">
+          <fieldset class="map-picker map-picker-compact" id="lobby-map-picker">
+            <legend>マップ</legend>
+            <div class="map-picker-grid map-picker-chips" id="lobby-map-options"></div>
+          </fieldset>
+          <aside class="map-preview map-preview-lobby" aria-live="polite">
+            <div class="map-preview-head">
+              <strong id="lobby-map-preview-name">マップ</strong>
+              <span class="map-preview-hint">配置プレビュー</span>
+            </div>
+            <canvas id="lobby-map-preview" class="map-preview-canvas" width="280" height="180" aria-label="選択中マップの配置"></canvas>
+          </aside>
+        </div>
       </div>
       <div id="net-status">未接続</div>
       <div id="lobby-players"></div>
