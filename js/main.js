@@ -2316,18 +2316,20 @@ function maybeDemoLanding() {
       results: players.map((pl, i) => {
         const exact = i === 0;
         const near = i === 1;
+        // 予想はそれぞれ異なる目（デモ用）。出目は共有の 4
+        const pick = exact ? 4 : near ? 5 : (i === 2 ? 3 : 2);
         return {
           playerId: pl.id,
           playerName: pl.name,
           playerColor: pl.color,
-          pick: exact ? 4 : near ? 5 : (i + 1),
+          pick,
           win: exact || near,
           tier: exact ? 'exact' : near ? 'near' : 'miss',
           title: exact ? 'ぴったり！' : near ? 'おしい！' : 'ハズレ…',
           detail: exact ? 'ぴったり！出目4 → +180G' : near ? 'おしい！ → +70G' : '参加賞 +20G',
           prizeWon: exact ? 180 : near ? 70 : 20,
           messages: [],
-          outcome: { roll: 4 },
+          outcome: { roll: 4, pick },
         };
       }),
       playerId: players[0]?.id,
