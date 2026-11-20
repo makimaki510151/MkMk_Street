@@ -113,6 +113,8 @@ function buildAreas(nodes, areaOverrides = {}) {
       B: Math.ceil((targetStock * 65536) / avg),
       stockPrice: targetStock,
       name: meta.name || `エリア${a}`,
+      /** 株UIなどの短縮表記（既定 A1…。田改は A1／B1–B6／C1–C6） */
+      code: meta.code || `A${a}`,
       color: meta.color || '#888',
       pattern: meta.pattern || 'check',
       patternInk: meta.patternInk || '#aaa',
@@ -120,6 +122,20 @@ function buildAreas(nodes, areaOverrides = {}) {
     };
   }
   return areas;
+}
+
+/**
+ * エリアの表示コード（A1 など）。マップ固有の B1／C3 も返す。
+ * @param {{ areas?: Record<number, { code?: string }> } | Record<number, { code?: string }> | null | undefined} areasOrGame
+ * @param {number|string} areaId
+ */
+export function getAreaCode(areasOrGame, areaId) {
+  const areas = areasOrGame?.areas || areasOrGame;
+  const a = Number(areaId);
+  if (!Number.isFinite(a)) return 'A?';
+  const code = areas?.[a]?.code;
+  if (code != null && String(code).trim()) return String(code).trim();
+  return `A${a}`;
 }
 
 function freezeBaseNexts(nodes) {
@@ -1528,19 +1544,19 @@ export function buildTagai() {
     goal: 16000,
     initialCash: 2200,
     areaOverrides: {
-      1: { name: 'A1 中央畦' },
-      2: { name: 'B1 北西畔' },
-      3: { name: 'B2 北畦' },
-      4: { name: 'B3 西の上田' },
-      5: { name: 'B4 西の下田' },
-      6: { name: 'B5 南西畔' },
-      7: { name: 'B6 南畦' },
-      8: { name: 'C1 北東畔' },
-      9: { name: 'C2 北畦東' },
-      10: { name: 'C3 東の上田' },
-      11: { name: 'C4 東の下田' },
-      12: { name: 'C5 南東畔' },
-      13: { name: 'C6 南畦東' },
+      1: { name: '中央畦', code: 'A1' },
+      2: { name: '北西畔', code: 'B1' },
+      3: { name: '北畦', code: 'B2' },
+      4: { name: '西の上田', code: 'B3' },
+      5: { name: '西の下田', code: 'B4' },
+      6: { name: '南西畔', code: 'B5' },
+      7: { name: '南畦', code: 'B6' },
+      8: { name: '北東畔', code: 'C1' },
+      9: { name: '北畦東', code: 'C2' },
+      10: { name: '東の上田', code: 'C3' },
+      11: { name: '東の下田', code: 'C4' },
+      12: { name: '南東畔', code: 'C5' },
+      13: { name: '南畦東', code: 'C6' },
     },
   });
 }
@@ -1606,7 +1622,7 @@ export const MAP_CATALOG = [
   {
     id: 'tagai',
     name: '田改',
-    blurb: '田んぼ形。中央A／左B／右Cの13エリア。上田・下田（B/C系）は高め物件',
+    blurb: '田んぼ形。表記はA1／B1〜B6／C1〜C6。上田・下田は高め物件',
     defaultGoal: 16000,
     defaultCash: 2200,
     build: buildTagai,

@@ -11,6 +11,7 @@ import {
   DEFAULT_MAP_ID,
   dirLabel,
   getMapDef,
+  getAreaCode,
 } from './board.js';
 import {
   createEventTable,
@@ -221,9 +222,9 @@ export function payAreaStockDividend(g, area, revenue) {
   }
   const given = payouts.filter((p) => p.amount > 0);
   if (given.length) {
-    const areaName = g.areas[a]?.name || `A${a}`;
+    const areaName = g.areas[a]?.name || getAreaCode(g, a);
     const detail = given.map((p) => `${p.name}+${p.amount}G`).join(' / ');
-    addLog(g, `A${a}「${areaName}」株わけ前 ${detail}（収益 ${base}G の一部）`, 'stock');
+    addLog(g, `${getAreaCode(g, a)}「${areaName}」株わけ前 ${detail}（収益 ${base}G の一部）`, 'stock');
   }
 
   return { area: a, pool: given.reduce((s, p) => s + p.amount, 0), payouts: given };
@@ -371,7 +372,7 @@ const CHANCE_EVENTS = [
     const a = areas[Math.floor(Math.random() * areas.length)];
     const n = 6 + p.level * 2;
     p.stocks[a] = (p.stocks[a] || 0) + n;
-    return `A${a}株 +${n}`
+    return `${getAreaCode(g, a)}株 +${n}`
   }},
   { id: 'invest_boost', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の自分店増資が半額' } },
   { id: 'level_shop_aid', label: '階級改装助成', apply: (g, p) => {
@@ -405,7 +406,7 @@ const BOARD_EVENTS = [
     const a = areas[Math.floor(Math.random() * areas.length)];
     const n = 3 + p.level;
     p.stocks[a] = (p.stocks[a] || 0) + n;
-    return `A${a}株 +${n}`;
+    return `${getAreaCode(g, a)}株 +${n}`;
   }},
   { id: 'rollon', label: 'ラッキー再挑戦', apply: (g, p) => { p.flags.extraRoll = true; return 'もう一度サイコロ' } },
   { id: 'invest', label: '増資クーポン', apply: (g, p) => { p.flags.investCoupon = true; return '次の増資が半額' } },
@@ -2575,7 +2576,7 @@ function sellStockForCash(g, p, area, count) {
   syncStockValueSnap(g, p);
   applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
-  addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
+  addLog(g, `${p.name} が ${getAreaCode(g, a)}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, got };
 }
 
@@ -3023,7 +3024,7 @@ export function applyChoice(g, choice) {
         g.areas[area].B = Math.floor(g.areas[area].B * STOCK_BUY_B_RATE);
       }
       updateAreaStockPrices(g);
-      addLog(g, `${p.name} が A${area}株×${count} 購入（${cost}G）`, 'stock');
+      addLog(g, `${p.name} が ${getAreaCode(g, area)}株×${count} 購入（${cost}G）`, 'stock');
       if (maxBuys != null) {
         pending.buysUsed = (pending.buysUsed || 0) + 1;
         if (pending.buysUsed >= maxBuys) {
@@ -3051,7 +3052,7 @@ export function applyChoice(g, choice) {
       syncStockValueSnap(g, p);
       applyStockSellPressure(g, p, area, count);
       updateAreaStockPrices(g);
-      addLog(g, `${p.name} が A${area}株×${count} 売却（+${got}G）`, 'stock');
+      addLog(g, `${p.name} が ${getAreaCode(g, area)}株×${count} 売却（+${got}G）`, 'stock');
     }
     if (choice.action === 'done' || choice.action === 'skip') {
       g.pending = null;
@@ -3961,7 +3962,7 @@ export function preTurnSell(g, playerId, area, count) {
   syncStockValueSnap(g, p);
   applyStockSellPressure(g, p, a, n);
   updateAreaStockPrices(g);
-  addLog(g, `${p.name} が A${a}株×${n} 売却（+${got}G）`, 'stock');
+  addLog(g, `${p.name} が ${getAreaCode(g, a)}株×${n} 売却（+${got}G）`, 'stock');
   return { ok: true, state: serializeState(g) };
 }
 
