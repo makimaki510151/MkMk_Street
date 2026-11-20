@@ -2009,7 +2009,8 @@ function startLocal(seats) {
       : demo === 'map-thumbs-up' ? 'thumbs_up'
         : demo === 'map-torima' ? 'torima'
           : demo === 'map-bullet' ? 'bullet'
-            : params.get('map');
+            : demo === 'map-tagai' ? 'tagai'
+              : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);

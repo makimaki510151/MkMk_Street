@@ -1,0 +1,218 @@
+{
+  "app": "grid-map-maker",
+  "version": 1,
+  "width": 19,
+  "height": 11,
+  "map": [
+    "　　　　　　　　　　　　　　　　　　　",
+    "　　　ＪＪＦＦＦＦ回ＧＧＧＧＫＫ　　　",
+    "　　　Ｊ　　　　　Ａ　　　　　Ｋ　　　",
+    "　　　♦ＢＢ休ＢＢイＣＣ削ＣＣ♥　　　",
+    "　　　Ｊ　　　　　Ａ　　　　　Ｋ　　　",
+    "　　　当　　　　　銀　　　　　ス　　　",
+    "　　　Ｌ　　　　　Ａ　　　　　Ｍ　　　",
+    "　　　♠ＤＤ削ＤＤラＥＥ休ＥＥ♣　　　",
+    "　　　Ｌ　　　　　Ａ　　　　　Ｍ　　　",
+    "　　　ＬＬＨＨＨＨ回ＩＩＩＩＭＭ　　　",
+    "　　　　　　　　　　　　　　　　　　　"
+  ],
+  "legend": [
+    {
+      "char": "銀",
+      "name": "銀行",
+      "color": "#e9c85a"
+    },
+    {
+      "char": "♦",
+      "name": "ダイヤ",
+      "color": "#ffe95c"
+    },
+    {
+      "char": "♥",
+      "name": "ハート",
+      "color": "#ff7b8a"
+    },
+    {
+      "char": "♠",
+      "name": "スペード",
+      "color": "#6d9bff"
+    },
+    {
+      "char": "♣",
+      "name": "クローバー",
+      "color": "#6fd47a"
+    },
+    {
+      "char": "Ａ",
+      "name": "店Ａ",
+      "color": "#e6b3b3"
+    },
+    {
+      "char": "Ｂ",
+      "name": "店Ｂ",
+      "color": "#e6beb3"
+    },
+    {
+      "char": "Ｃ",
+      "name": "店Ｃ",
+      "color": "#e6cab3"
+    },
+    {
+      "char": "Ｄ",
+      "name": "店Ｄ",
+      "color": "#e6d6b3"
+    },
+    {
+      "char": "Ｅ",
+      "name": "店Ｅ",
+      "color": "#e6e1b3"
+    },
+    {
+      "char": "Ｆ",
+      "name": "店Ｆ",
+      "color": "#dee6b3"
+    },
+    {
+      "char": "Ｇ",
+      "name": "店Ｇ",
+      "color": "#d2e6b3"
+    },
+    {
+      "char": "Ｈ",
+      "name": "店Ｈ",
+      "color": "#c6e6b3"
+    },
+    {
+      "char": "Ｉ",
+      "name": "店Ｉ",
+      "color": "#bae6b3"
+    },
+    {
+      "char": "Ｊ",
+      "name": "店Ｊ",
+      "color": "#b3e6b7"
+    },
+    {
+      "char": "Ｋ",
+      "name": "店Ｋ",
+      "color": "#b3e6c2"
+    },
+    {
+      "char": "Ｌ",
+      "name": "店Ｌ",
+      "color": "#b3e6ce"
+    },
+    {
+      "char": "Ｍ",
+      "name": "店Ｍ",
+      "color": "#b3e6da"
+    },
+    {
+      "char": "Ｎ",
+      "name": "店Ｎ",
+      "color": "#b3e6e6"
+    },
+    {
+      "char": "Ｏ",
+      "name": "店Ｏ",
+      "color": "#b3dae6"
+    },
+    {
+      "char": "Ｐ",
+      "name": "店Ｐ",
+      "color": "#b3cee6"
+    },
+    {
+      "char": "Ｑ",
+      "name": "店Ｑ",
+      "color": "#b3c2e6"
+    },
+    {
+      "char": "Ｒ",
+      "name": "店Ｒ",
+      "color": "#b3b7e6"
+    },
+    {
+      "char": "Ｓ",
+      "name": "店Ｓ",
+      "color": "#bab3e6"
+    },
+    {
+      "char": "Ｔ",
+      "name": "店Ｔ",
+      "color": "#c6e6b3"
+    },
+    {
+      "char": "Ｕ",
+      "name": "店Ｕ",
+      "color": "#d2b3e6"
+    },
+    {
+      "char": "Ｖ",
+      "name": "店Ｖ",
+      "color": "#deb3e6"
+    },
+    {
+      "char": "Ｗ",
+      "name": "店Ｗ",
+      "color": "#e6b3e1"
+    },
+    {
+      "char": "Ｘ",
+      "name": "店Ｘ",
+      "color": "#e6b3d6"
+    },
+    {
+      "char": "イ",
+      "name": "イベント",
+      "color": "#ffa94d"
+    },
+    {
+      "char": "削",
+      "name": "削り",
+      "color": "#a9afb7"
+    },
+    {
+      "char": "ス",
+      "name": "スロット",
+      "color": "#c78bff"
+    },
+    {
+      "char": "株",
+      "name": "株",
+      "color": "#4fc3c7"
+    },
+    {
+      "char": "ラ",
+      "name": "ラッキー",
+      "color": "#ffd43b"
+    },
+    {
+      "char": "回",
+      "name": "サイコロもう一回",
+      "color": "#74c0fc"
+    },
+    {
+      "char": "当",
+      "name": "サイコロ当てゲーム",
+      "color": "#b197fc"
+    },
+    {
+      "char": "転",
+      "name": "転送",
+      "color": "#63e6be"
+    },
+    {
+      "char": "ワ",
+      "name": "ワイルドカード",
+      "color": "#ff8787"
+    },
+    {
+      "char": "休",
+      "name": "休み",
+      "color": "#df909c"
+    }
+  ],
+  "blankName": "空白",
+  "current": "削"
+}

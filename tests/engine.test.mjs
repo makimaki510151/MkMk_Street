@@ -153,6 +153,7 @@ describe('MkMk Street engine', () => {
     assert.ok(ids.has('thumbs_up'));
     assert.ok(ids.has('torima'));
     assert.ok(ids.has('bullet'));
+    assert.ok(ids.has('tagai'));
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -551,7 +552,7 @@ describe('MkMk Street engine', () => {
           mapId: def.id,
         });
         if (state === 1) toggleBoardSwitch(g);
-        const allowGapDiag = def.id === 'torima' || def.id === 'bullet';
+        const allowGapDiag = def.id === 'torima' || def.id === 'bullet' || def.id === 'tagai';
         for (const n of g.map) {
           assert.ok(
             (n.nexts?.length || 0) >= 2,
@@ -1860,6 +1861,61 @@ describe('MkMk Street engine', () => {
       );
       assert.ok(pairOk, `${w.label} -> ${dest.label}`);
     }
+  });
+
+  it('tagai map builds with A/B/C areas and premium BCDE shops', () => {
+    const board = buildBoard('tagai');
+    assert.equal(board.mapId, 'tagai');
+    assert.equal(board.mapName, '田改');
+    assert.equal(board.cols, 19);
+    assert.equal(board.rows, 11);
+    assert.equal(Object.keys(board.areas).length, 13);
+    assert.equal(board.areas[1].name, 'A1 中央畦');
+    assert.equal(board.areas[2].name, 'B1 北西畔');
+    assert.equal(board.areas[8].name, 'C1 北東畔');
+    assert.equal(board.areas[13].name, 'C6 南畦東');
+
+    for (const a of Object.keys(board.areas).map(Number)) {
+      assert.equal(
+        board.nodes.filter((n) => n.type === 'shop' && n.area === a).length,
+        4,
+        `area ${a}`,
+      );
+    }
+
+    // JSON の B/C/D/E（エリア 4,5,10,11）は高め
+    const avg = (area) => {
+      const shops = board.nodes.filter((n) => n.type === 'shop' && n.area === area);
+      return shops.reduce((s, n) => s + n.basePrice, 0) / shops.length;
+    };
+    const premium = [4, 5, 10, 11].map(avg);
+    const normal = [2, 3, 6, 7, 8, 9, 12, 13].map(avg);
+    assert.ok(Math.min(...premium) > Math.max(...normal), 'BCDE shops should be pricier');
+
+    const bank = board.nodes.find((n) => n.type === 'bank');
+    assert.equal(bank?.col, 9);
+    assert.equal(bank?.row, 5);
+    // 銀行は上下のＡのみ直交接続（左右は空）。外周ループ経由で全域到達
+    assert.equal(bank.nexts.length, 2, `bank deg=${bank.nexts.length}`);
+
+    assert.equal(board.nodes.filter((n) => n.type === 'holiday').length, 2);
+    assert.equal(board.nodes.filter((n) => n.type === 'rollon').length, 2);
+    assert.equal(board.nodes.filter((n) => n.type === 'scratch').length, 2);
+
+    const byId = new Map(board.nodes.map((n) => [n.id, n]));
+    const seen = new Set([bank.id]);
+    const q = [bank.id];
+    while (q.length) {
+      const id = q.shift();
+      const n = byId.get(id);
+      for (const nid of n.nexts) {
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          q.push(nid);
+        }
+      }
+    }
+    assert.equal(seen.size, board.nodes.length, 'all squares reachable');
   });
 
   it('torima map builds with holiday squares that close own shops for one turn', () => {
