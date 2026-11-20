@@ -166,6 +166,8 @@ const app = {
   forkResolving: false,
   /** 株パネル／プレイヤーカードでピン留めしたエリア（クリックで盤面ハイライト） */
   stockPeekArea: null,
+  /** スマホ詳細シート（手番/所持/記録）が開いているか */
+  sideSheetOpen: false,
 };
 
 const LAST_RESULTS_KEY = 'mkmk-street-last-results';
@@ -710,22 +712,94 @@ function bindVolumeUI() {
   });
 }
 
+const SIDE_TAB_TITLES = { turn: '手番', holdings: '所持', log: '記録' };
+const MOBILE_UI_MQ = '(max-width: 900px)';
+
+function isMobileUi() {
+  return typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_UI_MQ).matches;
+}
+
+function setSideTab(tab) {
+  const key = SIDE_TAB_TITLES[tab] ? tab : 'turn';
+  $$('.side-tab').forEach((b) => {
+    const on = b.dataset.sideTab === key;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $$('.side-pane').forEach((pane) => {
+    const on = pane.dataset.pane === key;
+    pane.classList.toggle('active', on);
+    pane.hidden = !on;
+  });
+  const title = $('#side-sheet-title');
+  if (title) title.textContent = SIDE_TAB_TITLES[key] || '詳細';
+  $$('.mobile-info-btn').forEach((b) => {
+    const on = b.dataset.sideOpen === key;
+    b.classList.toggle('active', on && app.sideSheetOpen);
+    b.setAttribute('aria-expanded', on && app.sideSheetOpen ? 'true' : 'false');
+  });
+  return key;
+}
+
+function openSideSheet(tab = 'turn') {
+  setSideTab(tab);
+  app.sideSheetOpen = true;
+  document.body.classList.add('side-sheet-open');
+  const backdrop = $('#side-backdrop');
+  if (backdrop) {
+    backdrop.hidden = false;
+    backdrop.setAttribute('aria-hidden', 'false');
+  }
+}
+
+function closeSideSheet() {
+  app.sideSheetOpen = false;
+  document.body.classList.remove('side-sheet-open');
+  const backdrop = $('#side-backdrop');
+  if (backdrop) {
+    backdrop.hidden = true;
+    backdrop.setAttribute('aria-hidden', 'true');
+  }
+  $$('.mobile-info-btn').forEach((b) => {
+    b.classList.remove('active');
+    b.setAttribute('aria-expanded', 'false');
+  });
+}
+
 function bindSideChrome() {
   $$('.side-tab').forEach((btn) => {
     btn.onclick = () => {
-      const tab = btn.dataset.sideTab;
-      $$('.side-tab').forEach((b) => {
-        const on = b.dataset.sideTab === tab;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
-      $$('.side-pane').forEach((pane) => {
-        const on = pane.dataset.pane === tab;
-        pane.classList.toggle('active', on);
-        pane.hidden = !on;
-      });
+      setSideTab(btn.dataset.sideTab);
+      if (isMobileUi()) openSideSheet(btn.dataset.sideTab);
       audio.sfx.click();
     };
+  });
+  $$('.mobile-info-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const tab = btn.dataset.sideOpen || 'turn';
+      if (app.sideSheetOpen && btn.classList.contains('active')) {
+        closeSideSheet();
+      } else {
+        openSideSheet(tab);
+      }
+      audio.sfx.click();
+    };
+  });
+  $('#btn-side-close')?.addEventListener('click', () => {
+    closeSideSheet();
+    audio.sfx.click();
+  });
+  $('#side-backdrop')?.addEventListener('click', () => {
+    closeSideSheet();
+  });
+  $('#btn-inspect-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    app.inspectedId = null;
+    updateInspectPanel();
+    audio.sfx.click();
+  });
+  window.matchMedia?.(MOBILE_UI_MQ)?.addEventListener?.('change', (ev) => {
+    if (!ev.matches) closeSideSheet();
   });
   $('#btn-feed-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2177,16 +2251,7 @@ function maybeDemoLanding() {
   }
   if (demo === 'event-fx' || demo === 'roll-tabs') {
     // 所持タブでもサイコロが使えること＋イベントフラッシュのデモ
-    $$('.side-tab').forEach((b) => {
-      const on = b.dataset.sideTab === 'holdings';
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-    });
-    $$('.side-pane').forEach((pane) => {
-      const on = pane.dataset.pane === 'holdings';
-      pane.classList.toggle('active', on);
-      pane.hidden = !on;
-    });
+    setSideTab('holdings');
     refreshGameUI();
     const demos = [
       { kicker: '買い物料', title: '−420G', detail: 'あか が あお の「さくら茶屋」へ支払い', kind: 'toll', color: '#e85d75' },
@@ -2430,7 +2495,10 @@ function enterGame() {
   bindModalDrag();
   app.lastTurnKey = null;
   saveRejoinSession();
-  app.inspectedId = app.game.startId;
+  closeSideSheet();
+  setSideTab('turn');
+  // スマホはマス詳細を常時出さず、タップするまで非表示
+  app.inspectedId = isMobileUi() ? null : app.game.startId;
   updateInspectPanel();
   refreshGameUI();
   maybeYourTurnChime();
@@ -2438,15 +2506,47 @@ function enterGame() {
   scheduleCpu();
 }
 
+function renderMobilePlayerStrip(g) {
+  const strip = $('#mobile-player-strip');
+  if (!strip) return;
+  strip.innerHTML = g.players.map((p) => {
+    const a = getPlayerAssets(g, p);
+    const active = g.currentPlayerIdx === p.id ? 'active' : '';
+    const me = p.id === app.localSeat ? 'me' : '';
+    const bust = p.bankrupt ? 'bust' : '';
+    return `<button type="button" class="mps-chip ${active} ${me} ${bust}" data-pid="${p.id}" style="--pc:${p.color}" title="${escapeHtml(p.name)}">
+      <span class="mps-dot" aria-hidden="true"></span>
+      <span class="mps-name">${escapeHtml(p.name)}</span>
+      <span class="mps-cash${a.cash < 0 ? ' debt' : ''}">${p.bankrupt ? '破産' : `${a.cash.toLocaleString()}G`}</span>
+    </button>`;
+  }).join('');
+  strip.querySelectorAll('.mps-chip').forEach((btn) => {
+    btn.onclick = () => {
+      openSideSheet('turn');
+      const card = document.querySelector(`#players-panel .player-card[data-pid="${btn.dataset.pid}"]`);
+      card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      audio.sfx.click();
+    };
+  });
+}
+
 function updateInspectPanel() {
   const el = $('#inspect');
+  const body = $('#inspect-body') || el;
   if (!el || !app.game) return;
   const g = app.game;
   const sq = app.inspectedId != null ? getNode(g, app.inspectedId) : null;
   if (!sq) {
-    el.innerHTML = '<strong>マス情報</strong><span class="inspect-sub">マスをクリックして詳細を固定表示</span>';
+    el.classList.add('inspect-empty');
+    if (body) {
+      body.innerHTML = '<strong>マス情報</strong><span class="inspect-sub">マスをタップして詳細を表示</span>';
+    }
+    // スマホは常時プレースホルダを出さず、タップ時のみ表示
+    el.hidden = isMobileUi();
     return;
   }
+  el.hidden = false;
+  el.classList.remove('inspect-empty');
   if (sq.type === 'shop') {
     const owner = sq.owner >= 0 ? g.players[sq.owner] : null;
     const toll = calcToll(g, sq);
@@ -2475,7 +2575,7 @@ function updateInspectPanel() {
       : `残り増資額 ${remInvest.toLocaleString()}G` + (
         maxInvest > 0 ? ` / 上限 ${maxInvest.toLocaleString()}G` : ''
       );
-    el.innerHTML = `
+    body.innerHTML = `
       <strong>${escapeHtml(sq.label || 'お店')}</strong>
       <span class="inspect-owner" style="--pc:${owner?.color || '#888'}">${
         owner ? `${escapeHtml(owner.name)} の店` : '空き店舗'
@@ -2489,7 +2589,7 @@ function updateInspectPanel() {
     `;
     return;
   }
-  el.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(g, sq))}</span>`;
+  body.innerHTML = `<strong>${escapeHtml(sq.label || sq.type)}</strong><span class="inspect-sub">${escapeHtml(shopTooltip(g, sq))}</span>`;
 }
 
 /** 休み中は自動スキップ（人間がNPCのダイスを振らされるのを防ぐ） */
@@ -4695,6 +4795,7 @@ function refreshGameUI() {
     `;
   }).join('');
   bindStockAreaPeek(box, g);
+  renderMobilePlayerStrip(g);
   renderDisconnectPanel(g);
   maybePresentMoneyFx(g);
   flushPendingMoneyFx();

@@ -82,7 +82,7 @@
         <ul>
           <li>自分の番で<strong>サイコロ</strong>を振り、マスを進みます（通常は1〜6。エリアが11以上のマップは1〜10）。分岐では進む方向を選びます。</li>
           <li>マップは<strong>中央クロス／貝がら港／がけした島／瓶／サムズアップ／とりま／弾丸</strong>から選べます。とりまの<strong>休みマス</strong>に止まると、自分の店が1ターン休店します（買い物料0）。弾丸は転送3組で弾倉側と弾頭側を往復します。</li>
-          <li>右側の<strong>手番／所持／記録</strong>どのタブからでもサイコロを振れます。</li>
+          <li>サイコロは常時表示の操作欄から振れます。スマホでは<strong>手番／所持／記録</strong>はボタンで開く詳細シートです（PCは右パネル）。</li>
           <li>盤上のコマには<strong>進行方向の矢印</strong>が付き、手番プレイヤーの次マスも点線で示されます。サイコロ後は分岐を踏まえた<strong>最終停止マス</strong>が縁取りハイライトされ、そのマスを直接クリックしても進めます。</li>
         </ul>
       </section>
@@ -266,13 +266,13 @@
     <header class="topbar">
       <span class="brand-mini">MkMk Street</span>
       <div class="topbar-meta">
-        <span class="chip" id="map-chip">マップ</span>
-        <span class="chip" id="goal-chip">目標</span>
-        <span class="chip" id="turn-chip">ターン</span>
-        <span class="chip" id="phase-chip">phase</span>
-        <span class="chip buff" id="buff-chip" hidden>増資半額</span>
+        <span class="chip topbar-essential" id="turn-chip">ターン</span>
+        <span class="chip topbar-essential" id="goal-chip">目標</span>
+        <span class="chip topbar-detail" id="map-chip">マップ</span>
+        <span class="chip topbar-detail" id="phase-chip">phase</span>
+        <span class="chip buff topbar-detail" id="buff-chip" hidden>増資半額</span>
       </div>
-      <span id="current-name"></span>
+      <span id="current-name" class="topbar-essential"></span>
     </header>
 
     <div class="board-wrap">
@@ -282,7 +282,10 @@
         <button type="button" id="btn-zoom-fit" title="全体表示" aria-label="全体表示">全体</button>
         <button type="button" id="btn-zoom-in" title="拡大" aria-label="拡大">+</button>
       </div>
-      <div id="inspect">マスをタップして詳細を表示</div>
+      <div id="inspect" class="inspect-empty" hidden>
+        <button type="button" id="btn-inspect-close" class="inspect-close" title="閉じる" aria-label="マス情報を閉じる">×</button>
+        <div id="inspect-body">マスをタップして詳細を表示</div>
+      </div>
       <div id="dice-overlay" hidden>
         <div class="dice-stage">
           <div id="dice-overlay-face">?</div>
@@ -345,7 +348,31 @@
       </div>
     </div>
 
-    <aside class="side">
+    <!-- 常時ドック: 要約プレイヤー＋操作。詳細パネルは side シートで必要時のみ -->
+    <div id="action-dock" class="action-dock">
+      <div id="mobile-player-strip" class="mobile-player-strip" aria-label="プレイヤー要約"></div>
+      <nav class="mobile-info-nav" aria-label="詳細を開く">
+        <button type="button" class="mobile-info-btn" data-side-open="turn" aria-controls="side-panel">手番</button>
+        <button type="button" class="mobile-info-btn" data-side-open="holdings" aria-controls="side-panel">所持</button>
+        <button type="button" class="mobile-info-btn" data-side-open="log" aria-controls="side-panel">記録</button>
+      </nav>
+      <div class="controls side-controls" id="side-controls">
+        <div class="dice-row">
+          <div id="dice-face">·</div>
+          <button class="btn primary" id="btn-roll">サイコロを振る</button>
+        </div>
+        <button type="button" class="btn" id="btn-trade" hidden title="自分のターンに物件の交換を持ちかける">物件取引</button>
+        <div id="wait-hint" hidden></div>
+        <button type="button" class="btn nudge" id="btn-nudge" hidden title="止まっているプレイヤーに催促SEを送る">催促する</button>
+      </div>
+    </div>
+
+    <div id="side-backdrop" class="side-backdrop" hidden aria-hidden="true"></div>
+    <aside class="side" id="side-panel">
+      <header class="side-sheet-head">
+        <strong id="side-sheet-title">詳細</strong>
+        <button type="button" class="btn tiny ghost" id="btn-side-close" aria-label="詳細パネルを閉じる">閉じる</button>
+      </header>
       <nav class="side-tabs" role="tablist" aria-label="サイドパネル">
         <button type="button" class="side-tab active" data-side-tab="turn" role="tab" aria-selected="true">手番</button>
         <button type="button" class="side-tab" data-side-tab="holdings" role="tab" aria-selected="false">所持</button>
@@ -362,16 +389,6 @@
 
       <div class="side-pane" data-pane="log" role="tabpanel" hidden>
         <div id="log"></div>
-      </div>
-
-      <div class="controls side-controls" id="side-controls">
-        <div class="dice-row">
-          <div id="dice-face">·</div>
-          <button class="btn primary" id="btn-roll">サイコロを振る</button>
-        </div>
-        <button type="button" class="btn" id="btn-trade" hidden title="自分のターンに物件の交換を持ちかける">物件取引</button>
-        <div id="wait-hint" hidden></div>
-        <button type="button" class="btn nudge" id="btn-nudge" hidden title="止まっているプレイヤーに催促SEを送る">催促する</button>
       </div>
     </aside>
   </section>
