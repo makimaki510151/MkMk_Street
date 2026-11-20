@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   tiedRollKeys,
   evaluateOrderRolls,
@@ -12,9 +15,23 @@ import {
 import { APP_VERSION } from '../js/version.js';
 import { PLAYER_COLORS, normalizeLobbyColors } from '../js/engine.js';
 
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const mainJs = readFileSync(join(root, 'js/main.js'), 'utf8');
+const css = readFileSync(join(root, 'css/styles.css'), 'utf8');
+
 describe('order roll & lobby helpers', () => {
   it('exposes a semver-like APP_VERSION', () => {
     assert.match(APP_VERSION, /^\d+\.\d+\.\d+/);
+  });
+
+  it('holds final dice then FLIP-sorts before ranking confirm', () => {
+    assert.match(mainJs, /ORDER_ROLL_REVEAL_HOLD_MS/);
+    assert.match(mainJs, /playOrderRollSortAnimation/);
+    assert.match(mainJs, /ensureOrderRollRevealPipeline/);
+    assert.match(mainJs, /revealPhase/);
+    assert.match(mainJs, /just-rolled/);
+    assert.match(css, /\.order-roll-row\.just-rolled/);
+    assert.match(css, /order-roll-pop/);
   });
 
   it('offers about 10 player colors', () => {

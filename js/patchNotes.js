@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.2',
+    date: '2026-11-20',
+    items: [
+      '順番決めダイスで全員の出目を見せてから並べ替えアニメで順位を表示',
+    ],
+  },
+  {
     version: '1.9.1',
     date: '2026-11-20',
     items: [

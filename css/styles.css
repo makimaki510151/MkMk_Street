@@ -303,6 +303,25 @@ button:disabled { opacity: .42; cursor: default; }
 .order-roll-row.ranked.first .or-rank {
   color: var(--accent-strong);
 }
+.order-roll-row.just-rolled {
+  background: color-mix(in srgb, var(--accent) 14%, rgba(255,255,255,0.03));
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.order-roll-row.just-rolled .or-dice {
+  animation: order-roll-pop 0.55s ease-out;
+}
+.order-roll-row.reveal-hold .or-dice {
+  color: var(--accent-strong);
+}
+@keyframes order-roll-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.28); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .order-roll-row.just-rolled .or-dice { animation: none; }
+  .order-roll-row { transition: none !important; }
+}
 .order-roll-result {
   margin: 0 0 0.85rem;
   padding: 0.7rem 0.85rem;

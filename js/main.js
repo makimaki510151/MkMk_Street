@@ -1516,12 +1516,14 @@ function handleNetEvent({ from, data }) {
       return;
     }
     if (data.type === 'order_roll_abort') {
+      clearOrderRollRevealTimers();
       app.orderRoll = null;
       toast('順番決めが中断されました');
       showScreen('screen-lobby');
       return;
     }
     if (data.type === 'game_start' || data.type === 'game_rejoin') {
+      clearOrderRollRevealTimers();
       app.orderRoll = null;
       hideReconnectOverlay();
       app.game = restoreState(data.state);
@@ -1798,6 +1800,7 @@ function beginOrderRoll({ players, goal, cash, mapId, mode }) {
     color: p.color,
     isCPU: !!p.isCPU,
   }));
+  clearOrderRollRevealTimers();
   app.orderRoll = {
     players: list,
     rolls: {},
@@ -1805,6 +1808,8 @@ function beginOrderRoll({ players, goal, cash, mapId, mode }) {
     round: 1,
     awaitingConfirm: false,
     finalOrder: null,
+    revealPhase: null,
+    lastRolledKey: null,
     goal,
     cash: cash ?? DEFAULT_CASH,
     mapId,
@@ -1841,6 +1846,8 @@ function serializeOrderRoll() {
     round: o.round,
     awaitingConfirm: !!o.awaitingConfirm,
     finalOrder: o.finalOrder || null,
+    revealPhase: o.revealPhase || null,
+    lastRolledKey: o.lastRolledKey || null,
     goal: o.goal,
     cash: o.cash ?? DEFAULT_CASH,
     mapId: o.mapId,
@@ -1848,19 +1855,32 @@ function serializeOrderRoll() {
 }
 
 function applyOrderRollSync(data) {
+  const prev = app.orderRoll;
+  const finalOrder = Array.isArray(data.finalOrder) ? data.finalOrder : null;
+  const awaitingConfirm = !!data.awaitingConfirm;
   app.orderRoll = {
     players: data.players || [],
     rolls: data.rolls || {},
     pending: data.pending || [],
     round: data.round || 1,
-    awaitingConfirm: !!data.awaitingConfirm,
-    finalOrder: Array.isArray(data.finalOrder) ? data.finalOrder : null,
+    awaitingConfirm,
+    finalOrder,
+    revealPhase: awaitingConfirm
+      ? 'done'
+      : (data.revealPhase || (finalOrder?.length ? 'hold' : null)),
+    lastRolledKey: data.lastRolledKey || null,
     goal: data.goal,
     cash: data.cash ?? DEFAULT_CASH,
     mapId: data.mapId,
     mode: 'guest',
+    _revealSeq: prev?._revealSeq || null,
   };
   showOrderRollScreen();
+  if (awaitingConfirm) {
+    clearOrderRollRevealTimers();
+  } else if (finalOrder?.length) {
+    ensureOrderRollRevealPipeline();
+  }
 }
 
 function showOrderRollScreen() {
@@ -1885,6 +1905,17 @@ function orderRollCanConfirm() {
   return o.mode === 'host' || o.mode === 'local';
 }
 
+/** 出目そろい後のホールド〜並べ替えタイマーを解除 */
+function clearOrderRollRevealTimers() {
+  if (app._orderRevealHoldTimer) {
+    clearTimeout(app._orderRevealHoldTimer);
+    app._orderRevealHoldTimer = null;
+  }
+}
+
+const ORDER_ROLL_REVEAL_HOLD_MS = 1300;
+const ORDER_ROLL_SORT_MS = 580;
+
 function renderOrderRollUi() {
   const o = app.orderRoll;
   if (!o) return;
@@ -1895,36 +1926,43 @@ function renderOrderRollUi() {
   const btn = $('#btn-order-roll');
   const myKey = orderRollMyKey();
   const pendingSet = new Set(o.pending || []);
-  const awaiting = !!o.awaitingConfirm && Array.isArray(o.finalOrder) && o.finalOrder.length;
+  const hasFinal = Array.isArray(o.finalOrder) && o.finalOrder.length > 0;
+  const revealing = hasFinal && !o.awaitingConfirm;
+  const awaiting = !!o.awaitingConfirm && hasFinal;
   if (hint) {
     if (awaiting) {
       hint.textContent = '出目がそろいました。下の順番を確認してください。';
+    } else if (revealing) {
+      hint.textContent = '全員の出目がそろいました。大きい順に並べ替えます…';
     } else {
       hint.textContent = o.round > 1
         ? `同じ出目の人だけ振り直し（${o.round}回目）。1〜100・大きいほど先手。スペースでも振れます。`
         : '1〜100の出目が大きいほど先手。同じ出目の人だけ振り直します。スペースでも振れます。';
     }
   }
-  if (list) {
+  if (list && o.revealPhase !== 'sorting') {
     const byKey = new Map(o.players.map((p) => [p.key, p]));
     const rows = awaiting
       ? o.finalOrder.map((key, i) => ({ p: byKey.get(key), rank: i + 1 })).filter((r) => r.p)
       : o.players.map((p) => ({ p, rank: 0 }));
     list.innerHTML = rows.map(({ p, rank }) => {
       const rolled = Number.isFinite(o.rolls[p.key]);
-      const waiting = !awaiting && pendingSet.has(p.key);
+      const waiting = !awaiting && !revealing && pendingSet.has(p.key);
+      const justRolled = !awaiting && o.lastRolledKey === p.key;
       const cls = [
         'order-roll-row',
         awaiting ? 'ranked' : '',
         awaiting && rank === 1 ? 'first' : '',
         waiting ? 'pending' : '',
         waiting && o.round > 1 ? 'tied' : '',
+        justRolled ? 'just-rolled' : '',
+        revealing ? 'reveal-hold' : '',
       ].filter(Boolean).join(' ');
       const dice = rolled ? String(o.rolls[p.key]) : (waiting ? '待ち' : '—');
       const rankHtml = awaiting
         ? `<span class="or-rank">${rank}位</span>`
         : '';
-      return `<div class="${cls}" style="--pc:${p.color || PLAYER_COLORS[0]}">
+      return `<div class="${cls}" data-key="${escapeHtml(p.key)}" style="--pc:${p.color || PLAYER_COLORS[0]}">
         ${rankHtml}
         <span class="or-dot"></span>
         <span>${escapeHtml(p.name)}${p.isCPU ? '（CPU）' : ''}${p.disconnected ? '（切断）' : ''}${p.key === myKey ? '（あなた）' : ''}</span>
@@ -1947,6 +1985,7 @@ function renderOrderRollUi() {
     }
   }
   const canRoll = !awaiting
+    && !revealing
     && !!myKey
     && pendingSet.has(myKey)
     && !o.players.find((p) => p.key === myKey)?.isCPU;
@@ -1955,6 +1994,9 @@ function renderOrderRollUi() {
     if (awaiting) {
       btn.disabled = !canConfirm;
       btn.textContent = canConfirm ? 'この順番で開始' : 'ホストの開始待ち';
+    } else if (revealing) {
+      btn.disabled = true;
+      btn.textContent = '並べ替え中…';
     } else {
       btn.disabled = !canRoll;
       btn.textContent = o.round > 1 ? 'もう一度振る' : 'サイコロを振る';
@@ -1965,6 +2007,10 @@ function renderOrderRollUi() {
       status.textContent = canConfirm
         ? '順番を確認して「この順番で開始」を押してください（スペースでも可）'
         : 'ホストが開始するまでお待ちください…';
+    } else if (revealing) {
+      status.textContent = o.revealPhase === 'sorting'
+        ? '出目の大きい順に並べ替えています…'
+        : '全員の出目を確認しています…';
     } else if (!pendingSet.size) {
       status.textContent = '結果を集計しています…';
     } else if (canRoll) {
@@ -2020,6 +2066,7 @@ function resolveOrderRollClaim(key) {
   if (!(o.pending || []).includes(key)) return;
   if (Number.isFinite(o.rolls[key])) return;
   o.rolls[key] = rollOrderDie();
+  o.lastRolledKey = key;
   try { audio.sfx.dice(); } catch (_) { audio.sfx.click(); }
   o.pending = o.pending.filter((k) => k !== key);
   renderOrderRollUi();
@@ -2064,8 +2111,10 @@ function finishOrderRollRound() {
   if (!o) return;
   const result = evaluateOrderRolls(o.players, o.rolls);
   if (!result.done) {
+    clearOrderRollRevealTimers();
     o.awaitingConfirm = false;
     o.finalOrder = null;
+    o.revealPhase = null;
     o.pending = result.rerollKeys;
     o.round += 1;
     for (const k of result.rerollKeys) delete o.rolls[k];
@@ -2076,11 +2125,119 @@ function finishOrderRollRound() {
     return;
   }
   o.pending = [];
-  o.awaitingConfirm = true;
+  o.awaitingConfirm = false;
   o.finalOrder = result.order.slice();
+  o.revealPhase = 'hold';
   renderOrderRollUi();
   broadcastOrderRollSync();
-  toast('順番が決まりました');
+  ensureOrderRollRevealPipeline();
+}
+
+/**
+ * 全員出目後: ホールドで最後の出目を見せ → FLIP並べ替え → 順位確定表示
+ */
+function ensureOrderRollRevealPipeline() {
+  const o = app.orderRoll;
+  if (!o?.finalOrder?.length) return;
+  if (o.awaitingConfirm) {
+    o.revealPhase = 'done';
+    clearOrderRollRevealTimers();
+    return;
+  }
+  const seq = `${o.round}:${o.finalOrder.join('|')}`;
+  if (o._revealSeq === seq && (o.revealPhase === 'hold' || o.revealPhase === 'sorting')) {
+    return;
+  }
+  o._revealSeq = seq;
+  o.revealPhase = 'hold';
+  clearOrderRollRevealTimers();
+  renderOrderRollUi();
+  app._orderRevealHoldTimer = setTimeout(() => {
+    void runOrderRollSortThenConfirm(seq);
+  }, ORDER_ROLL_REVEAL_HOLD_MS);
+}
+
+async function runOrderRollSortThenConfirm(seq) {
+  const o = app.orderRoll;
+  if (!o || o._revealSeq !== seq || o.awaitingConfirm) return;
+  const reduceMotion = typeof matchMedia === 'function'
+    && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  o.revealPhase = 'sorting';
+  renderOrderRollUi();
+  if (!reduceMotion) {
+    try {
+      await playOrderRollSortAnimation(o.finalOrder);
+    } catch (_) { /* ignore */ }
+  }
+  if (!app.orderRoll || app.orderRoll._revealSeq !== seq) return;
+  o.revealPhase = 'done';
+  o.awaitingConfirm = true;
+  o.lastRolledKey = null;
+  renderOrderRollUi();
+  if (o.mode === 'host' || o.mode === 'local') {
+    broadcastOrderRollSync();
+    toast('順番が決まりました');
+  }
+}
+
+/** FLIP で座席順 → 出目順へ並べ替え */
+function playOrderRollSortAnimation(orderKeys) {
+  const list = $('#order-roll-list');
+  if (!list || !orderKeys?.length) return Promise.resolve();
+  const rows = [...list.querySelectorAll('.order-roll-row')];
+  if (rows.length < 2) return Promise.resolve();
+  const byKey = new Map(rows.map((el) => [el.dataset.key, el]));
+  const first = new Map();
+  for (const el of rows) {
+    first.set(el.dataset.key, el.getBoundingClientRect());
+  }
+  for (const key of orderKeys) {
+    const el = byKey.get(key);
+    if (el) list.appendChild(el);
+  }
+  for (const key of orderKeys) {
+    const el = byKey.get(key);
+    if (!el) continue;
+    const last = el.getBoundingClientRect();
+    const f = first.get(key);
+    if (!f) continue;
+    const dy = f.top - last.top;
+    el.style.transition = 'none';
+    el.style.transform = dy ? `translateY(${dy}px)` : '';
+  }
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const live = [...list.querySelectorAll('.order-roll-row')];
+        for (const el of live) {
+          el.style.transition = `transform ${ORDER_ROLL_SORT_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+          el.style.transform = '';
+        }
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          for (const el of live) {
+            el.style.transition = '';
+            el.style.transform = '';
+          }
+          resolve();
+        };
+        const fallback = setTimeout(finish, ORDER_ROLL_SORT_MS + 80);
+        const probe = live.find((el) => el.style.transition) || live[0];
+        if (!probe) {
+          clearTimeout(fallback);
+          finish();
+          return;
+        }
+        probe.addEventListener('transitionend', (ev) => {
+          if (ev.propertyName && ev.propertyName !== 'transform') return;
+          clearTimeout(fallback);
+          finish();
+        }, { once: true });
+      });
+    });
+  });
 }
 
 function confirmOrderRollStart() {
@@ -2098,6 +2255,7 @@ function confirmOrderRollStart() {
   const cash = o.cash ?? DEFAULT_CASH;
   const mapId = o.mapId;
   const mode = o.mode;
+  clearOrderRollRevealTimers();
   app.orderRoll = null;
 
   if (mode === 'local') {
