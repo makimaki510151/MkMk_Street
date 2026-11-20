@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.2',
+    date: '2026-11-20',
+    items: [
+      'サイコロ当て結果で左側に各自の予想出目を並べて表示',
+    ],
+  },
+  {
     version: '1.9.1',
     date: '2026-11-20',
     items: [
