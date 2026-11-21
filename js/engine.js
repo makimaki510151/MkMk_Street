@@ -1600,6 +1600,7 @@ export function serializeState(g) {
     _seed: g._seed,
     _rngCount: g._rngCount,
     sharedEventTable: g.sharedEventTable,
+    potionDeck: Array.isArray(g.potionDeck) ? g.potionDeck : null,
   }));
 }
 
@@ -1720,6 +1721,171 @@ export function findForkNextForLanding(g, fromPos, prevPos, stepsLeft, landingId
   return null;
 }
 
+const ORE_TABLE = {
+  iron: { faces: 6, prizes: [0, 0, 100, 200, 350, 550], label: '鉄鉱石' },
+  gold: { faces: 6, prizes: [50, 170, 290, 410, 530, 650], label: '金鉱石' },
+  diamond: { faces: 8, prizes: [0, 0, 200, 300, 400, 500, 600, 2000], label: 'ダイヤ鉱石' },
+};
+
+function rollOrePrize(g, p, oreKind) {
+  const table = ORE_TABLE[oreKind];
+  if (!table) return;
+  const face = 1 + Math.floor(rngNext(g) * table.faces);
+  const prize = table.prizes[face - 1] || 0;
+  if (prize > 0) {
+    p.cash += prize;
+    bumpStat(p, 'eventIncome', prize);
+    addLog(g, `${p.name} が${table.label}で ${face} → +${prize.toLocaleString()}G！`, 'event');
+  } else {
+    addLog(g, `${p.name} が${table.label}で ${face} → 空振り…`, 'event');
+  }
+}
+
+function drawPotionEffect(g) {
+  if (!Array.isArray(g.potionDeck) || !g.potionDeck.length) {
+    const deck = [1, 2, 3, 4, 5];
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(rngNext(g) * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    g.potionDeck = deck;
+  }
+  return g.potionDeck.pop();
+}
+
+function applyPotionEffect(g, p, effectId) {
+  switch (effectId) {
+    case 1: {
+      const areas = Object.keys(g.areas).map(Number);
+      const a = areas[Math.floor(rngNext(g) * areas.length)];
+      p.stocks[a] = (p.stocks[a] || 0) + 20;
+      return `薬品：${getAreaCode(g, a)}株 +20`;
+    }
+    case 2: {
+      const total = getPlayerAssets(g, p).total;
+      const n = Math.max(1, Math.floor(total * 0.03));
+      p.cash += n;
+      return `薬品：総資産の3% +${n.toLocaleString()}G`;
+    }
+    case 3: {
+      const empty = [];
+      for (let i = 0; i < 4; i++) if (!p.marks[i]) empty.push(i);
+      if (!empty.length) {
+        p.cash += 100;
+        return '薬品：マーク揃い済み → +100G';
+      }
+      const idx = empty[Math.floor(rngNext(g) * empty.length)];
+      p.marks[idx] = true;
+      return `薬品：マーク獲得（${SUIT_LABELS[idx]}）`;
+    }
+    case 4: {
+      const alive = g.players.filter((x) => !x.bankrupt);
+      let worst = p;
+      let worstVal = getPlayerAssets(g, p).total;
+      for (const pl of alive) {
+        const t = getPlayerAssets(g, pl).total;
+        if (t < worstVal) {
+          worst = pl;
+          worstVal = t;
+        }
+      }
+      if (worst.id === p.id) {
+        let gained = 0;
+        for (const pl of alive) {
+          if (pl.id === p.id) continue;
+          const take = Math.min(pl.cash, 100);
+          pl.cash -= take;
+          gained += take;
+        }
+        p.cash += gained;
+        return `薬品：最下位ボーナス 全員から計+${gained.toLocaleString()}G`;
+      }
+      const gift = Math.min(p.cash, 200);
+      p.cash -= gift;
+      worst.cash += gift;
+      return `薬品：最下位の${worst.name}へ ${gift.toLocaleString()}G`;
+    }
+    case 5: {
+      const held = Object.keys(p.stocks || {}).map(Number).filter((a) => (p.stocks[a] || 0) > 0);
+      if (!held.length) return '薬品：売却できる株なし';
+      const a = held[Math.floor(rngNext(g) * held.length)];
+      const have = p.stocks[a] || 0;
+      const sell = Math.max(1, Math.floor(have / 2));
+      const price = g.areas[a]?.stockPrice || 0;
+      const got = price * sell;
+      p.stocks[a] = have - sell;
+      if (p.stocks[a] <= 0) delete p.stocks[a];
+      p.cash += got;
+      return `薬品：${getAreaCode(g, a)}株 ${sell}枚売却 +${got.toLocaleString()}G`;
+    }
+    default:
+      return '薬品：効果なし';
+  }
+}
+
+/** 本島＝銀行からワープなしで到達できる連結成分 */
+function isMainlandNode(g, nodeId) {
+  if (!g._mainlandCache || g._mainlandCache.seed !== g.mapId) {
+    const start = g.startId;
+    const set = new Set([start]);
+    const q = [start];
+    while (q.length) {
+      const id = q.shift();
+      const n = getNode(g, id);
+      for (const nid of n?.nexts || []) {
+        if (set.has(nid)) continue;
+        set.add(nid);
+        q.push(nid);
+      }
+    }
+    g._mainlandCache = { seed: g.mapId, set };
+  }
+  return g._mainlandCache.set.has(nodeId);
+}
+
+function teleportPlayer(g, p, destId, label) {
+  const fromId = p.pos;
+  const dest = getNode(g, destId);
+  if (!dest) return false;
+  recordWarp(g, p.id, fromId, dest.id);
+  p.prevPos = null;
+  p.pos = dest.id;
+  addLog(g, `${p.name} が${label}！ → ${dest.label}`, 'event');
+  return true;
+}
+
+/** 下降／上昇シャフト：入口側に乗ったら出口へ（残出目継続） */
+function tryShaftTransit(g, p) {
+  const sq = getNode(g, p.pos);
+  if (!sq || sq.type !== 'shaft') return false;
+  let dest = null;
+  if (sq.shaft === 'down' && sq.floor === 1) {
+    dest = g.map.find((n) => n.type === 'shaft' && n.shaft === 'down' && n.floor === 2);
+  } else if (sq.shaft === 'up' && sq.floor === 2) {
+    dest = g.map.find((n) => n.type === 'shaft' && n.shaft === 'up' && n.floor === 1);
+  }
+  if (!dest || dest.id === sq.id) return false;
+  return teleportPlayer(g, p, dest.id, sq.label || '階層移動');
+}
+
+/** 転移坑：ぴったり停止時のみ */
+function tryPitTransit(g, p) {
+  const sq = getNode(g, p.pos);
+  if (!sq || sq.type !== 'pit') return false;
+  if (sq.pit === 'down') {
+    const dest = g.map.find((n) => n.type === 'pit' && n.pit === 'up');
+    if (!dest) return false;
+    return teleportPlayer(g, p, dest.id, '転移下降');
+  }
+  if (sq.pit === 'up') {
+    const downs = g.map.filter((n) => n.type === 'pit' && n.pit === 'down');
+    if (!downs.length) return false;
+    const dest = downs[Math.floor(rngNext(g) * downs.length)];
+    return teleportPlayer(g, p, dest.id, '転移上昇');
+  }
+  return false;
+}
+
 function onPassThrough(g, p, nodeId) {
   const nd = getNode(g, nodeId);
   if (!nd) return;
@@ -1730,6 +1896,9 @@ function onPassThrough(g, p, nodeId) {
   // 通過のみここで付与。最終着地は resolveLanding 側（二重付与防止）
   if (nd.type === 'suit_fill' && g.move && g.move.stepsLeft > 0) {
     grantWildcard(g, p);
+  }
+  if (nd.type === 'ore' && nd.ore) {
+    rollOrePrize(g, p, nd.ore);
   }
   // 銀行処理は advanceMove / resolveLanding 側で一度だけ行う
 }
@@ -1809,6 +1978,22 @@ export function advanceMove(g) {
     g.move = null;
     return { ok: true, stepped: true, from, to: nextId, done: true, state: serializeState(g) };
   }
+
+  // 下降／上昇：乗った時点で階層移動（残出目は維持）
+  if (tryShaftTransit(g, p)) {
+    if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, shaft: true };
+    return {
+      ok: true,
+      stepped: true,
+      from,
+      to: p.pos,
+      shaft: true,
+      done: false,
+      stepsLeft: g.move.stepsLeft,
+      state: serializeState(g),
+    };
+  }
+
   if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: nextId };
 
   // 銀行を通過（まだ歩数が残る）→ 昇進 → 株1種 → 進行方向
@@ -1874,6 +2059,21 @@ export function chooseFork(g, nextId) {
     g.move = null;
     return { ok: true, stepped: true, from, to: nextId, done: true, state: serializeState(g) };
   }
+
+  if (tryShaftTransit(g, p)) {
+    if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, shaft: true };
+    return {
+      ok: true,
+      stepped: true,
+      from,
+      to: p.pos,
+      shaft: true,
+      done: false,
+      stepsLeft: g.move.stepsLeft,
+      state: serializeState(g),
+    };
+  }
+
   if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: nextId };
 
   if (nextId === g.startId && from !== g.startId) {
@@ -1997,6 +2197,80 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
     p.pos = dest.id;
     addLog(g, `${p.name} がワープ！ ${sq.label} → ${dest.label}`, 'event');
     resolveLanding(g, p, { passedBank: false, fromWarp: true });
+    return;
+  }
+
+  if (sq.type === 'warp_random') {
+    if (fromWarp) {
+      addLog(g, `${p.name} はランダム転移マスに停止`, 'system');
+      finishLanding(g, p);
+      return;
+    }
+    const onMain = isMainlandNode(g, sq.id);
+    const candidates = g.map.filter((n) => {
+      if (n.type !== 'warp') return false;
+      const main = isMainlandNode(g, n.id);
+      return onMain ? !main : main;
+    });
+    const pool = candidates.length
+      ? candidates
+      : g.map.filter((n) => n.type === 'warp_random' && n.id !== sq.id);
+    if (!pool.length) {
+      addLog(g, `${p.name} のランダム転移先がない…`, 'system');
+      finishLanding(g, p);
+      return;
+    }
+    const dest = pool[Math.floor(rngNext(g) * pool.length)];
+    recordWarp(g, p.id, p.pos, dest.id);
+    p.prevPos = null;
+    p.pos = dest.id;
+    addLog(g, `${p.name} がランダム転移！ → ${dest.label}`, 'event');
+    resolveLanding(g, p, { passedBank: false, fromWarp: true });
+    return;
+  }
+
+  if (sq.type === 'pit') {
+    if (fromWarp) {
+      finishLanding(g, p);
+      return;
+    }
+    if (tryPitTransit(g, p)) {
+      resolveLanding(g, p, { passedBank: false, fromWarp: true });
+      return;
+    }
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'shaft') {
+    // 入口なら階層移動して着地解決。出口マスならその場で停止
+    if (!fromWarp && tryShaftTransit(g, p)) {
+      resolveLanding(g, p, { passedBank: false, fromWarp: true });
+      return;
+    }
+    addLog(g, `${p.name} は${sq.label || '階層マス'}に停止`, 'system');
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'ore') {
+    // 通過時に付与済みなら二重を避ける（最終マスは applyStep で既に処理）
+    addLog(g, `${p.name} は${sq.label || '鉱石'}マスに停止`, 'system');
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'potion') {
+    const effectId = drawPotionEffect(g);
+    const detail = applyPotionEffect(g, p, effectId);
+    addLog(g, `${p.name} が薬品マス！ ${detail}`, 'event');
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'gate') {
+    addLog(g, `${p.name} はゲートに停止`, 'system');
+    finishLanding(g, p);
     return;
   }
 

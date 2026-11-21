@@ -1,0 +1,629 @@
+/**
+ * 特殊マップ: 暮違某為町 / 空島地帯 / 強欲鉱山
+ * grid-map-maker JSON の配置をそのまま使用。
+ * board.js の内部ヘルパは export されていないため、同等の構築部品をここに持つ。
+ * （board.js からの循環 import を避けるため AREA_META は参照しない）
+ */
+const AREA_SHOP_MAX = 5;
+
+const FALLBACK_AREA_META = {
+  1: { color: '#5b7c99', pattern: 'check', patternInk: '#9eb6c9' },
+  2: { color: '#3d6b5e', pattern: 'stripe', patternInk: '#7fad9c' },
+  3: { color: '#4a6fa5', pattern: 'dots', patternInk: '#8fb0d9' },
+  4: { color: '#5c6bc0', pattern: 'grid', patternInk: '#9aa6e0' },
+  5: { color: '#6a5b8c', pattern: 'diamond', patternInk: '#a899c4' },
+  6: { color: '#2f6f7a', pattern: 'check', patternInk: '#6ea8b3' },
+  7: { color: '#455a7a', pattern: 'stripe', patternInk: '#7f95b5' },
+  8: { color: '#51607a', pattern: 'dots', patternInk: '#8a9ab3' },
+  9: { color: '#3f5f6b', pattern: 'grid', patternInk: '#7a9aa6' },
+  10: { color: '#4d5f8a', pattern: 'diamond', patternInk: '#8796bc' },
+  11: { color: '#3a6a72', pattern: 'stripe', patternInk: '#6f9aa3' },
+  12: { color: '#4f6d8c', pattern: 'check', patternInk: '#8aa3bd' },
+  13: { color: '#3f6f7e', pattern: 'dots', patternInk: '#7aa3b0' },
+};
+
+function link(...pairs) {
+  for (const [a, b] of pairs) {
+    if (!a.nexts.includes(b.id)) a.nexts.push(b.id);
+    if (!b.nexts.includes(a.id)) b.nexts.push(a.id);
+  }
+}
+
+function linkGridOrthoAndGapDiagonals(grid) {
+  const ortho = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
+      for (const [dc, dr] of ortho) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        link([a, b]);
+      }
+      for (const [dc, dr] of diag) {
+        const b = grid[r + dr]?.[c + dc];
+        if (!b || a.id >= b.id) continue;
+        const cornerH = grid[r]?.[c + dc];
+        const cornerV = grid[r + dr]?.[c];
+        if (cornerH || cornerV) continue;
+        link([a, b]);
+      }
+    }
+  }
+}
+
+function makeNodeFactory() {
+  const nodes = [];
+  let nid = 0;
+  const N = (type, o = {}) => {
+    const n = { id: nid++, type, nexts: [], ...o };
+    nodes.push(n);
+    return n;
+  };
+  return { nodes, N };
+}
+
+function finalizeShops(nodes) {
+  for (const sq of nodes) {
+    if (sq.type === 'shop') {
+      sq.owner = -1;
+      sq.price = sq.basePrice;
+      sq.extraInvest = 0;
+      sq.baseToll = Math.max(1, Math.floor(sq.basePrice * 0.21) - 10);
+    }
+  }
+}
+
+function buildAreas(nodes, areaOverrides = {}, areaMeta = {}) {
+  const areaIds = [...new Set(nodes.filter((n) => n.type === 'shop').map((n) => n.area))].sort((a, b) => a - b);
+  const areas = {};
+  for (const a of areaIds) {
+    const shops = nodes.filter((n) => n.type === 'shop' && n.area === a);
+    if (shops.length > AREA_SHOP_MAX) {
+      throw new Error(`エリア${a}のお店が${shops.length}件（上限${AREA_SHOP_MAX}）`);
+    }
+    const avg = shops.reduce((s, n) => s + n.basePrice, 0) / shops.length;
+    const targetStock = Math.max(1, Math.floor(avg / 10));
+    const meta = { ...(FALLBACK_AREA_META[a] || {}), ...(areaMeta[a] || {}), ...(areaOverrides[a] || {}) };
+    areas[a] = {
+      B: Math.ceil((targetStock * 65536) / avg),
+      stockPrice: targetStock,
+      name: meta.name || `エリア${a}`,
+      code: meta.code || `A${a}`,
+      color: meta.color || '#888',
+      pattern: meta.pattern || 'check',
+      patternInk: meta.patternInk || '#aaa',
+    };
+  }
+  return areas;
+}
+
+function packBoard(nodes, bank, cols, rows, extra = {}) {
+  finalizeShops(nodes);
+  for (const n of nodes) {
+    if (!Array.isArray(n.baseNexts)) n.baseNexts = [...(n.nexts || [])];
+  }
+  const board = {
+    nodes,
+    areas: buildAreas(nodes, extra.areaOverrides, extra.areaMeta),
+    startId: bank.id,
+    initialCash: extra.initialCash ?? 2200,
+    goal: extra.goal ?? 10000,
+    cols,
+    rows,
+    mapId: extra.mapId,
+    mapName: extra.mapName,
+    diceMax: extra.diceMax != null ? Math.max(2, Math.floor(Number(extra.diceMax)) || 6) : null,
+    switchState: extra.switchState || 0,
+    switchGates: extra.switchGates || [],
+    switchMoves: extra.switchMoves || [],
+  };
+  return board;
+}
+
+function putShop(put, N, col, row, area, shopIdx, shopNames, shopPrice) {
+  const i = shopIdx[area]++;
+  const names = shopNames[area];
+  const prices = shopPrice[area];
+  return put(col, row, N('shop', {
+    label: names[i % names.length],
+    area,
+    basePrice: prices[i % prices.length],
+    col,
+    row,
+  }));
+}
+
+const COMMON_MARKS = {
+  '♠': 0, '♥': 1, '♦': 2, '♣': 3,
+};
+
+function putCommonSpecial(put, N, ch, col, row, ctx) {
+  if (COMMON_MARKS[ch] != null) {
+    put(col, row, N('mark', { label: ch, mark: COMMON_MARKS[ch], col, row }));
+    return true;
+  }
+  if (ch === '銀') {
+    ctx.bank = put(col, row, N('bank', { label: '銀行', isStart: true, col, row }));
+    return true;
+  }
+  if (ch === '削') {
+    put(col, row, N('scratch', { label: 'スクラッチ', col, row }));
+    return true;
+  }
+  if (ch === 'ス') {
+    ctx.slotCount += 1;
+    const n = ctx.slotCount;
+    put(col, row, N('minigame', {
+      label: n === 1 ? 'スロット' : `スロット${'ⅡⅢⅣⅤⅥⅦⅧⅨⅩ'[n - 2] || n}`,
+      game: 'slot',
+      col,
+      row,
+    }));
+    return true;
+  }
+  if (ch === '当') {
+    put(col, row, N('minigame', { label: 'サイコロ当て', game: 'guess_dice', col, row }));
+    return true;
+  }
+  if (ch === '株') {
+    put(col, row, N('stockbroker', { label: '証券', col, row }));
+    return true;
+  }
+  if (ch === 'ラ') {
+    put(col, row, N('lucky', { label: '★', col, row }));
+    return true;
+  }
+  if (ch === 'イ') {
+    put(col, row, N('event', { label: 'イベント', col, row }));
+    return true;
+  }
+  if (ch === '回') {
+    put(col, row, N('rollon', { label: 'もう一回', col, row }));
+    return true;
+  }
+  if (ch === 'ワ') {
+    put(col, row, N('suit_fill', { label: 'ワイルド', col, row }));
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 暮違某為町（30×20）。L区画は高価格。転送は 転／て の2組。
+ */
+export function buildKurechigai() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　♦ＡＡラＡＡ回　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｂ　　　　　Ｃ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｂ　　　　　Ｃ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｂ　　　　　Ｃ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｂ　　　　　Ｃ　　　　　　　　　　　　',
+    '　　　　ス削ス　ＪイＬイＤＤＤＤＤイＬ♣Ｋ　スワス　　　　　',
+    '　　　　ス　ス　Ｊ　　　　　イ　　　　　Ｋ　ス　ス　　　　　',
+    '　　　　株　転　転　　　　　銀　　　　　て　て　株　　　　　',
+    '　　　　ス　ス　Ｊ　　　　　イ　　　　　Ｋ　ス　ス　　　　　',
+    '　　　　スワス　Ｊ♠ＬイＥＥＥＥＥイＬイＫ　ス削ス　　　　　',
+    '　　　　　　　　　　　Ｇ　　　　　Ｈ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｇ　　　　　Ｈ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｇ　　　　　Ｈ　　　　　　　　　　　　',
+    '　　　　　　　　　　　Ｇ　　　　　Ｈ　　　　　　　　　　　　',
+    '　　　　　　　　　　　回ＩＩラＩＩ♥　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+  ];
+  const W = 30;
+  const BLANK = '　';
+  // F 欠番 → G以降を詰める
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5,
+    Ｇ: 6, Ｈ: 7, Ｉ: 8, Ｊ: 9, Ｋ: 10, Ｌ: 11,
+  };
+  const shopNames = {
+    1: ['暮違カフェ', '某為パン', '角の茶屋', '路地みやげ'],
+    2: ['北町食堂', '煙突屋', '屋根瓦屋', '風見鶏屋'],
+    3: ['東町ホテル', '提灯屋', '軒下屋台', '看板みやげ'],
+    4: ['中央横丁', 'のれん屋', '暖簾カフェ', '大通り屋'],
+    5: ['南町マーケット', '石畳屋', '溝端屋', '井戸みやげ'],
+    6: ['西の坂茶屋', '石段屋', '坂の上屋', '見晴らし屋'],
+    7: ['東の坂食堂', '石垣屋', '坂の下屋', '荷車みやげ'],
+    8: ['下町ホテル', '川端屋', '橋のたもと', '夕涼み屋'],
+    9: ['裏路地ブティック', '猫の額屋', '抜け道屋', '隠し扉みやげ'],
+    10: ['表通りマーケット', '馬車屋', '馬具屋', '蹄鉄みやげ'],
+    11: ['某為大飯店', '暮違宝石店', '高台サロン', '夜会みやげ'],
+  };
+  const shopPrice = {
+    1: [220, 180, 160, 260],
+    2: [210, 175, 155, 250],
+    3: [210, 175, 155, 250],
+    4: [280, 240, 200, 320, 300],
+    5: [280, 240, 200, 320, 300],
+    6: [200, 170, 150, 240],
+    7: [200, 170, 150, 240],
+    8: [240, 200, 180, 280],
+    9: [230, 190, 170, 270],
+    10: [230, 190, 170, 270],
+    11: [480, 420, 390, 520], // L 高価格
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+  const warpsByKind = { 転: [], て: [] };
+  const warpLabels = {
+    転: ['西転送', '西転送・対'],
+    て: ['東転送', '東転送・対'],
+  };
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+  const ctx = { bank: null, slotCount: 0 };
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== W) throw new Error(`暮違某為町: 行${row}の幅が${chars.length}`);
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        putShop(put, N, col, row, areaFromChar[ch], shopIdx, shopNames, shopPrice);
+        continue;
+      }
+      if (putCommonSpecial(put, N, ch, col, row, ctx)) continue;
+      if (warpsByKind[ch]) {
+        const list = warpsByKind[ch];
+        const labels = warpLabels[ch];
+        const w = put(col, row, N('warp', {
+          label: labels[list.length] || `転送${list.length + 1}`,
+          col,
+          row,
+        }));
+        list.push(w);
+        continue;
+      }
+      throw new Error(`暮違某為町: 未知のマス ${ch} @${col},${row}`);
+    }
+  }
+  if (!ctx.bank) throw new Error('暮違某為町: 銀行なし');
+  for (const [kind, list] of Object.entries(warpsByKind)) {
+    if (list.length !== 2) throw new Error(`暮違某為町: 転送「${kind}」が${list.length}件`);
+    list[0].warpTo = list[1].id;
+    list[1].warpTo = list[0].id;
+  }
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, ctx.bank, W, gridRows.length, {
+    mapId: 'kurechigai',
+    mapName: '暮違某為町',
+    diceMax: 6,
+    goal: 15000,
+    initialCash: 2200,
+    areaOverrides: {
+      1: { name: '暮違通り' },
+      2: { name: '北町' },
+      3: { name: '東町' },
+      4: { name: '中央横丁' },
+      5: { name: '南町' },
+      6: { name: '西の坂' },
+      7: { name: '東の坂' },
+      8: { name: '下町' },
+      9: { name: '裏路地' },
+      10: { name: '表通り' },
+      11: { name: '某為高台' },
+    },
+  });
+}
+
+/**
+ * 空島地帯（22×17）。転は島ネットワーク、ら＝ゾーン間ランダム転移、薬＝薬品マス。
+ */
+export function buildSkyIsles() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　ラＣＣ削げ　　',
+    '　　　　　　♥Ｈイ　　　　　　Ｃ　　Ｂ　　　',
+    '　　　　　　Ｈ　Ｈ　　　　　　Ｃ　　Ｂ　　　',
+    '　　　　　　転Ｈ転　　　　　株転ＢＢワ　　　',
+    '　　　　　　　　　　　　　Ａら　　　　　　　',
+    '　　　　　　　　　　　　ＡＡ　　　　　　　　',
+    '　♦Ｇ転　　　　　　　転Ａ　　　　　転ＪＪ　',
+    '　Ｇ　Ｇ　　　　　　銀ス　　　　　　Ｊ　Ｊ　',
+    '　ＧＧ転　　　　　Ｄ転　　　　　　　転Ｊ♣　',
+    '　　　　　　　　ＤＤ　　　　　　　　　　　　',
+    '　　　　　　　らＤ　　　　　　　　　　　　　',
+    '　　　ワＥＥ転削　　　　　転Ｉ転　　　　　　',
+    '　　　Ｅ　　Ｆ　　　　　　Ｉ　Ｉ　　　　　　',
+    '　　　Ｅ　　Ｆ　　　　　　当Ｉ♠　　　　　　',
+    '　　げ薬ＦＦス　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　',
+  ];
+  const W = 22;
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5,
+    Ｆ: 6, Ｇ: 7, Ｈ: 8, Ｉ: 9, Ｊ: 10,
+  };
+  const shopNames = {
+    1: ['浮島カフェ', '雲橋屋', '空中茶屋', '風鈴みやげ'],
+    2: ['暁の塔ホテル', '翼の食堂', '夜明け屋', '暁みやげ'],
+    3: ['晴嵐マーケット', '嵐除け屋', '風切り屋', '晴天みやげ'],
+    4: ['本島広場', '石畳屋', '中央屋台', '広場みやげ'],
+    5: ['翠緑庭園', '薬草屋', '蔦のカフェ', '翠みやげ'],
+    6: ['霧の工房', '錬金屋', '霧笛屋', '霧みやげ'],
+    7: ['西風の巣', '羽ばたき屋', '巣箱屋', '西風みやげ', 'とまり木屋'],
+    8: ['心臓島ホテル', '鼓動屋', 'ルビー屋', '心臓みやげ'],
+    9: ['東の灯台', '導き屋', '灯火屋', '灯台みやげ'],
+    10: ['虹の拱門', '七色屋', '拱門カフェ', '虹みやげ', '空橋屋'],
+  };
+  const shopPrice = {
+    1: [240, 200, 180, 280],
+    2: [260, 220, 190, 300],
+    3: [260, 220, 190, 300],
+    4: [220, 180, 160, 260],
+    5: [250, 210, 185, 290],
+    6: [250, 210, 185, 290],
+    7: [280, 240, 210, 320, 300],
+    8: [300, 260, 230, 340],
+    9: [270, 230, 200, 310],
+    10: [290, 250, 220, 330, 310],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+  const ctx = { bank: null, slotCount: 0 };
+  /** @type {object[]} */
+  const warps = [];
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== W) throw new Error(`空島地帯: 行${row}の幅が${chars.length}`);
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        putShop(put, N, col, row, areaFromChar[ch], shopIdx, shopNames, shopPrice);
+        continue;
+      }
+      if (putCommonSpecial(put, N, ch, col, row, ctx)) continue;
+      if (ch === '転') {
+        const w = put(col, row, N('warp', { label: '空橋', col, row }));
+        warps.push(w);
+        continue;
+      }
+      if (ch === 'ら') {
+        put(col, row, N('warp_random', { label: 'ランダム転移', col, row }));
+        continue;
+      }
+      if (ch === 'げ') {
+        put(col, row, N('gate', { label: 'ゲート', col, row }));
+        continue;
+      }
+      if (ch === '薬') {
+        put(col, row, N('potion', { label: '薬品', col, row }));
+        continue;
+      }
+      throw new Error(`空島地帯: 未知のマス ${ch} @${col},${row}`);
+    }
+  }
+  if (!ctx.bank) throw new Error('空島地帯: 銀行なし');
+
+  // 島ネットワーク: 本島2出口＋島どうしをチェーン接続
+  // 座標キーで特定（解析済みペア）
+  const byPos = new Map(warps.map((w) => [`${w.col},${w.row}`, w]));
+  const pairs = [
+    ['11,7', '3,7'],   // 本島A ↔ G上
+    ['3,9', '6,4'],    // G下 ↔ H左
+    ['8,4', '15,4'],   // H右 ↔ B
+    ['10,9', '18,7'],  // 本島D ↔ J上
+    ['18,9', '15,12'], // J下 ↔ I右
+    ['13,12', '6,12'], // I左 ↔ E
+  ];
+  for (const [a, b] of pairs) {
+    const wa = byPos.get(a);
+    const wb = byPos.get(b);
+    if (!wa || !wb) throw new Error(`空島地帯: 転送ペア欠損 ${a}-${b}`);
+    wa.warpTo = wb.id;
+    wb.warpTo = wa.id;
+  }
+  if (warps.some((w) => w.warpTo == null)) {
+    throw new Error('空島地帯: 未ペアの転送があります');
+  }
+
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, ctx.bank, W, gridRows.length, {
+    mapId: 'sky_isles',
+    mapName: '空島地帯',
+    diceMax: 6,
+    goal: 14000,
+    initialCash: 2200,
+    areaOverrides: {
+      1: { name: '浮島広場' },
+      2: { name: '暁の塔' },
+      3: { name: '晴嵐島' },
+      4: { name: '本島' },
+      5: { name: '翠緑庭' },
+      6: { name: '霧の工房' },
+      7: { name: '西風の巣' },
+      8: { name: '心臓島' },
+      9: { name: '東の灯台' },
+      10: { name: '虹の拱門' },
+    },
+  });
+}
+
+/**
+ * 強欲鉱山（29×21）。一階A–H／地下一階I–L／地下二階N。
+ * 下・上は通過で階層移動（残出目継続）。降・昇はぴったり停止で転移。
+ */
+export function buildGreedMine() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　Ｅ削Ｅ♦Ｅ当Ｅ　　　　　　　　　　　　　　　　　　　',
+    '　　Ｄ　　　上　　　Ａ　　　　　　　　　　　　　　　　　　',
+    '　Ｈ　Ｄ　　　　　Ａ　Ｆ　　　　　　　　ワＩＩ削ＬＬ金　　',
+    '　ス　　Ｄ　　　Ａ　　Ｆ　　　　　　　　Ｉ　　　　　Ｌ　　',
+    '　Ｈ　　　Ｄ　Ａ　　　イ　　　　　　　　Ｉ　　　　　Ｌ　　',
+    '　♣下　　　銀　　　下♥　　　　　　　下削降ラスラ降削上　',
+    '　Ｈ　　　Ｃ　Ｂ　　　株　　　　　　　　Ｊ　　　　　Ｋ　　',
+    '　鉄　　Ｃ　　　Ｂ　　Ｆ　　　　　　　　Ｊ　　　　　Ｋ　　',
+    '　Ｈ　Ｃ　　　　　Ｂ　Ｆ　　　　　　　　ワＪＪ削ＫＫワ　　',
+    '　　Ｃ　　　下　　　Ｂ　　　　　　　　　　　　　　　　　　',
+    '　　　ＧＧス♠イＧＧ　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　削Ｎ株ダ削　　　　　　　　　　　',
+    '　　　　　　　　　　　　　ス　　　ス　　　　　　　　　　　',
+    '　　　　　　　　　　　　　削Ｎ昇Ｎ削　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+    '　　　　　　　　　　　　　　　　　　　　　　　　　　　　　',
+  ];
+  const W = 29;
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5, Ｆ: 6, Ｇ: 7, Ｈ: 8,
+    Ｉ: 9, Ｊ: 10, Ｋ: 11, Ｌ: 12, Ｎ: 13,
+  };
+  const shopNames = {
+    1: ['坑口カフェ', 'ヘルメット屋', '入坑みやげ', '安全灯屋'],
+    2: ['鉱車通り', 'レール屋', 'トロッコ屋', '車輪みやげ'],
+    3: ['支柱横丁', '梁材屋', '支保屋', '杭みやげ'],
+    4: ['鉱石市場', '検鉱屋', '品位屋', '原石みやげ'],
+    5: ['発破ホテル', '火薬屋', '導火線屋', '轟音みやげ'],
+    6: ['選鉱場', '篩い屋', '水簸屋', '精鉱みやげ'],
+    7: ['排気塔食堂', '風洞屋', '換気屋', '排気みやげ'],
+    8: ['坑道宿', '寝台屋', 'カンテラ屋', '坑夫みやげ'],
+    9: ['地下街ホテル', '鍾乳屋', '岩盤カフェ', '地下みやげ'],
+    10: ['鋼の市場', 'インゴット屋', '圧延屋', '鋼みやげ'],
+    11: ['宝石工房', '研磨屋', 'カット屋', '輝きみやげ'],
+    12: ['金庫通り', '金塊屋', '金箔屋', '財宝みやげ'],
+    13: ['深淵ホテル', '暗黒屋', '深層カフェ'],
+  };
+  const shopPrice = {
+    1: [200, 170, 150, 240],
+    2: [210, 175, 155, 250],
+    3: [210, 175, 155, 250],
+    4: [240, 200, 180, 280],
+    5: [260, 220, 190, 300],
+    6: [250, 210, 185, 290],
+    7: [230, 190, 170, 270],
+    8: [220, 185, 165, 260],
+    9: [320, 280, 250, 360],
+    10: [340, 300, 270, 380],
+    11: [360, 320, 290, 400],
+    12: [400, 360, 330, 450],
+    13: [480, 440, 500], // 地下二階は高リスク高価格（3軒）
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+  const ctx = { bank: null, slotCount: 0 };
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== W) throw new Error(`強欲鉱山: 行${row}の幅が${chars.length}`);
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        putShop(put, N, col, row, areaFromChar[ch], shopIdx, shopNames, shopPrice);
+        continue;
+      }
+      if (putCommonSpecial(put, N, ch, col, row, ctx)) continue;
+      if (ch === '下') {
+        // col>=19 は地下一階の着地側
+        const floor = col >= 19 ? 2 : 1;
+        put(col, row, N('shaft', {
+          label: floor === 1 ? '下降' : '下降・着',
+          shaft: 'down',
+          floor,
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '上') {
+        // col>=19 は地下一階の出発側、それ以外は一階の着地側
+        const floor = col >= 19 ? 2 : 1;
+        put(col, row, N('shaft', {
+          label: floor === 2 ? '上昇' : '上昇・着',
+          shaft: 'up',
+          floor,
+          col,
+          row,
+        }));
+        continue;
+      }
+      if (ch === '降') {
+        put(col, row, N('pit', { label: '転移下降', pit: 'down', col, row }));
+        continue;
+      }
+      if (ch === '昇') {
+        put(col, row, N('pit', { label: '転移上昇', pit: 'up', col, row }));
+        continue;
+      }
+      if (ch === '鉄') {
+        put(col, row, N('ore', { label: '鉄鉱石', ore: 'iron', col, row }));
+        continue;
+      }
+      if (ch === '金') {
+        put(col, row, N('ore', { label: '金鉱石', ore: 'gold', col, row }));
+        continue;
+      }
+      if (ch === 'ダ') {
+        put(col, row, N('ore', { label: 'ダイヤ鉱石', ore: 'diamond', col, row }));
+        continue;
+      }
+      throw new Error(`強欲鉱山: 未知のマス ${ch} @${col},${row}`);
+    }
+  }
+  if (!ctx.bank) throw new Error('強欲鉱山: 銀行なし');
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, ctx.bank, W, gridRows.length, {
+    mapId: 'greed_mine',
+    mapName: '強欲鉱山',
+    diceMax: 7,
+    goal: 18000,
+    initialCash: 2100,
+    areaOverrides: {
+      1: { name: '坑口' },
+      2: { name: '鉱車通り' },
+      3: { name: '支柱横丁' },
+      4: { name: '鉱石市場' },
+      5: { name: '発破場' },
+      6: { name: '選鉱場' },
+      7: { name: '排気塔' },
+      8: { name: '坑道宿' },
+      9: { name: '地下街' },
+      10: { name: '鋼の市場' },
+      11: { name: '宝石工房' },
+      12: { name: '金庫通り' },
+      13: { name: '深淵' },
+    },
+  });
+}

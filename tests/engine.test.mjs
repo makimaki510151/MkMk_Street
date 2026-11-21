@@ -510,6 +510,39 @@ describe('MkMk Street engine', () => {
     assert.equal(buildBoard('tagai').diceMax, 8);
   });
 
+  it('builds kurechigai / sky_isles / greed_mine with per-map dice and specials', () => {
+    const town = buildBoard('kurechigai');
+    assert.equal(town.mapName, '暮違某為町');
+    assert.equal(town.diceMax, 6);
+    assert.equal(Object.keys(town.areas).length, 11);
+    assert.ok(town.nodes.filter((n) => n.type === 'warp').length === 4);
+    // L(某為高台)=area 11 は高価格
+    const lShops = town.nodes.filter((n) => n.type === 'shop' && n.area === 11);
+    assert.ok(lShops.every((s) => s.basePrice >= 390));
+
+    const sky = buildBoard('sky_isles');
+    assert.equal(sky.mapName, '空島地帯');
+    assert.equal(sky.diceMax, 6);
+    assert.ok(sky.nodes.some((n) => n.type === 'warp_random'));
+    assert.ok(sky.nodes.some((n) => n.type === 'potion'));
+    assert.equal(sky.nodes.filter((n) => n.type === 'warp').length, 12);
+
+    const mine = buildBoard('greed_mine');
+    assert.equal(mine.mapName, '強欲鉱山');
+    assert.equal(mine.diceMax, 7);
+    assert.ok(mine.nodes.some((n) => n.type === 'shaft'));
+    assert.ok(mine.nodes.some((n) => n.type === 'pit'));
+    assert.ok(mine.nodes.some((n) => n.type === 'ore' && n.ore === 'diamond'));
+    assert.equal(Object.keys(mine.areas).length, 13);
+
+    const gMine = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 5,
+      mapId: 'greed_mine',
+    });
+    assert.equal(getMoveDiceMax(gMine), 7);
+  });
+
   it('all maps keep every square at least 2-connected (no dead ends)', () => {
     for (const def of MAP_CATALOG) {
       for (const state of def.id === 'shell_harbor' ? [0, 1] : [0]) {
@@ -519,10 +552,13 @@ describe('MkMk Street engine', () => {
           mapId: def.id,
         });
         if (state === 1) toggleBoardSwitch(g);
-        const allowGapDiag = def.id === 'torima' || def.id === 'bullet' || def.id === 'tagai';
+        const allowGapDiag = def.id === 'torima' || def.id === 'bullet' || def.id === 'tagai'
+          || def.id === 'kurechigai' || def.id === 'sky_isles' || def.id === 'greed_mine';
+        const allowDeg1 = new Set(['gate', 'shaft', 'pit']);
         for (const n of g.map) {
+          const minDeg = allowDeg1.has(n.type) ? 1 : 2;
           assert.ok(
-            (n.nexts?.length || 0) >= 2,
+            (n.nexts?.length || 0) >= minDeg,
             `${def.id} state ${g.switchState}: ${n.type}:${n.label} deg=${n.nexts?.length || 0}`,
           );
           for (const nid of n.nexts) {

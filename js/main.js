@@ -957,6 +957,7 @@ function renderMapSilhouette(canvas, mapId) {
     if (n.type === 'bank') return '#e9c85a';
     if (n.type === 'mark') return '#c4c8d0';
     if (n.type === 'warp') return '#63e6be';
+    if (n.type === 'warp_random') return '#8bc34a';
     if (n.type === 'scratch') return '#8a929c';
     if (n.type === 'minigame') return '#b197fc';
     if (n.type === 'lucky') return '#ffd43b';
@@ -966,6 +967,13 @@ function renderMapSilhouette(canvas, mapId) {
     if (n.type === 'stockbroker') return '#4fc3c7';
     if (n.type === 'suit_fill') return '#ff8787';
     if (n.type === 'switch') return '#ffe08a';
+    if (n.type === 'shaft') return n.shaft === 'up' ? '#aed581' : '#ba68c8';
+    if (n.type === 'pit') return n.pit === 'up' ? '#ef9a9a' : '#7986cb';
+    if (n.type === 'ore') {
+      return n.ore === 'gold' ? '#ffd54f' : n.ore === 'diamond' ? '#80cbc4' : '#90a4ae';
+    }
+    if (n.type === 'potion') return '#9fa8da';
+    if (n.type === 'gate') return '#b39ddb';
     return '#5a6570';
   };
 
@@ -2371,7 +2379,10 @@ function startLocal(seats) {
       : demo === 'map-torima' || demo === 'map-arch' ? 'torima'
         : demo === 'map-bullet' ? 'bullet'
           : demo === 'map-tagai' ? 'tagai'
-            : params.get('map');
+            : demo === 'map-kurechigai' ? 'kurechigai'
+              : demo === 'map-sky' || demo === 'map-sky-isles' ? 'sky_isles'
+                : demo === 'map-mine' || demo === 'map-greed-mine' ? 'greed_mine'
+                  : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);
