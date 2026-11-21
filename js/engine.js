@@ -537,7 +537,7 @@ export function createGame({
       pos: board.startId,
       prevPos: null,
       marks: [false, false, false, false],
-      /** ワイルドカード枚数（銀行で空きマークに変化。上限 MAX_WILDCARDS） */
+      /** ワイルドカード枚数（銀行でレベルアップできるときだけ必要枚数を消費。上限 MAX_WILDCARDS） */
       wildcards: 0,
       level: 1,
       stocks: {},
@@ -1544,22 +1544,25 @@ export function grantWildcard(g, p) {
 }
 
 /**
- * 銀行到達時：ワイルドカードを空きマークへ変換。
+ * 銀行到達時：ワイルドカードで空きマークを埋める。
+ * レベルアップできる枚数そろっているときだけ、必要枚数だけ消費する。
+ * 足りない場合は一切消費しない。
  * @returns {number} 埋めた枚数
  */
 export function applyWildcardsToMarks(p) {
   if (!p?.marks) return 0;
-  let w = getWildcardCount(p);
+  const w = getWildcardCount(p);
   if (!w) return 0;
-  let used = 0;
-  for (let i = 0; i < p.marks.length && w > 0; i++) {
-    if (p.marks[i]) continue;
-    p.marks[i] = true;
-    w -= 1;
-    used += 1;
+  const missingIdx = [];
+  for (let i = 0; i < p.marks.length; i++) {
+    if (!p.marks[i]) missingIdx.push(i);
   }
-  p.wildcards = w;
-  return used;
+  const need = missingIdx.length;
+  // すでに揃っている／足りない → 消費しない
+  if (need === 0 || w < need) return 0;
+  for (const i of missingIdx) p.marks[i] = true;
+  p.wildcards = w - need;
+  return need;
 }
 
 function addLog(g, text, kind = 'info') {
@@ -1658,7 +1661,33 @@ export function getForwardNexts(g, pos, prevPos) {
   return fwd.length > 0 ? fwd : [...raw];
 }
 
-/** ワープ着地なら転送先（1段）。それ以外はそのマス。 */
+/**
+ * 乗った時点で即時ジャンプするマス（門・階層）の行き先。
+ * ワープは着地時のみなのでここでは扱わない。
+ */
+function immediateTransitDest(g, pos) {
+  const n = getNode(g, pos);
+  if (!n) return null;
+  if (n.type === 'gate') {
+    let destId = n.gateTo;
+    if (destId == null) {
+      destId = g.map.find((x) => x.type === 'gate' && x.id !== n.id)?.id;
+    }
+    if (destId != null && destId !== n.id && getNode(g, destId)) return destId;
+  }
+  if (n.type === 'shaft') {
+    let dest = null;
+    if (n.shaft === 'down' && n.floor === 1) {
+      dest = g.map.find((x) => x.type === 'shaft' && x.shaft === 'down' && x.floor === 2);
+    } else if (n.shaft === 'up' && n.floor === 2) {
+      dest = g.map.find((x) => x.type === 'shaft' && x.shaft === 'up' && x.floor === 1);
+    }
+    if (dest && dest.id !== n.id) return dest.id;
+  }
+  return null;
+}
+
+/** ワープ着地なら転送先（1段）。門は「乗った時点」で処理するためここでは扱わない。 */
 export function resolveLandingDestId(g, pos) {
   const n = getNode(g, pos);
   if (n?.type === 'warp' && n.warpTo != null && getNode(g, n.warpTo)) {
@@ -1667,10 +1696,22 @@ export function resolveLandingDestId(g, pos) {
   return pos;
 }
 
+/** 最終着地候補に追加。転移マスなら元・先の両方を入れる。 */
+function addLandingCandidateEnd(g, ends, pos) {
+  const n = getNode(g, pos);
+  if (n?.type === 'warp' && n.warpTo != null && getNode(g, n.warpTo)) {
+    ends.add(pos);
+    ends.add(n.warpTo);
+    return;
+  }
+  ends.add(pos);
+}
+
 /**
  * 出目（残り歩数）で最終的に止まりうるマス ID 一覧。
  * 分岐はすべて辿り、行き止まりは残り歩数があってもそこで着地扱い。
- * ワープマス着地は転送先を候補にする。
+ * 門・階層は通過／着地時に即ジャンプして残歩数を継続。
+ * ワープマス着地は転移元と転移先の両方を候補にする。
  */
 export function getLandingCandidates(g, fromPos, prevPos, steps) {
   const left0 = Math.max(0, Math.floor(Number(steps) || 0));
@@ -1683,15 +1724,21 @@ export function getLandingCandidates(g, fromPos, prevPos, steps) {
     seen.add(key);
 
     if (left <= 0) {
-      ends.add(resolveLandingDestId(g, pos));
+      // ここに来る時点で門ジャンプ済み。ワープは元・先の両方
+      addLandingCandidateEnd(g, ends, pos);
       return;
     }
     const nexts = getForwardNexts(g, pos, prev);
     if (!nexts.length) {
-      ends.add(resolveLandingDestId(g, pos));
+      addLandingCandidateEnd(g, ends, pos);
       return;
     }
-    for (const nid of nexts) walk(nid, pos, left - 1);
+    for (const nid of nexts) {
+      // 1歩で nid に入り、門／階層なら即ジャンプして残歩数継続（prev はクリア）
+      const transit = immediateTransitDest(g, nid);
+      if (transit != null) walk(transit, null, left - 1);
+      else walk(nid, pos, left - 1);
+    }
   };
 
   walk(fromPos, prevPos, left0);
@@ -1712,10 +1759,21 @@ export function findForkNextForLanding(g, fromPos, prevPos, stepsLeft, landingId
     : getForwardNexts(g, fromPos, prevPos);
   for (const nextId of options) {
     if (left === 1) {
-      if (nextId === target || resolveLandingDestId(g, nextId) === target) return nextId;
+      // 門／階層は乗った時点でジャンプした先が着地。
+      // 転移マスは元・先どちらをクリックしてもその一歩を選ぶ。
+      const landed = immediateTransitDest(g, nextId) ?? nextId;
+      if (
+        nextId === target
+        || landed === target
+        || resolveLandingDestId(g, landed) === target
+      ) return nextId;
       continue;
     }
-    const ends = getLandingCandidates(g, nextId, fromPos, left - 1);
+    // 1歩進んだあとの候補（門ジャンプ込み）に target が含まれるか
+    const transit = immediateTransitDest(g, nextId);
+    const ends = transit != null
+      ? getLandingCandidates(g, transit, null, left - 1)
+      : getLandingCandidates(g, nextId, fromPos, left - 1);
     if (ends.includes(target)) return nextId;
   }
   return null;
@@ -3078,6 +3136,16 @@ function resumeAfterRaiseFunds(g, p, resume) {
     };
     return;
   }
+  if (resume.type === 'vacant_shop_buy') {
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'vacant_shop_buy',
+      playerId: p.id,
+      multi: resume.multi || 2,
+      shopIds: [resume.shopId],
+    };
+    return;
+  }
   if (resume.type === 'buy_shop') {
     g.phase = 'await_choice';
     g.pending = {
@@ -3340,6 +3408,15 @@ export function applyChoice(g, choice) {
         };
         return applyChoice(g, { action: 'buy', shopId: resume.shopId });
       }
+      if (resume?.type === 'vacant_shop_buy' && choice.execute) {
+        g.pending = {
+          type: 'vacant_shop_buy',
+          playerId: p.id,
+          multi: resume.multi || 2,
+          shopIds: [resume.shopId],
+        };
+        return applyChoice(g, { action: 'buy', shopId: resume.shopId });
+      }
       if (resume?.type === 'buy_shop' && choice.execute) {
         g.pending = {
           type: 'buy_shop',
@@ -3490,6 +3567,12 @@ export function applyChoice(g, choice) {
     if (maybeOpenAnyShopBuy(g, p)) {
       return { ok: true, ...matchPayload, anyShopBuy: true, state: serializeState(g) };
     }
+    if (maybeOpenVacantShopBuy(g, p)) {
+      return { ok: true, ...matchPayload, vacantShopBuy: true, state: serializeState(g) };
+    }
+    if (maybeOpenForceRivalSell(g, p)) {
+      return { ok: true, ...matchPayload, forceRivalSell: true, state: serializeState(g) };
+    }
     if (maybeOpenPickInvest(g, p)) {
       return { ok: true, ...matchPayload, pickInvest: true, state: serializeState(g) };
     }
@@ -3599,6 +3682,109 @@ export function applyChoice(g, choice) {
       anyShopBuy: true,
       ...(monopolyBreak ? { monopolyBreak } : {}),
       ...(mono || {}),
+      state: serializeState(g),
+    };
+  }
+
+  if (pending.type === 'vacant_shop_buy') {
+    const multi = pending.multi || 2;
+    if (choice.action === 'skip') {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action !== 'buy' && choice.action !== 'pick') {
+      return { ok: false, error: 'bad_choice' };
+    }
+    const sq = getNode(g, Number(choice.shopId));
+    const allowed = pending.shopIds || [];
+    if (!sq || sq.type !== 'shop' || sq.owner >= 0) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    if (allowed.length && !allowed.includes(sq.id)) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    const base = Number(sq.basePrice || sq.price) || 0;
+    const price = base * multi;
+    if (getLiquidatableValue(g, p) < price) {
+      return { ok: false, error: 'insufficient' };
+    }
+    if (p.cash < price) {
+      openRaiseFunds(g, p, {
+        targetCash: price,
+        reason: 'vacant_shop_buy',
+        resume: {
+          type: 'vacant_shop_buy',
+          shopId: sq.id,
+          price,
+          multi,
+        },
+      });
+      return { ok: true, needFunds: true, state: serializeState(g) };
+    }
+    p.cash -= price;
+    sq.owner = p.id;
+    sq.extraInvest = 0;
+    sq.price = sq.basePrice;
+    bumpStat(p, 'shopsBought', 1);
+    updateAreaStockPrices(g);
+    addLog(g, `${p.name} が空き店「${sq.label}」を${multi}倍価格（${price}G）で購入！`, 'shop');
+    const mono = tryGrantMonopolyBonus(g, p, sq.area);
+    g.pending = null;
+    endTurn(g);
+    return {
+      ok: true,
+      vacantShopBuy: true,
+      shopId: sq.id,
+      ...(mono || {}),
+      state: serializeState(g),
+    };
+  }
+
+  if (pending.type === 'force_rival_sell') {
+    const multi = pending.multi || 3;
+    if (choice.action === 'skip') {
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    if (choice.action !== 'sell' && choice.action !== 'pick' && choice.action !== 'buy') {
+      return { ok: false, error: 'bad_choice' };
+    }
+    const sq = getNode(g, Number(choice.shopId));
+    const allowed = pending.shopIds || [];
+    if (!sq || sq.type !== 'shop' || sq.owner < 0 || sq.owner === p.id) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    if (allowed.length && !allowed.includes(sq.id)) {
+      return { ok: false, error: 'bad_shop' };
+    }
+    const owner = g.players[sq.owner];
+    const prevOwnerId = sq.owner;
+    const area = sq.area;
+    const payout = Math.floor((Number(sq.price) || 0) * multi);
+    if (owner) owner.cash += payout;
+    sq.owner = -1;
+    sq.extraInvest = 0;
+    sq.price = sq.basePrice;
+    let monopolyBreak = null;
+    if (prevOwnerId >= 0) {
+      monopolyBreak = applyMonopolyBreak(g, prevOwnerId, area);
+    }
+    if (!monopolyBreak) updateAreaStockPrices(g);
+    addLog(
+      g,
+      `${p.name} が「${sq.label}」を強制売却（銀行が ${owner?.name || '相手'} に${payout.toLocaleString()}G）`,
+      'shop',
+    );
+    g.pending = null;
+    endTurn(g);
+    return {
+      ok: true,
+      forceRivalSell: true,
+      shopId: sq.id,
+      payout,
+      ...(monopolyBreak ? { monopolyBreak } : {}),
       state: serializeState(g),
     };
   }
@@ -3855,6 +4041,44 @@ function maybeOpenAnyShopBuy(g, p) {
     shopIds: shops.map((s) => s.id),
   };
   addLog(g, `${p.name} は好きな相手の店を${multi}倍で買える`, 'event');
+  return true;
+}
+
+/** 好きな空き店を N 倍価格で買う権利 */
+function maybeOpenVacantShopBuy(g, p) {
+  const info = p.flags?.pendingVacantShopBuy;
+  if (!info) return false;
+  p.flags.pendingVacantShopBuy = null;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner < 0);
+  if (!shops.length) return false;
+  const multi = Math.max(2, Math.min(4, Number(info.multi) || 2));
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'vacant_shop_buy',
+    playerId: p.id,
+    multi,
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} は好きな空き店を${multi}倍価格で買える`, 'event');
+  return true;
+}
+
+/** 好きな相手店を N 倍額で銀行買取させる権利 */
+function maybeOpenForceRivalSell(g, p) {
+  const info = p.flags?.pendingForceRivalSell;
+  if (!info) return false;
+  p.flags.pendingForceRivalSell = null;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id);
+  if (!shops.length) return false;
+  const multi = Math.max(2, Math.min(5, Number(info.multi) || 3));
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'force_rival_sell',
+    playerId: p.id,
+    multi,
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} は好きな相手の店を${multi}倍額で銀行買取できる`, 'event');
   return true;
 }
 
@@ -4985,6 +5209,55 @@ export function cpuAct(g) {
       if (!best) return applyChoice(g, { action: 'skip' });
       return applyChoice(g, { action: 'buy', shopId: best.id });
     }
+    if (pend.type === 'vacant_shop_buy') {
+      const multi = pend.multi || 2;
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner < 0).map((s) => s.id);
+      let best = null;
+      let bestScore = -Infinity;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq || sq.owner >= 0) continue;
+        const price = (Number(sq.basePrice || sq.price) || 0) * multi;
+        if (!cpuCanAffordSpend(g, p, price) || getLiquidatableValue(g, p) < price) continue;
+        const myCnt = getPlayerAreaCount(g, p.id, sq.area);
+        const areaSize = getAreaShops(g, sq.area).length;
+        let score = myCnt * traits.ownArea + traits.vacant;
+        if (myCnt + 1 >= areaSize) score += 8;
+        score += cpuNoise(g, p, id + 71) * 0.3;
+        if (score > bestScore) {
+          bestScore = score;
+          best = sq;
+        }
+      }
+      if (!best) return applyChoice(g, { action: 'skip' });
+      return applyChoice(g, { action: 'buy', shopId: best.id });
+    }
+    if (pend.type === 'force_rival_sell') {
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id).map((s) => s.id);
+      let best = null;
+      let bestScore = -Infinity;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq || sq.owner < 0 || sq.owner === p.id) continue;
+        const areaSize = getAreaShops(g, sq.area).length;
+        const ownerCnt = getPlayerAreaCount(g, sq.owner, sq.area);
+        const myCnt = getPlayerAreaCount(g, p.id, sq.area);
+        let score = sq.price / 80;
+        if (ownerCnt >= areaSize) score += 12;
+        if (myCnt > 0) score += 3;
+        score += cpuNoise(g, p, id + 81) * 0.3;
+        if (score > bestScore) {
+          bestScore = score;
+          best = sq;
+        }
+      }
+      if (!best) return applyChoice(g, { action: 'skip' });
+      return applyChoice(g, { action: 'sell', shopId: best.id });
+    }
     if (pend.type === 'five_buy') {
       const buy = cpuShouldFiveBuy(g, p, pend, traits);
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
@@ -4992,7 +5265,7 @@ export function cpuAct(g) {
     if (pend.type === 'raise_funds') {
       const target = Number(pend.targetCash) || 0;
       const resume = pend.resume;
-      const optional = !!(resume && ['five_buy', 'any_shop_buy', 'buy_shop', 'invest'].includes(resume.type));
+      const optional = !!(resume && ['five_buy', 'any_shop_buy', 'vacant_shop_buy', 'buy_shop', 'invest'].includes(resume.type));
       const urgent = !optional; // 通行料など必須負債は資産を惜しまず換金
       cpuRaiseFunds(g, p, target, traits, { urgent });
       if (p.cash >= target) {
@@ -5001,7 +5274,7 @@ export function cpuAct(g) {
         if (optional && resume?.type === 'invest') {
           const pay = Number(resume.amount) || target;
           exec = cpuCanAffordSpend(g, p, pay);
-        } else if (optional && (resume?.type === 'buy_shop' || resume?.type === 'five_buy' || resume?.type === 'any_shop_buy')) {
+        } else if (optional && (resume?.type === 'buy_shop' || resume?.type === 'five_buy' || resume?.type === 'any_shop_buy' || resume?.type === 'vacant_shop_buy')) {
           const pay = Number(resume.price) || target;
           exec = cpuCanAffordSpend(g, p, pay);
         }

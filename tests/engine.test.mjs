@@ -268,19 +268,24 @@ describe('MkMk Street engine', () => {
     assert.equal(grantWildcard(g, g.players[0]), false);
     assert.equal(getWildcardCount(g.players[0]), 4);
 
-    // 銀行で空きマークへ変化し、4つ揃えば昇進
+    // レベルアップに足りるときだけ必要枚数を消費
     const p = g.players[0];
     p.marks = [true, false, true, false];
-    p.wildcards = 2;
+    p.wildcards = 1;
     p.level = 1;
     p.cash = 1000;
+    assert.equal(applyWildcardsToMarks(p), 0, '足りないときは消費しない');
+    assert.deepEqual(p.marks, [true, false, true, false]);
+    assert.equal(p.wildcards, 1);
+
+    p.wildcards = 2;
     const filled = applyWildcardsToMarks(p);
     assert.equal(filled, 2);
     assert.deepEqual(p.marks, [true, true, true, true]);
     assert.equal(p.wildcards, 0);
     assert.equal(hasFullMarks(p), true);
 
-    // 銀行訪問でワイルド→マーク→昇進
+    // 余剰があっても必要枚数だけ消費して昇進
     g.currentPlayerIdx = 0;
     p.marks = [false, false, true, true];
     p.wildcards = 3;
@@ -297,6 +302,21 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(p.marks, [false, false, false, false]);
     assert.equal(p.wildcards, 1, '余剰ワイルドは持ち越し');
     assert.ok(p.cash > cashBefore);
+
+    // 足りないまま銀行に来てもワイルドは残る
+    p.marks = [true, false, false, false];
+    p.wildcards = 2;
+    p.level = 3;
+    p.flags.bankVisitDone = false;
+    p.flags.pendingLevelUp = null;
+    p.pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    advanceMove(g);
+    assert.equal(p.level, 3);
+    assert.deepEqual(p.marks, [true, false, false, false]);
+    assert.equal(p.wildcards, 2, 'レベルアップ不可なら消費しない');
   });
 
   it('grants mark or wildcard when warping onto those squares', () => {
@@ -1246,7 +1266,7 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(getLandingCandidates(g, 0, null, 3), [1]);
   });
 
-  it('getLandingCandidates resolves warp landings to the destination', () => {
+  it('getLandingCandidates highlights both warp source and destination', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 1,
@@ -1266,8 +1286,33 @@ describe('MkMk Street engine', () => {
     ];
     g.startId = 0;
     assert.deepEqual(getLandingCandidates(g, 0, null, 1).sort((a, b) => a - b), [1, 2]);
-    // 0→1→3(warp→4) と 0→2→4 の両経路とも最終は 4
-    assert.deepEqual(getLandingCandidates(g, 0, null, 2), [4]);
+    // 0→1→3(warp) と 0→2→4：転移着地は元(3)と先(4)の両方
+    assert.deepEqual(getLandingCandidates(g, 0, null, 2).sort((a, b) => a - b), [3, 4]);
+    // 転移元／先どちらをクリックしても同じ一歩
+    assert.equal(findForkNextForLanding(g, 0, null, 2, 3, [1, 2]), 1);
+    assert.equal(findForkNextForLanding(g, 0, null, 2, 4, [1, 2]), 1);
+  });
+
+  it('getLandingCandidates continues past gates with remaining steps', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 2,
+    });
+    // 0 -1→ 門A(2) ⇔ 門B(3) -1→ 4
+    g.map = [
+      { id: 0, type: 'bank', label: '銀', col: 0, row: 0, nexts: [1] },
+      { id: 1, type: 'shop', label: '手前', col: 1, row: 0, nexts: [0, 2], area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0 },
+      { id: 2, type: 'gate', label: '門A', col: 2, row: 0, nexts: [1], gateTo: 3 },
+      { id: 3, type: 'gate', label: '門B', col: 5, row: 0, nexts: [4], gateTo: 2 },
+      { id: 4, type: 'shop', label: '先', col: 6, row: 0, nexts: [3], area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0 },
+    ];
+    g.startId = 0;
+    // 2歩: 0→1→門A →即門B で残0 → 門Bで着地
+    assert.deepEqual(getLandingCandidates(g, 0, null, 2), [3]);
+    // 3歩: 0→1→門A→門B→4
+    assert.deepEqual(getLandingCandidates(g, 0, null, 3), [4]);
+    // 1歩で門にぴったり: 1→門A → 門B
+    assert.deepEqual(getLandingCandidates(g, 1, 0, 1), [3]);
   });
 
   it('findForkNextForLanding maps a final stop click to the next fork step', () => {
@@ -1389,6 +1434,9 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('slash_rival_shops'), 'expected rival shop markdown events');
     assert.ok(kinds.has('slash_own_shops'), 'expected own shop markdown events');
     assert.ok(kinds.has('any_shop_buy'), 'expected any-shop N× buy events');
+    assert.ok(kinds.has('vacant_shop_buy'), 'expected vacant shop 2× buy events');
+    assert.ok(kinds.has('force_rival_sell'), 'expected force-rival-sell events');
+    assert.ok(kinds.has('shuffle_marks'), 'expected mark-shuffle events');
     assert.ok(kinds.has('force_sell_shop'), 'expected forced shop-sale events');
     assert.ok(kinds.has('swap_all_pos'), 'expected all-position shuffle events');
     assert.ok(kinds.has('scatter_all'), 'expected scatter-all warp events');
@@ -2697,6 +2745,96 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(shop.owner, -1);
     assert.ok(g.players[0].cash >= cashBefore + Math.floor(shop.basePrice * 0.5) - 1);
+  });
+
+  it('vacant_shop_buy opens a 2× vacant purchase pending', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'vacant_shop_buy');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 221,
+      cash: 50000,
+    });
+    const vacant = g.map.find((n) => n.type === 'shop' && n.owner < 0);
+    assert.ok(vacant);
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.vacantShopBuy, true);
+    assert.equal(g.pending?.type, 'vacant_shop_buy');
+    assert.equal(g.pending.multi, 2);
+    const price = (vacant.basePrice || vacant.price) * 2;
+    const cashBefore = g.players[0].cash;
+    const bought = applyChoice(g, { action: 'buy', shopId: vacant.id });
+    assert.equal(bought.ok, true);
+    assert.equal(vacant.owner, 0);
+    assert.equal(g.players[0].cash, cashBefore - price);
+  });
+
+  it('force_rival_sell vacates rival shop and pays 3× from bank', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'force_rival_sell');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 222,
+      cash: 3000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    shop.extraInvest = 100;
+    shop.price = shop.basePrice + 100;
+    const payout = Math.floor(shop.price * 3);
+    const cashA = g.players[0].cash;
+    const cashB = g.players[1].cash;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.forceRivalSell, true);
+    assert.equal(g.pending?.type, 'force_rival_sell');
+    assert.equal(g.pending.multi, 3);
+    const sold = applyChoice(g, { action: 'sell', shopId: shop.id });
+    assert.equal(sold.ok, true);
+    assert.equal(shop.owner, -1);
+    assert.equal(g.players[0].cash, cashA);
+    assert.equal(g.players[1].cash, cashB + payout);
+  });
+
+  it('shuffle_marks redistributes held marks among players', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'shuffle_marks');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 223,
+      cash: 2000,
+    });
+    g.players[0].marks = [true, true, false, false];
+    g.players[1].marks = [false, false, true, false];
+    g.players[2].marks = [false, false, false, true];
+    const beforeCount = g.players.reduce(
+      (n, p) => n + p.marks.filter(Boolean).length,
+      0,
+    );
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    const afterCount = g.players.reduce(
+      (n, p) => n + p.marks.filter(Boolean).length,
+      0,
+    );
+    assert.equal(afterCount, beforeCount);
+    assert.ok((scratched.messages || []).some((m) => /シャッフル/.test(m)));
   });
 
   it('scratch paints cell with opener player id (not group-color index)', () => {

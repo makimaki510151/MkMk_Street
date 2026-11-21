@@ -75,6 +75,8 @@ export function createRenderer(canvas) {
   let stockHighlightMode = false;
   /** 増資選択中に強調する店ID（出目ハイライトとは別色） */
   let investHighlightShopId = null;
+  /** 指名買収など候補店の輪郭強調（Set / 配列 / null） */
+  let shopPickIds = null;
   /** 出目ネタバレ防止中は着地候補を出さない */
   let hideDiceResult = false;
   /** 1 = 全体フィット。拡大時は pan で移動 */
@@ -795,6 +797,17 @@ export function createRenderer(canvas) {
         ctx.restore();
       }
 
+      // 候補店（指名買収など）：薄いシアンの縁
+      if (shopPickIds?.has?.(n.id) && n.id !== investHighlightShopId) {
+        ctx.save();
+        ctx.globalAlpha = 0.35 + Math.sin(anim.pulse) * 0.12;
+        ctx.strokeStyle = '#9ad7ff';
+        ctx.lineWidth = Math.max(2, size * 0.055);
+        roundRect(ctx, x + pad - 1, y + pad - 1, size - pad * 2 + 2, size - pad * 2 + 2, r + 1);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       // 増資選択：琥珀色の内側グロー（出目のシアン縁とは別）
       if (investHighlightShopId != null && n.id === investHighlightShopId) {
         ctx.save();
@@ -1021,6 +1034,19 @@ export function createRenderer(canvas) {
     investHighlightShopId = null;
   }
 
+  /** @param {Iterable<number>|null} ids 盤面クリック候補の店 */
+  function setShopPickHighlight(ids) {
+    if (ids == null) {
+      shopPickIds = null;
+      return;
+    }
+    shopPickIds = new Set([...ids].map(Number).filter((n) => Number.isFinite(n)));
+  }
+
+  function clearShopPickHighlight() {
+    shopPickIds = null;
+  }
+
   return {
     resize,
     draw,
@@ -1034,6 +1060,8 @@ export function createRenderer(canvas) {
     clearStockHighlight,
     setInvestHighlight,
     clearInvestHighlight,
+    setShopPickHighlight,
+    clearShopPickHighlight,
     setHideDiceResult,
     getZoom,
     setZoom,
@@ -1148,7 +1176,7 @@ export function shopTooltip(g, sq) {
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
   if (sq.type === 'suit_fill') {
-    return `${sq.label} — 通過／停止でワイルドカードを入手（最大4枚・銀行で空きマークに変化）`;
+    return `${sq.label} — 通過／停止でワイルドカードを入手（最大4枚・銀行でレベルアップできるときだけ必要枚数を消費）`;
   }
   if (sq.type === 'lucky') return `${sq.label} — ラッキーステータス獲得`;
   if (sq.type === 'rollon') return `${sq.label} — もう一度サイコロ`;

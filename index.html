@@ -22,18 +22,34 @@
       <button class="btn large" id="btn-join">部屋に入る</button>
       <button class="btn large" id="btn-local">ローカル / CPU</button>
       <button class="btn ghost" id="btn-howto">遊び方</button>
+      <button class="btn ghost" id="btn-scratch-dex" title="スクラッチで目撃したイベント図鑑">スクラッチ図鑑</button>
       <button class="btn ghost" id="btn-patch-notes" title="最近の更新内容">パッチノート</button>
       <button class="btn ghost" id="btn-results-archive" title="保存した試合結果JSONを表示">試合結果</button>
+    </div>
+  </section>
+
+  <!-- SCRATCH DEX -->
+  <section id="screen-scratch-dex" class="screen">
+    <div class="panel howto scratch-dex">
+      <h2>スクラッチ図鑑</h2>
+      <p class="howto-lead">試合で目撃したスクラッチイベントの番号と内容です。未目撃は「？」で隠されます。イベント内容が変わった番号は記録がリセットされます。</p>
+      <p class="hint" id="scratch-dex-stats">目撃 — / 200</p>
+      <ol id="scratch-dex-list" class="scratch-dex-list"></ol>
+      <div class="row-actions">
+        <button class="btn primary" id="btn-scratch-dex-back">戻る</button>
+      </div>
     </div>
   </section>
 
   <!-- PATCH NOTES -->
   <section id="screen-patch-notes" class="screen">
     <div class="panel howto patch-notes">
-      <h2>パッチノート</h2>
-      <p class="howto-lead">最近の更新内容です。部屋に入るときはホストと<strong>同じバージョン</strong>である必要があります。</p>
-      <div id="patch-notes-list" class="patch-notes-list"></div>
-      <div class="row-actions">
+      <div class="patch-notes-scroll">
+        <h2>パッチノート</h2>
+        <p class="howto-lead">最近の更新内容です。部屋に入るときはホストと<strong>同じバージョン</strong>である必要があります。</p>
+        <div id="patch-notes-list" class="patch-notes-list"></div>
+      </div>
+      <div class="row-actions patch-notes-actions">
         <button class="btn primary" id="btn-patch-notes-back">戻る</button>
       </div>
     </div>
@@ -114,7 +130,7 @@
           <li>四隅の ♠♥♦♣ は<strong>通過でマーク入手</strong>。<strong>ぴったり停止</strong>するとイベント表を1マス削れます。</li>
           <li><strong>スクラッチマス</strong>に止まっても同様に1マス削れます。表は全員共通で、開けた人の色で塗られます。</li>
           <li>同じ色が<strong>隣り合って</strong>縦・横・斜めに3つ以上そろうとボーナス（枚数×50G）。とびとびは無効です。</li>
-          <li>がけした島の<strong>ワイルド</strong>マスは通過／停止でワイルドカード入手（最大4枚）。ぴったり止まるとスクラッチも1回。銀行到達で空きマークに変わります。</li>
+          <li>がけした島の<strong>ワイルド</strong>マスは通過／停止でワイルドカード入手（最大4枚）。ぴったり止まるとスクラッチも1回。銀行到達時、レベルアップできる枚数がそろっているときだけ必要枚数を消費します（足りなければ消費しません）。</li>
           <li>スクラッチ等でマーク／ワイルドマスへ<strong>ワープ</strong>したときも、そのマスの入手が入ります。</li>
         </ul>
       </section>
@@ -336,6 +352,7 @@
         <div class="mg-stage">
           <div class="mg-kicker" id="mg-kicker">ミニゲーム</div>
           <div class="mg-body" id="mg-body"></div>
+          <div class="mg-answer" id="mg-answer" hidden></div>
           <div class="mg-title" id="mg-title"></div>
           <div class="mg-detail" id="mg-detail"></div>
         </div>
