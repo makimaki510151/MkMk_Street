@@ -95,6 +95,8 @@ import {
   cpuPickScratchCell,
   cpuPickStockArea,
   getSharedEventTable,
+  POTION_CARD_COUNT,
+  POTION_EFFECT_LABELS,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode } from '../js/board.js';
 import {
@@ -633,6 +635,85 @@ describe('MkMk Street engine', () => {
       mapId: 'greed_mine',
     });
     assert.equal(getMoveDiceMax(gMine), 7);
+  });
+
+  it('potion square opens face-down party pick; same slot allowed; force-sell queues', () => {
+    assert.equal(POTION_CARD_COUNT, 6);
+    assert.equal(Object.keys(POTION_EFFECT_LABELS).length, 6);
+
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 42,
+      mapId: 'sky_isles',
+      cash: 5000,
+    });
+    const potion = g.map.find((n) => n.type === 'potion');
+    assert.ok(potion);
+    // A と B に店を持たせて効果6の強制売却を検証できるようにする
+    const shops = g.map.filter((n) => n.type === 'shop');
+    shops[0].owner = 0;
+    shops[1].owner = 1;
+
+    g.currentPlayerIdx = 0;
+    g.players[0].pos = potion.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [potion.id], passedBank: false, startPos: g.startId };
+    const land = advanceMove(g);
+    assert.equal(land.ok, true);
+    assert.equal(g.pending?.type, 'potion_pick');
+    assert.equal(g.pending.slots.length, 6);
+    assert.deepEqual([...g.pending.slots].sort(), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(g.pending.participantIds, [0, 1, 2]);
+
+    // 全員が同じカード（slot 0）を選んでもよい
+    const r0 = applyChoice(g, { action: 'pick', slot: 0 });
+    assert.equal(r0.ok, true);
+    assert.equal(r0.potionPick, true);
+    assert.equal(g.pending.playerId, 1);
+    const r1 = applyChoice(g, { action: 'pick', slot: 0 });
+    assert.equal(r1.ok, true);
+    const r2 = applyChoice(g, { action: 'pick', slot: 0 });
+    assert.equal(r2.ok, true);
+    assert.equal(r2.potionReveal, true);
+    assert.equal(r2.results?.length, 3);
+    assert.ok(r2.results.every((row) => row.slot === 0));
+    assert.ok(r2.results.every((row) => row.effectId === r2.results[0].effectId));
+
+    // 効果6を強制して強制売却キューを検証
+    const g2 = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 99,
+      mapId: 'sky_isles',
+      cash: 4000,
+    });
+    const potion2 = g2.map.find((n) => n.type === 'potion');
+    const shopA = g2.map.find((n) => n.type === 'shop');
+    const shopB = g2.map.find((n) => n.type === 'shop' && n.id !== shopA.id);
+    shopA.owner = 0;
+    shopB.owner = 1;
+    g2.currentPlayerIdx = 0;
+    g2.players[0].pos = potion2.id;
+    g2.phase = 'moving';
+    g2.move = { stepsLeft: 0, path: [potion2.id], passedBank: false, startPos: g2.startId };
+    advanceMove(g2);
+    assert.equal(g2.pending?.type, 'potion_pick');
+    // slots をすべて効果6にして両者が売却になるようにする
+    g2.pending.slots = [6, 6, 6, 6, 6, 6];
+    applyChoice(g2, { action: 'pick', slot: 1 });
+    const fin = applyChoice(g2, { action: 'pick', slot: 1 });
+    assert.equal(fin.potionReveal, true);
+    assert.equal(fin.forceSell, true);
+    assert.equal(g2.pending?.type, 'force_sell_shop');
+    assert.equal(g2.pending.fromPotion, true);
+    const first = g2.pending.playerId;
+    const s1 = applyChoice(g2, { action: 'sell', shopId: g2.pending.shopIds[0] });
+    assert.equal(s1.ok, true);
+    assert.equal(g2.pending?.type, 'force_sell_shop');
+    assert.notEqual(g2.pending.playerId, first);
+    const s2 = applyChoice(g2, { action: 'sell', shopId: g2.pending.shopIds[0] });
+    assert.equal(s2.ok, true);
+    assert.equal(g2.phase, 'await_roll');
+    assert.equal(shopA.owner === -1 || shopB.owner === -1, true);
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {

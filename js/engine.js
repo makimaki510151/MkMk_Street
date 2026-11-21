@@ -1603,7 +1603,7 @@ export function serializeState(g) {
     _seed: g._seed,
     _rngCount: g._rngCount,
     sharedEventTable: g.sharedEventTable,
-    potionDeck: Array.isArray(g.potionDeck) ? g.potionDeck : null,
+    potionSellQueue: Array.isArray(g.potionSellQueue) ? g.potionSellQueue : null,
   }));
 }
 
@@ -1799,38 +1799,49 @@ function rollOrePrize(g, p, oreKind) {
   }
 }
 
-function drawPotionEffect(g) {
-  if (!Array.isArray(g.potionDeck) || !g.potionDeck.length) {
-    const deck = [1, 2, 3, 4, 5];
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(rngNext(g) * (i + 1));
-      [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-    g.potionDeck = deck;
+/** 薬品マスの伏せカード枚数（効果ID 1〜6） */
+export const POTION_CARD_COUNT = 6;
+
+/** 図鑑／UI用の表向き説明（伏せ中は見せない） */
+export const POTION_EFFECT_LABELS = {
+  1: 'ランダムな株を20枚取得',
+  2: '総資産の5%の現金を取得',
+  3: 'ランダムなマークを取得（所持済なら +200G）',
+  4: '最下位に300G渡す（自分が最下位なら全員から200G）',
+  5: 'ランダムな持株を半分売却',
+  6: 'お店を1店舗売却しなければならない',
+};
+
+function shufflePotionSlots(g) {
+  const slots = [1, 2, 3, 4, 5, 6];
+  for (let i = slots.length - 1; i > 0; i--) {
+    const j = Math.floor(rngNext(g) * (i + 1));
+    [slots[i], slots[j]] = [slots[j], slots[i]];
   }
-  return g.potionDeck.pop();
+  return slots;
 }
 
 function applyPotionEffect(g, p, effectId) {
   switch (effectId) {
     case 1: {
       const areas = Object.keys(g.areas).map(Number);
+      if (!areas.length) return '薬品：株エリアなし';
       const a = areas[Math.floor(rngNext(g) * areas.length)];
       p.stocks[a] = (p.stocks[a] || 0) + 20;
       return `薬品：${getAreaCode(g, a)}株 +20`;
     }
     case 2: {
       const total = getPlayerAssets(g, p).total;
-      const n = Math.max(1, Math.floor(total * 0.03));
+      const n = Math.max(1, Math.floor(total * 0.05));
       p.cash += n;
-      return `薬品：総資産の3% +${n.toLocaleString()}G`;
+      return `薬品：総資産の5% +${n.toLocaleString()}G`;
     }
     case 3: {
       const empty = [];
       for (let i = 0; i < 4; i++) if (!p.marks[i]) empty.push(i);
       if (!empty.length) {
-        p.cash += 100;
-        return '薬品：マーク揃い済み → +100G';
+        p.cash += 200;
+        return '薬品：マーク揃い済み → +200G';
       }
       const idx = empty[Math.floor(rngNext(g) * empty.length)];
       p.marks[idx] = true;
@@ -1851,14 +1862,14 @@ function applyPotionEffect(g, p, effectId) {
         let gained = 0;
         for (const pl of alive) {
           if (pl.id === p.id) continue;
-          const take = Math.min(pl.cash, 100);
+          const take = Math.min(pl.cash, 200);
           pl.cash -= take;
           gained += take;
         }
         p.cash += gained;
         return `薬品：最下位ボーナス 全員から計+${gained.toLocaleString()}G`;
       }
-      const gift = Math.min(p.cash, 200);
+      const gift = Math.min(p.cash, 300);
       p.cash -= gift;
       worst.cash += gift;
       return `薬品：最下位の${worst.name}へ ${gift.toLocaleString()}G`;
@@ -1876,9 +1887,143 @@ function applyPotionEffect(g, p, effectId) {
       p.cash += got;
       return `薬品：${getAreaCode(g, a)}株 ${sell}枚売却 +${got.toLocaleString()}G`;
     }
+    case 6: {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+      if (!shops.length) {
+        const fine = Math.min(p.cash, 60);
+        p.cash -= fine;
+        return fine > 0
+          ? `薬品：所持店なし → 罰金 −${fine.toLocaleString()}G`
+          : '薬品：所持店なし（罰金なし）';
+      }
+      return '薬品：お店を1店舗売却しなければならない';
+    }
     default:
       return '薬品：効果なし';
   }
+}
+
+/** 薬品マス：全員が伏せカードから1枚選ぶ */
+function openPotionPick(g, starter) {
+  const alive = g.players.filter((pl) => pl && !pl.bankrupt);
+  if (!alive.length) return false;
+  const slots = shufflePotionSlots(g);
+  // 止めた人から順に選択
+  const ordered = [
+    starter,
+    ...alive.filter((pl) => pl.id !== starter.id),
+  ];
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'potion_pick',
+    playerId: ordered[0].id,
+    starterId: starter.id,
+    participantIds: ordered.map((pl) => pl.id),
+    picks: {},
+    slots,
+  };
+  g.potionSellQueue = null;
+  addLog(g, `${starter.name} が薬品マス！ 全員で伏せカードを選ぶ`, 'event');
+  return true;
+}
+
+function openNextPotionForceSell(g) {
+  const q = g.potionSellQueue;
+  if (!Array.isArray(q) || !q.length) {
+    g.potionSellQueue = null;
+    return false;
+  }
+  while (q.length) {
+    const pid = q.shift();
+    const pl = g.players[pid];
+    if (!pl || pl.bankrupt) continue;
+    const shops = g.map.filter((s) => s.type === 'shop' && s.owner === pid);
+    if (!shops.length) continue;
+    g.phase = 'await_choice';
+    g.pending = {
+      type: 'force_sell_shop',
+      playerId: pid,
+      shopIds: shops.map((s) => s.id),
+      fromPotion: true,
+    };
+    addLog(g, `${pl.name} は薬品の効果でお店を1店舗売却しなければならない`, 'event');
+    return true;
+  }
+  g.potionSellQueue = null;
+  return false;
+}
+
+function finalizePotionPick(g, pending) {
+  const slots = pending.slots || [1, 2, 3, 4, 5, 6];
+  const results = [];
+  const sellQueue = [];
+  for (const pid of pending.participantIds || []) {
+    const pl = g.players[pid];
+    if (!pl || pl.bankrupt) continue;
+    const slot = Number(pending.picks?.[pid]);
+    const effectId = Number.isFinite(slot) ? slots[slot] : null;
+    if (!effectId) continue;
+    const detail = applyPotionEffect(g, pl, effectId);
+    results.push({
+      playerId: pid,
+      name: pl.name,
+      slot,
+      effectId,
+      detail,
+    });
+    addLog(g, `${pl.name} → ${detail}`, 'event');
+    if (effectId === 6) {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === pid);
+      if (shops.length) sellQueue.push(pid);
+    }
+  }
+  g.pending = null;
+  g.potionSellQueue = sellQueue.length ? sellQueue : null;
+  g.potionReveal = results;
+  if (openNextPotionForceSell(g)) {
+    return {
+      ok: true,
+      potionReveal: true,
+      results,
+      forceSell: true,
+      state: serializeState(g),
+    };
+  }
+  endTurn(g);
+  return {
+    ok: true,
+    potionReveal: true,
+    results,
+    state: serializeState(g),
+  };
+}
+
+function resolvePotionPick(g, p, pending, choice) {
+  if (pending.picks?.[p.id] != null) {
+    return { ok: false, error: 'already_picked' };
+  }
+  const slot = Number(choice.slot ?? choice.value);
+  if (!Number.isFinite(slot) || slot < 0 || slot >= POTION_CARD_COUNT) {
+    return { ok: false, error: 'bad_choice' };
+  }
+  pending.picks = pending.picks || {};
+  pending.picks[p.id] = slot;
+
+  const waiting = (pending.participantIds || []).filter((id) => {
+    const pl = g.players[id];
+    return pl && !pl.bankrupt && pending.picks[id] == null;
+  });
+  if (waiting.length) {
+    pending.playerId = waiting[0];
+    addLog(g, `${p.name} が薬品カードを選択（残り${waiting.length}人）`, 'event');
+    return {
+      ok: true,
+      potionPick: true,
+      waitingCount: waiting.length,
+      state: serializeState(g),
+    };
+  }
+  return finalizePotionPick(g, pending);
 }
 
 /** 本島＝銀行からワープなしで到達できる連結成分 */
@@ -2355,10 +2500,7 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   }
 
   if (sq.type === 'potion') {
-    const effectId = drawPotionEffect(g);
-    const detail = applyPotionEffect(g, p, effectId);
-    addLog(g, `${p.name} が薬品マス！ ${detail}`, 'event');
-    finishLanding(g, p);
+    openPotionPick(g, p);
     return;
   }
 
@@ -3604,7 +3746,16 @@ export function applyChoice(g, choice) {
     const sold = sellShopForCash(g, p, shopId);
     if (!sold.ok) return { ok: false, error: sold.error };
     g.pending = null;
-    if (p.flags.extraRoll) {
+    if (pending.fromPotion && openNextPotionForceSell(g)) {
+      return {
+        ok: true,
+        forceSell: true,
+        shopId,
+        ...(sold.monopolyBreak ? { monopolyBreak: sold.monopolyBreak } : {}),
+        state: serializeState(g),
+      };
+    }
+    if (p.flags.extraRoll && !pending.fromPotion) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
       return { ok: true, forceSell: true, shopId, state: serializeState(g) };
@@ -3617,6 +3768,10 @@ export function applyChoice(g, choice) {
       ...(sold.monopolyBreak ? { monopolyBreak: sold.monopolyBreak } : {}),
       state: serializeState(g),
     };
+  }
+
+  if (pending.type === 'potion_pick') {
+    return resolvePotionPick(g, p, pending, choice);
   }
 
   if (pending.type === 'any_shop_buy') {
@@ -5319,6 +5474,10 @@ export function cpuAct(g) {
       }
       const cellId = cpuPickScratchCell(g, p, open);
       return applyChoice(g, { action: 'scratch', cellId });
+    }
+    if (pend.type === 'potion_pick') {
+      const slot = Math.floor(cpuNoise(g, p, 611) * POTION_CARD_COUNT);
+      return applyChoice(g, { action: 'pick', slot });
     }
     if (pend.type === 'minigame') {
       const n = (salt) => cpuNoise(g, p, salt);

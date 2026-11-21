@@ -54,6 +54,8 @@ import {
   convertPlayerToCpu,
   kickDisconnectedPlayer,
   getGoalPressurePlayers,
+  POTION_CARD_COUNT,
+  POTION_EFFECT_LABELS,
 } from './engine.js';
 import {
   AREA_META,
@@ -1705,6 +1707,11 @@ function playRemoteFx(data) {
     app.busy = true;
     playMinigameReveal(data.reveal).finally(() => {
       clearBusyUnlessEventUi();
+      refreshGameUI();
+    });
+  }
+  if (data.kind === 'potionReveal' && data.results?.length) {
+    presentPotionReveal({ results: data.results, remote: true }).finally(() => {
       refreshGameUI();
     });
   }
@@ -3708,6 +3715,9 @@ async function applyLocalAction(action) {
         mine: true,
       });
     }
+    if (result.potionReveal) {
+      await presentPotionReveal(result);
+    }
     if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -4248,6 +4258,35 @@ async function playScratchMatchReveal(matches, messages = [], { banner = true } 
 }
 
 const SLOT_SYMS = ['★', '♪', 'G', '♦', '♣'];
+
+/** 薬品マス：伏せカード公開の告知 */
+async function presentPotionReveal(result = {}) {
+  const rows = result.results || app.game?.potionReveal || [];
+  if (!rows.length) return;
+  app.busy = true;
+  audio.sfx.levelUp();
+  const detail = rows
+    .map((r) => {
+      const label = POTION_EFFECT_LABELS[r.effectId] || r.detail || '';
+      return `${r.name || '？'}：カード${(r.slot ?? 0) + 1}（${label}）`;
+    })
+    .join(' / ');
+  const payload = {
+    kicker: '薬品マス',
+    title: 'カード公開',
+    detail,
+    kind: 'event',
+    color: '#9fa8da',
+    visual: { glyph: '薬', chips: ['伏せカード', '一斉公開'] },
+  };
+  if (!result.remote) {
+    broadcastFx({ kind: 'banner', payload });
+    broadcastFx({ kind: 'potionReveal', results: rows });
+  }
+  enqueueBanner(payload);
+  await wait(900);
+  clearBusyUnlessEventUi();
+}
 
 async function presentMinigameResult(result) {
   const reveal = result.reveal;
@@ -5010,6 +5049,9 @@ async function handleHostAction(from, data) {
         },
       });
     }
+    if (result.potionReveal) {
+      await presentPotionReveal(result);
+    }
     syncState();
     refreshGameUI();
     if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
@@ -5497,6 +5539,12 @@ function pendingStatusLabel(pend) {
     case 'any_shop_buy': return `${pend.multi || 6}倍の指名買収を検討中`;
     case 'vacant_shop_buy': return `空き店の${pend.multi || 2}倍購入を検討中`;
     case 'force_rival_sell': return `相手店の${pend.multi || 3}倍銀行買取を検討中`;
+    case 'potion_pick': {
+      const left = (pend.participantIds || []).filter((id) => (pend.picks || {})[id] == null).length;
+      return left > 1
+        ? `薬品カード選択中（残り${left}人）`
+        : '薬品カードを選択中';
+    }
     case 'five_buy': return '5倍買いを検討中';
     case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
@@ -7541,6 +7589,44 @@ function showChoiceModal(g) {
         audio.sfx.buy();
         // そろい演出のためモーダルは残す（結果後に閉じる）
         sendAction({ type: 'choice', choice: { action: 'scratch', cellId } });
+      };
+    });
+    return;
+  }
+
+  if (pend.type === 'potion_pick') {
+    title.textContent = '薬品マス';
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    $('#modal-card').classList.add('wide');
+    const participants = (pend.participantIds || []).map((id) => g.players[id]).filter(Boolean);
+    const picks = pend.picks || {};
+    const statusHtml = `<ul class="mg-roster">${participants.map((pl) => {
+      const done = picks[pl.id] != null;
+      const current = pl.id === pend.playerId;
+      return `<li class="${done ? 'done' : ''} ${current ? 'current' : ''}" style="--pc:${pl.color}">
+        <span class="mg-roster-name">${escapeHtml(pl.name)}</span>
+        <span class="mg-roster-state">${done ? '選択済' : (current ? '選択中' : '待ち')}</span>
+      </li>`;
+    }).join('')}</ul>`;
+    const cards = Array.from({ length: POTION_CARD_COUNT }, (_, i) => `
+      <button type="button" class="btn potion-card" data-slot="${i}" aria-label="伏せカード${i + 1}">
+        <span class="potion-card-back">？</span>
+        <small>カード ${i + 1}</small>
+      </button>
+    `).join('');
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">薬品マス</p>
+        <p class="modal-lead">効果は伏せられています。好きなカードを1枚選んでください</p>
+        <p class="hint">同じカードを複数人が選んでも構いません。全員の選択後に一斉公開します。</p>
+      </div>
+      ${statusHtml}
+      <div class="potion-card-grid">${cards}</div>`;
+    body.querySelectorAll('[data-slot]').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'pick', slot: Number(btn.dataset.slot) } });
       };
     });
     return;

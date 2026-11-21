@@ -1203,7 +1203,7 @@ export function shopTooltip(g, sq) {
     return `${sq.label} — 通過時にダイスで賞金（${kind}）`;
   }
   if (sq.type === 'potion') {
-    return `${sq.label} — 止まると薬品効果（5種を順に消化）`;
+    return `${sq.label} — 止まると全員で伏せカードを選ぶ（6種・同じカード可）`;
   }
   if (sq.type === 'gate') {
     return `${sq.label} — 入ると反対側の門へ飛び、残りの出目で移動継続`;
