@@ -540,9 +540,9 @@ describe('MkMk Street engine', () => {
     link('11,7', '8,4');
     link('10,9', '13,12');
     link('7,11', '3,9');
-    link('6,4', '15,4');
-    link('18,9', '15,12');
+    link('18,9', '15,4');
     link('3,7', '6,12');
+    link('6,4', '15,12');
 
     const mine = buildBoard('greed_mine');
     assert.equal(mine.mapName, '強欲鉱山');
