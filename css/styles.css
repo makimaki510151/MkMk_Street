@@ -1389,6 +1389,11 @@ body.your-turn #btn-roll:not(:disabled) {
   max-width: 100%;
   overflow: hidden;
 }
+/* .map-preview の display:flex が [hidden] を上書きしてゲスト用プレビューが
+   ホスト画面にも出て枠外へめり込むのを防ぐ */
+#lobby-guest-map[hidden] {
+  display: none !important;
+}
 
 @media (max-width: 820px) {
   #screen-setup {
