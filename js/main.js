@@ -85,6 +85,12 @@ import { createAudio } from './audio.js';
 import { APP_VERSION } from './version.js';
 import { PATCH_NOTES } from './patchNotes.js';
 import {
+  syncScratchDexWithCatalog,
+  markScratchEventSeen,
+  getScratchDexEntries,
+  getScratchDexStats,
+} from './scratchDex.js';
+import {
   evaluateOrderRolls,
   rollOrderDie,
   reclaimOrderRollPlayer,
@@ -876,11 +882,36 @@ function bindTitle() {
     showScreen('screen-patch-notes');
   };
   $('#btn-patch-notes-back').onclick = () => showScreen('screen-title');
+  $('#btn-scratch-dex').onclick = () => {
+    audio.sfx.click();
+    renderScratchDex();
+    showScreen('screen-scratch-dex');
+  };
+  $('#btn-scratch-dex-back').onclick = () => showScreen('screen-title');
   $('#btn-results-archive').onclick = () => {
     audio.sfx.click();
     openResultsArchive();
   };
   bindResultsArchiveUi();
+  syncScratchDexWithCatalog();
+}
+
+function renderScratchDex() {
+  const list = $('#scratch-dex-list');
+  const statsEl = $('#scratch-dex-stats');
+  if (!list) return;
+  const entries = getScratchDexEntries();
+  const stats = getScratchDexStats();
+  if (statsEl) {
+    statsEl.textContent = `目撃 ${stats.seen} / ${stats.total}`;
+  }
+  list.innerHTML = entries.map((e) => `
+    <li class="scratch-dex-row${e.seen ? ' is-seen' : ' is-unseen'}">
+      <span class="scratch-dex-num">No.${String(e.id).padStart(3, '0')}</span>
+      <span class="scratch-dex-label">${escapeHtml(e.label)}</span>
+      <span class="scratch-dex-desc">${escapeHtml(e.description)}</span>
+    </li>
+  `).join('');
 }
 
 function renderPatchNotes() {
@@ -3414,6 +3445,18 @@ function bindBoardZoomControls(canvas) {
         return;
       }
     }
+    // 指名買収／空き店購入／強制売却など：盤面の店クリックで候補を選ぶ
+    if (
+      app.game.phase === 'await_choice'
+      && hit.type === 'shop'
+      && ['any_shop_buy', 'vacant_shop_buy', 'force_rival_sell', 'force_sell_shop', 'pick_invest', 'invest'].includes(app.game.pending?.type)
+    ) {
+      const btn = document.querySelector(`#modal .pick-invest-shop[data-shop="${hit.id}"]:not([disabled])`);
+      if (btn) {
+        btn.click();
+        return;
+      }
+    }
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
         ? !app.game.players[app.game.pending.playerId]?.isCPU
@@ -3939,6 +3982,8 @@ async function presentScratchOutcome(result, { remote = false } = {}) {
     ? (app.mode === 'local' ? !actor.isCPU : actor.id === app.localSeat)
     : true;
   const matches = result.matches || [];
+
+  if (cell?.eventId) markScratchEventSeen(cell.eventId);
 
   paintScratchResultPanel(result);
 
@@ -5422,6 +5467,8 @@ function pendingStatusLabel(pend) {
     case 'pick_invest': return 'イベント増資する店を選択中';
     case 'force_sell_shop': return '強制売却する店を選択中';
     case 'any_shop_buy': return `${pend.multi || 6}倍の指名買収を検討中`;
+    case 'vacant_shop_buy': return `空き店の${pend.multi || 2}倍購入を検討中`;
+    case 'force_rival_sell': return `相手店の${pend.multi || 3}倍銀行買取を検討中`;
     case 'five_buy': return '5倍買いを検討中';
     case 'raise_funds': return '資金調達中（株・物件の売却）';
     case 'stock': return (pend.bankVisit || pend.bankPass)
@@ -5566,7 +5613,9 @@ function bannerFromLog(g, l) {
       ? '購入！'
       : (/増資/.test(l.text)
         ? '増資！'
-        : (/[0-9]+倍買い|奪取/.test(l.text) ? '5倍買い！' : 'お店'));
+        : (/([0-9]+)倍買い|奪取/.test(l.text)
+          ? `${(l.text.match(/([0-9]+)倍/) || [, '5'])[1]}倍買い！`
+          : 'お店'));
     // 専用 fiveBuy FX と二重になるログ告知は抑止
     if (/[0-9]+倍買いで/.test(l.text) && /奪取/.test(l.text)) return null;
     detail = l.text;
@@ -5843,9 +5892,11 @@ function resolveEventVisual(payload) {
   const chips = [...(base.chips || [])];
 
   if (kind === 'shop') {
-    if (/5倍|奪取/.test(text)) {
-      base.glyph = '5';
-      chips.unshift('5倍買い');
+    const multiM = text.match(/(\d+)\s*倍/);
+    if (multiM || /奪取|指名買収/.test(text)) {
+      const m = multiM ? multiM[1] : '5';
+      base.glyph = m;
+      chips.unshift(`${m}倍買い`);
     } else if (/増資/.test(text)) {
       base.glyph = '+';
       chips.unshift('増資');
@@ -5935,7 +5986,7 @@ function classifyMoneyMood(g, p, amount) {
       if (amount < 0 && t.startsWith(name)) return 'toll_loss';
     }
     if (l.kind === 'shop' && t.includes(name)) {
-      if (/5倍/.test(t)) return amount < 0 ? 'five_buy' : 'gain';
+      if (/\d+倍/.test(t)) return amount < 0 ? 'five_buy' : 'gain';
       if (/購入|増資/.test(t) && amount <= 0) return 'invest';
     }
     // 物件売却は system ログ（「店名」を売却）
@@ -6060,13 +6111,21 @@ function resolveMoneyFxCopy(focus) {
     };
   }
   if (mood === 'five_buy') {
+    let multi = 5;
+    for (const l of (app.game?.logs || []).slice(0, 14)) {
+      const m = String(l.text || '').match(/(\d+)\s*倍/);
+      if (m && l.kind === 'shop') {
+        multi = Number(m[1]) || 5;
+        break;
+      }
+    }
     return {
       mood: 'five_buy',
       color: '#e09a6a',
-      face: '×5',
-      title: '5倍買い',
+      face: `×${multi}`,
+      title: `${multi}倍買い`,
       amount: signed,
-      who: who ? `${who} がお店を5倍買い` : 'お店を5倍買い',
+      who: who ? `${who} がお店を${multi}倍買い` : `お店を${multi}倍買い`,
       coinMode: 'impact',
       se: 'impact',
       floatClass: 'impact',
@@ -6890,10 +6949,13 @@ function showChoiceModal(g) {
       <div class="scratch-followup">
         <p class="scratch-followup-kicker">スクラッチで発動</p>
         <p class="modal-lead">お店を <strong>1店舗</strong> 売却する義務が発生しました</p>
-        <p class="hint">売却する店を選んでください（価格の半額が手元に戻ります）</p>
+        <p class="hint">盤面の店をクリックしても選べます（価格の半額が手元に戻ります）</p>
       </div>
       <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
     $$('.force-sell-shop').forEach((btn) => {
+      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
       btn.onclick = () => {
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'sell', shopId: Number(btn.dataset.shop) } });
@@ -6931,14 +6993,104 @@ function showChoiceModal(g) {
       <div class="scratch-followup">
         <p class="scratch-followup-kicker">スクラッチで発動</p>
         <p class="modal-lead">好きな相手の店を <strong>${multi}倍</strong> で買収できます</p>
-        <p class="hint">所持金 ${Number(p?.cash || 0).toLocaleString()}G — 不足時は調達に進めます</p>
+        <p class="hint">盤面の候補店（水色の縁）をクリックしても選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G — 不足時は調達へ</p>
       </div>
       <div class="pick-invest-list">${rows || '<p class="hint">相手の店がありません</p>'}</div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
     $$('.any-shop-buy').forEach((btn) => {
+      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
       btn.onclick = () => {
         if (btn.disabled) return;
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'buy', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) {
+      skip.textContent = '見送る';
+      skip.disabled = false;
+    }
+    return;
+  }
+
+  if (pend.type === 'vacant_shop_buy') {
+    const multi = pend.multi || 2;
+    const p = g.players[pend.playerId];
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner < 0).map((s) => s.id);
+    title.textContent = `空き店購入：${multi}倍価格`;
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const base = Number(sq.basePrice || sq.price) || 0;
+      const price = base * multi;
+      const can = getLiquidatableValue(g, p) >= price;
+      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
+      return `<button type="button" class="btn pick-invest-shop vacant-shop-buy" data-shop="${sq.id}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <span class="pick-invest-gain">${price.toLocaleString()}G</span>
+        <small>${escapeHtml(area)} · 定価 ${base.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">好きな空き店を <strong>${multi}倍価格</strong> で購入できます</p>
+        <p class="hint">盤面の空き店をクリックしても選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G</p>
+      </div>
+      <div class="pick-invest-list">${rows || '<p class="hint">空き店がありません</p>'}</div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
+    $$('.vacant-shop-buy').forEach((btn) => {
+      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onclick = () => {
+        if (btn.disabled) return;
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'buy', shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    const skip = $('#btn-skip-choice');
+    if (skip) {
+      skip.textContent = '見送る';
+      skip.disabled = false;
+    }
+    return;
+  }
+
+  if (pend.type === 'force_rival_sell') {
+    const multi = pend.multi || 3;
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
+    title.textContent = `相手店の強制換金：${multi}倍`;
+    const rows = ids.map((id) => {
+      const sq = getNode(g, id);
+      if (!sq) return '';
+      const owner = g.players[sq.owner];
+      const payout = Math.floor(sq.price * multi);
+      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
+      return `<button type="button" class="btn pick-invest-shop force-rival-sell" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+        <strong>${escapeHtml(sq.label)}</strong>
+        <span class="pick-invest-gain">銀行→相手 ${payout.toLocaleString()}G</span>
+        <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(area)} · 店価 ${sq.price.toLocaleString()}G×${multi}</small>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">好きな相手の店を空きにし、<strong>店価×${multi}</strong>を銀行が相手に支払います</p>
+        <p class="hint">盤面の候補店をクリックしても選べます（あなたからの支払いはありません）</p>
+      </div>
+      <div class="pick-invest-list">${rows || '<p class="hint">相手の店がありません</p>'}</div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
+    $$('.force-rival-sell').forEach((btn) => {
+      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { action: 'sell', shopId: Number(btn.dataset.shop) } });
       };
     });
     const skip = $('#btn-skip-choice');
@@ -6984,6 +7136,7 @@ function showChoiceModal(g) {
       toll: '買い物料の支払い後',
       five_buy: '5倍買いのため',
       any_shop_buy: '指名買収のため',
+      vacant_shop_buy: '空き店の倍額購入のため',
       buy_shop: 'お店購入のため',
       invest: '増資のため',
     }[pend.reason] || '資金調達';
@@ -7014,10 +7167,11 @@ function showChoiceModal(g) {
     }).join('');
     const canContinue = (p?.cash || 0) >= target;
     const mustPay = pend.resume?.type === 'after_toll' || pend.reason === 'toll';
-    const canExec = canContinue && pend.resume && ['five_buy', 'any_shop_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
+    const canExec = canContinue && pend.resume && ['five_buy', 'any_shop_buy', 'vacant_shop_buy', 'buy_shop', 'invest'].includes(pend.resume.type);
     const execLabel = {
       five_buy: '調達完了 — 5倍買いする',
       any_shop_buy: '調達完了 — 指名買収する',
+      vacant_shop_buy: '調達完了 — 空き店を買う',
       buy_shop: '調達完了 — 購入する',
       invest: '調達完了 — 増資する',
     }[pend.resume?.type] || '調達完了 — 実行する';
@@ -7523,6 +7677,7 @@ function hideModal() {
   $('#modal')?.classList.remove('centered');
   app.renderer?.clearStockHighlight();
   app.renderer?.clearInvestHighlight();
+  app.renderer?.clearShopPickHighlight?.();
 }
 
 function buildResultsExportPayload(g, results) {

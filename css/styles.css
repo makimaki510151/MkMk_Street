@@ -471,6 +471,56 @@ button:disabled { opacity: .42; cursor: default; }
   font-size: 0.88rem;
 }
 .howto strong { color: var(--ink); }
+.scratch-dex {
+  max-width: min(44rem, 100%);
+}
+.scratch-dex-list {
+  list-style: none;
+  margin: 0 0 0.85rem;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  max-height: min(62vh, 36rem);
+  overflow: auto;
+}
+.scratch-dex-row {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(6rem, 0.9fr) minmax(0, 1.4fr);
+  gap: 0.45rem 0.65rem;
+  align-items: baseline;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  font-size: 0.86rem;
+}
+.scratch-dex-row.is-unseen {
+  opacity: 0.72;
+}
+.scratch-dex-num {
+  font-family: var(--display);
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+.scratch-dex-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+.scratch-dex-row.is-unseen .scratch-dex-label {
+  color: var(--muted);
+  letter-spacing: 0.12em;
+}
+.scratch-dex-desc {
+  color: var(--muted);
+  line-height: 1.45;
+}
+@media (max-width: 640px) {
+  .scratch-dex-row {
+    grid-template-columns: 3.6rem 1fr;
+  }
+  .scratch-dex-desc {
+    grid-column: 1 / -1;
+  }
+}
 .patch-notes-list {
   display: grid;
   gap: 0.85rem;

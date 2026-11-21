@@ -148,6 +148,24 @@ function buildCatalog() {
     ['pick_seize_pass', '指名買収パス', 6],
   ].forEach(([k, l, multi]) => push(k, l, { effect: 'any_shop_buy', multi }));
 
+  // ── 好きな空き店を2倍価格で購入──────────────────────────
+  [
+    ['vacant_double_deed', '空地2倍購入権'],
+    ['plot_premium_pass', '更地プレミアパス'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'vacant_shop_buy', multi: 2 }));
+
+  // ── 相手店を3倍額で銀行支払いの強制売却──────────────────
+  [
+    ['bank_buyout_order', '銀行買取命令'],
+    ['forced_rival_sale', '相手店の強制換金'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'force_rival_sell', multi: 3 }));
+
+  // ── 全員のマークをシャッフル──────────────────────────────
+  [
+    ['suit_shuffle', 'マーク大シャッフル'],
+    ['mark_mixup', 'スート大混乱'],
+  ].forEach(([k, l]) => push(k, l, { effect: 'shuffle_marks' }));
+
   // ── 店を1店舗売る義務────────────────────────────────────
   [
     ['forced_liquidation', '強制売却命令'],
@@ -626,6 +644,42 @@ function grantTakeoverCoupon(player, multi, messages) {
   messages.push(`次の店奪取が${m}倍買いに（通常は5倍）`);
 }
 
+/** 全員の所持マークをプールしてランダムに再配布（ワイルドは対象外） */
+function shuffleAllPlayerMarks(g, messages) {
+  const alive = (g.players || []).filter((p) => p && !p.bankrupt);
+  if (alive.length < 2) {
+    messages.push('シャッフルできる相手がいない');
+    return;
+  }
+  /** @type {number[]} */
+  const tokens = [];
+  for (const p of alive) {
+    if (!Array.isArray(p.marks)) p.marks = [false, false, false, false];
+    for (let i = 0; i < 4; i++) {
+      if (p.marks[i]) tokens.push(i);
+      p.marks[i] = false;
+    }
+  }
+  if (!tokens.length) {
+    messages.push('誰もマークを持っていなかった');
+    return;
+  }
+  // Fisher–Yates
+  for (let i = tokens.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = tokens[i];
+    tokens[i] = tokens[j];
+    tokens[j] = tmp;
+  }
+  for (const suit of tokens) {
+    const candidates = alive.filter((p) => !p.marks[suit]);
+    const pool = candidates.length ? candidates : alive;
+    const who = pickRandom(pool);
+    who.marks[suit] = true;
+  }
+  messages.push(`全員のマークがシャッフルされた（${tokens.length}枚）`);
+}
+
 function applyEventDef(g, player, def, messages) {
   if (!def) {
     player.flags.extraRoll = true;
@@ -906,6 +960,34 @@ function applyEventDef(g, player, def, messages) {
       }
       player.flags.pendingAnyShopBuy = { multi };
       messages.push(`好きな相手の店を${multi}倍で買える！`);
+      break;
+    }
+    case 'vacant_shop_buy': {
+      const vacants = g.map.filter((s) => s.type === 'shop' && s.owner < 0);
+      const multi = Math.max(2, Math.min(4, Number(def.multi) || 2));
+      if (!vacants.length) {
+        applyCash(player, 40, messages);
+        messages.push('空き店なし → 手当に変換');
+        break;
+      }
+      player.flags.pendingVacantShopBuy = { multi };
+      messages.push(`好きな空き店を${multi}倍価格で買える！`);
+      break;
+    }
+    case 'force_rival_sell': {
+      const targets = g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== player.id);
+      const multi = Math.max(2, Math.min(5, Number(def.multi) || 3));
+      if (!targets.length) {
+        applyCash(player, 50, messages);
+        messages.push('相手店なし → 手当に変換');
+        break;
+      }
+      player.flags.pendingForceRivalSell = { multi };
+      messages.push(`好きな相手の店を${multi}倍額で銀行買取させられる！`);
+      break;
+    }
+    case 'shuffle_marks': {
+      shuffleAllPlayerMarks(g, messages);
       break;
     }
     case 'force_sell_shop': {

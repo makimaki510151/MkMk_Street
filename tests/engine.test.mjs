@@ -1389,6 +1389,9 @@ describe('MkMk Street engine', () => {
     assert.ok(kinds.has('slash_rival_shops'), 'expected rival shop markdown events');
     assert.ok(kinds.has('slash_own_shops'), 'expected own shop markdown events');
     assert.ok(kinds.has('any_shop_buy'), 'expected any-shop N× buy events');
+    assert.ok(kinds.has('vacant_shop_buy'), 'expected vacant shop 2× buy events');
+    assert.ok(kinds.has('force_rival_sell'), 'expected force-rival-sell events');
+    assert.ok(kinds.has('shuffle_marks'), 'expected mark-shuffle events');
     assert.ok(kinds.has('force_sell_shop'), 'expected forced shop-sale events');
     assert.ok(kinds.has('swap_all_pos'), 'expected all-position shuffle events');
     assert.ok(kinds.has('scatter_all'), 'expected scatter-all warp events');
@@ -2697,6 +2700,96 @@ describe('MkMk Street engine', () => {
     assert.equal(sold.ok, true);
     assert.equal(shop.owner, -1);
     assert.ok(g.players[0].cash >= cashBefore + Math.floor(shop.basePrice * 0.5) - 1);
+  });
+
+  it('vacant_shop_buy opens a 2× vacant purchase pending', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'vacant_shop_buy');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 221,
+      cash: 50000,
+    });
+    const vacant = g.map.find((n) => n.type === 'shop' && n.owner < 0);
+    assert.ok(vacant);
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.vacantShopBuy, true);
+    assert.equal(g.pending?.type, 'vacant_shop_buy');
+    assert.equal(g.pending.multi, 2);
+    const price = (vacant.basePrice || vacant.price) * 2;
+    const cashBefore = g.players[0].cash;
+    const bought = applyChoice(g, { action: 'buy', shopId: vacant.id });
+    assert.equal(bought.ok, true);
+    assert.equal(vacant.owner, 0);
+    assert.equal(g.players[0].cash, cashBefore - price);
+  });
+
+  it('force_rival_sell vacates rival shop and pays 3× from bank', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'force_rival_sell');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 222,
+      cash: 3000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    shop.owner = 1;
+    shop.extraInvest = 100;
+    shop.price = shop.basePrice + 100;
+    const payout = Math.floor(shop.price * 3);
+    const cashA = g.players[0].cash;
+    const cashB = g.players[1].cash;
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    assert.equal(scratched.forceRivalSell, true);
+    assert.equal(g.pending?.type, 'force_rival_sell');
+    assert.equal(g.pending.multi, 3);
+    const sold = applyChoice(g, { action: 'sell', shopId: shop.id });
+    assert.equal(sold.ok, true);
+    assert.equal(shop.owner, -1);
+    assert.equal(g.players[0].cash, cashA);
+    assert.equal(g.players[1].cash, cashB + payout);
+  });
+
+  it('shuffle_marks redistributes held marks among players', () => {
+    const idx = EVENT_CATALOG.findIndex((e) => e.effect === 'shuffle_marks');
+    assert.ok(idx >= 0);
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 223,
+      cash: 2000,
+    });
+    g.players[0].marks = [true, true, false, false];
+    g.players[1].marks = [false, false, true, false];
+    g.players[2].marks = [false, false, false, true];
+    const beforeCount = g.players.reduce(
+      (n, p) => n + p.marks.filter(Boolean).length,
+      0,
+    );
+    g.phase = 'await_choice';
+    g.pending = { type: 'scratch', playerId: 0, openIds: [0] };
+    const cell = g.sharedEventTable.cells[0];
+    cell.eventId = idx + 1;
+    cell.scratched = false;
+    const scratched = applyChoice(g, { action: 'scratch', cellId: 0 });
+    assert.equal(scratched.ok, true);
+    const afterCount = g.players.reduce(
+      (n, p) => n + p.marks.filter(Boolean).length,
+      0,
+    );
+    assert.equal(afterCount, beforeCount);
+    assert.ok((scratched.messages || []).some((m) => /シャッフル/.test(m)));
   });
 
   it('scratch paints cell with opener player id (not group-color index)', () => {
