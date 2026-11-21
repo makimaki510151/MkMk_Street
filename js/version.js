@@ -3,4 +3,4 @@
  * 互換性のない変更（プロトコル・入室条件・必須データ形）のたびに上げる。
  * ホストとゲストで一致しないと部屋に入れない。
  */
-export const APP_VERSION = '1.9.9';
+export const APP_VERSION = '1.9.10';
