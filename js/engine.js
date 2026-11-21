@@ -1696,10 +1696,22 @@ export function resolveLandingDestId(g, pos) {
   return pos;
 }
 
+/** 最終着地候補に追加。転移マスなら元・先の両方を入れる。 */
+function addLandingCandidateEnd(g, ends, pos) {
+  const n = getNode(g, pos);
+  if (n?.type === 'warp' && n.warpTo != null && getNode(g, n.warpTo)) {
+    ends.add(pos);
+    ends.add(n.warpTo);
+    return;
+  }
+  ends.add(pos);
+}
+
 /**
  * 出目（残り歩数）で最終的に止まりうるマス ID 一覧。
  * 分岐はすべて辿り、行き止まりは残り歩数があってもそこで着地扱い。
- * 門・階層は通過／着地時に即ジャンプして残歩数を継続。ワープ着地は転送先を候補にする。
+ * 門・階層は通過／着地時に即ジャンプして残歩数を継続。
+ * ワープマス着地は転移元と転移先の両方を候補にする。
  */
 export function getLandingCandidates(g, fromPos, prevPos, steps) {
   const left0 = Math.max(0, Math.floor(Number(steps) || 0));
@@ -1712,13 +1724,13 @@ export function getLandingCandidates(g, fromPos, prevPos, steps) {
     seen.add(key);
 
     if (left <= 0) {
-      // ここに来る時点で門ジャンプ済み。ワープ着地だけ解決する
-      ends.add(resolveLandingDestId(g, pos));
+      // ここに来る時点で門ジャンプ済み。ワープは元・先の両方
+      addLandingCandidateEnd(g, ends, pos);
       return;
     }
     const nexts = getForwardNexts(g, pos, prev);
     if (!nexts.length) {
-      ends.add(resolveLandingDestId(g, pos));
+      addLandingCandidateEnd(g, ends, pos);
       return;
     }
     for (const nid of nexts) {
@@ -1747,9 +1759,14 @@ export function findForkNextForLanding(g, fromPos, prevPos, stepsLeft, landingId
     : getForwardNexts(g, fromPos, prevPos);
   for (const nextId of options) {
     if (left === 1) {
-      // 門／階層は乗った時点でジャンプした先が着地
+      // 門／階層は乗った時点でジャンプした先が着地。
+      // 転移マスは元・先どちらをクリックしてもその一歩を選ぶ。
       const landed = immediateTransitDest(g, nextId) ?? nextId;
-      if (landed === target || resolveLandingDestId(g, landed) === target) return nextId;
+      if (
+        nextId === target
+        || landed === target
+        || resolveLandingDestId(g, landed) === target
+      ) return nextId;
       continue;
     }
     // 1歩進んだあとの候補（門ジャンプ込み）に target が含まれるか
