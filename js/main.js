@@ -5216,7 +5216,7 @@ function refreshGameUI() {
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const wildN = Math.max(0, Math.floor(Number(p.wildcards) || 0));
     const wilds = wildN > 0
-      ? `<span class="pc-wilds" title="ワイルドカード（銀行で空きマークに変化）">${'Ｗ'.repeat(Math.min(4, wildN))}<small>×${wildN}</small></span>`
+      ? `<span class="pc-wilds" title="ワイルドカード（銀行でレベルアップできるときだけ必要枚数を消費）">${'Ｗ'.repeat(Math.min(4, wildN))}<small>×${wildN}</small></span>`
       : '';
     const active = g.currentPlayerIdx === p.id ? 'active' : '';
     const me = p.id === app.localSeat ? 'me' : '';

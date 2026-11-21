@@ -268,19 +268,24 @@ describe('MkMk Street engine', () => {
     assert.equal(grantWildcard(g, g.players[0]), false);
     assert.equal(getWildcardCount(g.players[0]), 4);
 
-    // 銀行で空きマークへ変化し、4つ揃えば昇進
+    // レベルアップに足りるときだけ必要枚数を消費
     const p = g.players[0];
     p.marks = [true, false, true, false];
-    p.wildcards = 2;
+    p.wildcards = 1;
     p.level = 1;
     p.cash = 1000;
+    assert.equal(applyWildcardsToMarks(p), 0, '足りないときは消費しない');
+    assert.deepEqual(p.marks, [true, false, true, false]);
+    assert.equal(p.wildcards, 1);
+
+    p.wildcards = 2;
     const filled = applyWildcardsToMarks(p);
     assert.equal(filled, 2);
     assert.deepEqual(p.marks, [true, true, true, true]);
     assert.equal(p.wildcards, 0);
     assert.equal(hasFullMarks(p), true);
 
-    // 銀行訪問でワイルド→マーク→昇進
+    // 余剰があっても必要枚数だけ消費して昇進
     g.currentPlayerIdx = 0;
     p.marks = [false, false, true, true];
     p.wildcards = 3;
@@ -297,6 +302,21 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(p.marks, [false, false, false, false]);
     assert.equal(p.wildcards, 1, '余剰ワイルドは持ち越し');
     assert.ok(p.cash > cashBefore);
+
+    // 足りないまま銀行に来てもワイルドは残る
+    p.marks = [true, false, false, false];
+    p.wildcards = 2;
+    p.level = 3;
+    p.flags.bankVisitDone = false;
+    p.flags.pendingLevelUp = null;
+    p.pos = g.startId;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [g.startId], passedBank: false, startPos: g.startId };
+    g.pending = null;
+    advanceMove(g);
+    assert.equal(p.level, 3);
+    assert.deepEqual(p.marks, [true, false, false, false]);
+    assert.equal(p.wildcards, 2, 'レベルアップ不可なら消費しない');
   });
 
   it('grants mark or wildcard when warping onto those squares', () => {
