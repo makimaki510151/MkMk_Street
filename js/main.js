@@ -7105,18 +7105,22 @@ function showChoiceModal(g) {
     });
     $('#m-raise-go').onclick = () => {
       if (!canContinue) return;
+      // 調達後の購入／増資UIと資金調達UIが二重に残らないよう先に閉じる
+      hideModal();
       sendAction({ type: 'choice', choice: { action: 'continue', execute: !!canExec } });
     };
     const cancelBtn = $('#m-raise-cancel');
     if (cancelBtn && !cancelBtn.disabled) {
       cancelBtn.onclick = () => {
         audio.sfx.cancel();
-        // 失敗時（still_short）は pending が残るので、先に閉じない
+        // still_short のときは pending が残るので閉じない（refresh で再表示）
+        hideModal();
         sendAction({ type: 'choice', choice: { action: 'cancel' } });
       };
     }
     $('#m-raise-bankrupt').onclick = () => {
       if (!confirm('破産すると店も株も失います。よろしいですか？')) return;
+      hideModal();
       sendAction({ type: 'choice', choice: { action: 'bankrupt' } });
     };
     if (drafts.length) {
@@ -7547,7 +7551,9 @@ function hideModal() {
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
   const card = $('#modal-card');
-  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'wide');
+  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'raise-modal', 'wide');
+  const body = $('#modal-body');
+  if (body) body.innerHTML = '';
   $('#modal')?.classList.remove('centered');
   app.renderer?.clearStockHighlight();
   app.renderer?.clearInvestHighlight();

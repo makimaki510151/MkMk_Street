@@ -1658,7 +1658,33 @@ export function getForwardNexts(g, pos, prevPos) {
   return fwd.length > 0 ? fwd : [...raw];
 }
 
-/** ワープ着地なら転送先（1段）。それ以外はそのマス。 */
+/**
+ * 乗った時点で即時ジャンプするマス（門・階層）の行き先。
+ * ワープは着地時のみなのでここでは扱わない。
+ */
+function immediateTransitDest(g, pos) {
+  const n = getNode(g, pos);
+  if (!n) return null;
+  if (n.type === 'gate') {
+    let destId = n.gateTo;
+    if (destId == null) {
+      destId = g.map.find((x) => x.type === 'gate' && x.id !== n.id)?.id;
+    }
+    if (destId != null && destId !== n.id && getNode(g, destId)) return destId;
+  }
+  if (n.type === 'shaft') {
+    let dest = null;
+    if (n.shaft === 'down' && n.floor === 1) {
+      dest = g.map.find((x) => x.type === 'shaft' && x.shaft === 'down' && x.floor === 2);
+    } else if (n.shaft === 'up' && n.floor === 2) {
+      dest = g.map.find((x) => x.type === 'shaft' && x.shaft === 'up' && x.floor === 1);
+    }
+    if (dest && dest.id !== n.id) return dest.id;
+  }
+  return null;
+}
+
+/** ワープ着地なら転送先（1段）。門は「乗った時点」で処理するためここでは扱わない。 */
 export function resolveLandingDestId(g, pos) {
   const n = getNode(g, pos);
   if (n?.type === 'warp' && n.warpTo != null && getNode(g, n.warpTo)) {
@@ -1670,7 +1696,7 @@ export function resolveLandingDestId(g, pos) {
 /**
  * 出目（残り歩数）で最終的に止まりうるマス ID 一覧。
  * 分岐はすべて辿り、行き止まりは残り歩数があってもそこで着地扱い。
- * ワープマス着地は転送先を候補にする。
+ * 門・階層は通過／着地時に即ジャンプして残歩数を継続。ワープ着地は転送先を候補にする。
  */
 export function getLandingCandidates(g, fromPos, prevPos, steps) {
   const left0 = Math.max(0, Math.floor(Number(steps) || 0));
@@ -1683,6 +1709,7 @@ export function getLandingCandidates(g, fromPos, prevPos, steps) {
     seen.add(key);
 
     if (left <= 0) {
+      // ここに来る時点で門ジャンプ済み。ワープ着地だけ解決する
       ends.add(resolveLandingDestId(g, pos));
       return;
     }
@@ -1691,7 +1718,12 @@ export function getLandingCandidates(g, fromPos, prevPos, steps) {
       ends.add(resolveLandingDestId(g, pos));
       return;
     }
-    for (const nid of nexts) walk(nid, pos, left - 1);
+    for (const nid of nexts) {
+      // 1歩で nid に入り、門／階層なら即ジャンプして残歩数継続（prev はクリア）
+      const transit = immediateTransitDest(g, nid);
+      if (transit != null) walk(transit, null, left - 1);
+      else walk(nid, pos, left - 1);
+    }
   };
 
   walk(fromPos, prevPos, left0);
@@ -1712,10 +1744,16 @@ export function findForkNextForLanding(g, fromPos, prevPos, stepsLeft, landingId
     : getForwardNexts(g, fromPos, prevPos);
   for (const nextId of options) {
     if (left === 1) {
-      if (nextId === target || resolveLandingDestId(g, nextId) === target) return nextId;
+      // 門／階層は乗った時点でジャンプした先が着地
+      const landed = immediateTransitDest(g, nextId) ?? nextId;
+      if (landed === target || resolveLandingDestId(g, landed) === target) return nextId;
       continue;
     }
-    const ends = getLandingCandidates(g, nextId, fromPos, left - 1);
+    // 1歩進んだあとの候補（門ジャンプ込み）に target が含まれるか
+    const transit = immediateTransitDest(g, nextId);
+    const ends = transit != null
+      ? getLandingCandidates(g, transit, null, left - 1)
+      : getLandingCandidates(g, nextId, fromPos, left - 1);
     if (ends.includes(target)) return nextId;
   }
   return null;
