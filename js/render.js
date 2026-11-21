@@ -28,7 +28,13 @@ const TYPE_ICON = {
   suit_fill: 'Ｗ',
   junction: '岐',
   warp: '転',
+  warp_random: 'ら',
   switch: '切',
+  shaft: '井',
+  pit: '坑',
+  ore: '鉱',
+  potion: '薬',
+  gate: '門',
 };
 
 const MINIGAME_ICON = {
@@ -721,7 +727,15 @@ export function createRenderer(canvas) {
       else if (n.type === 'suit_fill') fill = '#6b3d6a';
       else if (n.type === 'junction') fill = '#5a4a3a';
       else if (n.type === 'warp') fill = '#5b4a8c';
+      else if (n.type === 'warp_random') fill = '#6a8b4a';
       else if (n.type === 'switch') fill = '#8a6b2a';
+      else if (n.type === 'shaft') fill = n.shaft === 'up' ? '#7a9a4a' : '#7a4a8a';
+      else if (n.type === 'pit') fill = n.pit === 'up' ? '#9a6a5a' : '#4a5a9a';
+      else if (n.type === 'ore') {
+        fill = n.ore === 'gold' ? '#b8860b' : n.ore === 'diamond' ? '#5a9a7a' : '#6a6a7a';
+      }
+      else if (n.type === 'potion') fill = '#5a6a9a';
+      else if (n.type === 'gate') fill = '#6a5a8a';
 
       const forkOpt = g.phase === 'await_fork' && g.pending?.options?.some((o) => o.id === n.id);
       const landOpt = !!(landSet && landSet.has(n.id));
@@ -1142,6 +1156,29 @@ export function shopTooltip(g, sq) {
   if (sq.type === 'warp') {
     const dest = g.map.find((n) => n.id === sq.warpTo);
     return `${sq.label} — 止まると${dest ? `「${dest.label}」へ` : ''}ワープ`;
+  }
+  if (sq.type === 'warp_random') {
+    return `${sq.label} — 止まると反対ゾーンの転送マスへランダム転移`;
+  }
+  if (sq.type === 'shaft') {
+    return sq.shaft === 'down'
+      ? `${sq.label} — 乗ると地下一階へ下降（残りの出目で移動継続）`
+      : `${sq.label} — 乗ると一階へ上昇（残りの出目で移動継続）`;
+  }
+  if (sq.type === 'pit') {
+    return sq.pit === 'down'
+      ? `${sq.label} — ぴったり止まると地下二階へ転移`
+      : `${sq.label} — ぴったり止まると地下一階の転移下降へランダム移動`;
+  }
+  if (sq.type === 'ore') {
+    const kind = sq.ore === 'gold' ? '金（どの目でも賞金）' : sq.ore === 'diamond' ? 'ダイヤ（8面・大当たりあり）' : '鉄（低目は空振り）';
+    return `${sq.label} — 通過時にダイスで賞金（${kind}）`;
+  }
+  if (sq.type === 'potion') {
+    return `${sq.label} — 止まると薬品効果（5種を順に消化）`;
+  }
+  if (sq.type === 'gate') {
+    return `${sq.label} — 島の入口（効果なし）`;
   }
   if (sq.type === 'switch') {
     const st = g.switchState ? 2 : 1;

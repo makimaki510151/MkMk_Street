@@ -1,5 +1,7 @@
 /** MkMk Street — 本家いただきストリート風・分岐マップ群 */
 
+import { buildKurechigai, buildSkyIsles, buildGreedMine } from './mapsSpecial.js';
+
 /**
  * 店グループ色は非暖色・プレイヤー単色と混ざらないクール系。
  * pattern: check | stripe | dots | grid | diamond
@@ -1624,6 +1626,33 @@ export const MAP_CATALOG = [
     defaultCash: 2200,
     diceMax: 8,
     build: buildTagai,
+  },
+  {
+    id: 'kurechigai',
+    name: '暮違某為町',
+    blurb: '十字の街並み。某為高台（L）は高級物件。転送2組（ダイス1〜6）',
+    defaultGoal: 15000,
+    defaultCash: 2200,
+    diceMax: 6,
+    build: buildKurechigai,
+  },
+  {
+    id: 'sky_isles',
+    name: '空島地帯',
+    blurb: 'ファンタジー空島。ランダム転移・薬品マスあり（ダイス1〜6）',
+    defaultGoal: 14000,
+    defaultCash: 2200,
+    diceMax: 6,
+    build: buildSkyIsles,
+  },
+  {
+    id: 'greed_mine',
+    name: '強欲鉱山',
+    blurb: '階層つき鉱山。下降／上昇・鉱石・転移坑（ダイス1〜7）',
+    defaultGoal: 18000,
+    defaultCash: 2100,
+    diceMax: 7,
+    build: buildGreedMine,
   },
 ];
 
