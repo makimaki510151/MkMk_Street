@@ -1270,6 +1270,28 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(getLandingCandidates(g, 0, null, 2), [4]);
   });
 
+  it('getLandingCandidates continues past gates with remaining steps', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 2,
+    });
+    // 0 -1→ 門A(2) ⇔ 門B(3) -1→ 4
+    g.map = [
+      { id: 0, type: 'bank', label: '銀', col: 0, row: 0, nexts: [1] },
+      { id: 1, type: 'shop', label: '手前', col: 1, row: 0, nexts: [0, 2], area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0 },
+      { id: 2, type: 'gate', label: '門A', col: 2, row: 0, nexts: [1], gateTo: 3 },
+      { id: 3, type: 'gate', label: '門B', col: 5, row: 0, nexts: [4], gateTo: 2 },
+      { id: 4, type: 'shop', label: '先', col: 6, row: 0, nexts: [3], area: 0, price: 100, basePrice: 100, owner: -1, extraInvest: 0 },
+    ];
+    g.startId = 0;
+    // 2歩: 0→1→門A →即門B で残0 → 門Bで着地
+    assert.deepEqual(getLandingCandidates(g, 0, null, 2), [3]);
+    // 3歩: 0→1→門A→門B→4
+    assert.deepEqual(getLandingCandidates(g, 0, null, 3), [4]);
+    // 1歩で門にぴったり: 1→門A → 門B
+    assert.deepEqual(getLandingCandidates(g, 1, 0, 1), [3]);
+  });
+
   it('findForkNextForLanding maps a final stop click to the next fork step', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
