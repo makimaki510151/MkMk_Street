@@ -324,9 +324,9 @@ export function buildKurechigai() {
 
 /**
  * 空島地帯（22×17）。
- * 本島の転移（上から：ら→転Ａ→Ｄ転→ら）が
- * ♣上／♥右／♠左／♦下 と接続。各マークのもう一方は隣の小島へ。
- * 薬＝薬品マス。
+ * 本島転Ａ↔♥右、Ｄ転↔♠左。♥左↔♦上、♠右↔♣下。
+ * ♣上↔隣島Ｂ、♦下↔隣島Ｅ。ら＝ランダム転移（小島の転移マスへ）。
+ * げ＝門（反対側の門へ即時ジャンプし残移動）。薬＝薬品マス。
  */
 export function buildSkyIsles() {
   const { nodes, N } = makeNodeFactory();
@@ -391,6 +391,8 @@ export function buildSkyIsles() {
   const ctx = { bank: null, slotCount: 0 };
   /** @type {object[]} */
   const warps = [];
+  /** @type {object[]} */
+  const gates = [];
 
   for (let row = 0; row < gridRows.length; row++) {
     const chars = [...gridRows[row]];
@@ -409,13 +411,12 @@ export function buildSkyIsles() {
         continue;
       }
       if (ch === 'ら') {
-        // 本島の転移口（上から2番目・4番目）。固定ペアでマーク島へ
-        const w = put(col, row, N('warp', { label: '本島転移', col, row }));
-        warps.push(w);
+        put(col, row, N('warp_random', { label: 'ランダム転移', col, row }));
         continue;
       }
       if (ch === 'げ') {
-        put(col, row, N('gate', { label: 'ゲート', col, row }));
+        const gate = put(col, row, N('gate', { label: '門', col, row }));
+        gates.push(gate);
         continue;
       }
       if (ch === '薬') {
@@ -426,18 +427,19 @@ export function buildSkyIsles() {
     }
   }
   if (!ctx.bank) throw new Error('空島地帯: 銀行なし');
+  if (gates.length !== 2) throw new Error(`空島地帯: 門は2つ必要（今${gates.length}）`);
+  gates[0].gateTo = gates[1].id;
+  gates[1].gateTo = gates[0].id;
 
-  // 本島上から: ら上→♣上、転Ａ→♥右、Ｄ転→♠左、ら下→♦下
-  // 各マークの片方: ♣下→隣島Ｂ、♦上→隣島Ｅ、♥左↔♠右（東西のマーク同士）
+  // 本島転Ａ↔♥右、Ｄ転↔♠左。♥左↔♦上、♠右↔♣下。♣上↔Ｂ、♦下↔Ｅ
   const byPos = new Map(warps.map((w) => [`${w.col},${w.row}`, w]));
   const pairs = [
-    ['14,5', '18,7'],  // 本島上（ら）↔ クローバー上（Ｊ）
-    ['11,7', '8,4'],   // 本島転Ａ ↔ ハート右（Ｈ）
-    ['10,9', '13,12'], // 本島Ｄ転 ↔ スペード左（Ｉ）
-    ['7,11', '3,9'],   // 本島下（ら）↔ ダイヤ下（Ｇ）
-    ['18,9', '15,4'],  // クローバー下 ↔ 隣島Ｂ（♣の隣）
-    ['3,7', '6,12'],   // ダイヤ上 ↔ 隣島Ｅ（♦の隣）
-    ['6,4', '15,12'],  // ハート左 ↔ スペード右
+    ['11,7', '8,4'],   // 本島転Ａ ↔ ハート右
+    ['10,9', '13,12'], // 本島Ｄ転 ↔ スペード左
+    ['6,4', '3,7'],    // ハート左 ↔ ダイヤ上
+    ['15,12', '18,9'], // スペード右 ↔ クローバー下
+    ['18,7', '15,4'],  // クローバー上 ↔ 隣島Ｂ
+    ['3,9', '6,12'],   // ダイヤ下 ↔ 隣島Ｅ
   ];
   for (const [a, b] of pairs) {
     const wa = byPos.get(a);

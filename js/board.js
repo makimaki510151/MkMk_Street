@@ -1639,7 +1639,7 @@ export const MAP_CATALOG = [
   {
     id: 'sky_isles',
     name: '空島地帯',
-    blurb: 'ファンタジー空島。本島から4方向のマーク島へ転移、薬品マスあり（ダイス1〜6）',
+    blurb: 'ファンタジー空島。ランダム転移・門・薬品マスあり（ダイス1〜6）',
     defaultGoal: 14000,
     defaultCash: 2200,
     diceMax: 6,

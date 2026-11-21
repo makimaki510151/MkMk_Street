@@ -524,8 +524,13 @@ describe('MkMk Street engine', () => {
     assert.equal(sky.mapName, '空島地帯');
     assert.equal(sky.diceMax, 6);
     assert.ok(sky.nodes.some((n) => n.type === 'potion'));
-    assert.equal(sky.nodes.filter((n) => n.type === 'warp').length, 14);
-    // 本島上から: ら→♣上、転Ａ→♥右、Ｄ転→♠左、ら→♦下
+    assert.equal(sky.nodes.filter((n) => n.type === 'warp').length, 12);
+    assert.equal(sky.nodes.filter((n) => n.type === 'warp_random').length, 2);
+    const gates = sky.nodes.filter((n) => n.type === 'gate');
+    assert.equal(gates.length, 2);
+    assert.equal(gates[0].gateTo, gates[1].id);
+    assert.equal(gates[1].gateTo, gates[0].id);
+    // 本島転Ａ↔♥右、Ｄ転↔♠左。♥左↔♦上、♠右↔♣下。♣上↔Ｂ、♦下↔Ｅ
     const byPos = Object.fromEntries(
       sky.nodes.filter((n) => n.type === 'warp').map((w) => [`${w.col},${w.row}`, w]),
     );
@@ -536,13 +541,63 @@ describe('MkMk Street engine', () => {
       assert.equal(wa.warpTo, wb.id, `${a} -> ${b}`);
       assert.equal(wb.warpTo, wa.id, `${b} -> ${a}`);
     };
-    link('14,5', '18,7');
     link('11,7', '8,4');
     link('10,9', '13,12');
-    link('7,11', '3,9');
-    link('18,9', '15,4');
-    link('3,7', '6,12');
-    link('6,4', '15,12');
+    link('6,4', '3,7');
+    link('15,12', '18,9');
+    link('18,7', '15,4');
+    link('3,9', '6,12');
+
+    // 門：入ると反対側へ飛び残移動
+    const gSky = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 11,
+      mapId: 'sky_isles',
+    });
+    const gateA = gSky.map.find((n) => n.type === 'gate');
+    assert.ok(gateA?.gateTo != null);
+    const gateB = getNode(gSky, gateA.gateTo);
+    assert.ok(gateB && gateB.type === 'gate');
+    const neighbor = gateA.nexts[0];
+    assert.ok(neighbor != null);
+    gSky.players[0].pos = neighbor;
+    gSky.players[0].prevPos = null;
+    gSky.move = { stepsLeft: 3, path: [], passedBank: false, startPos: gSky.startId };
+    gSky.phase = 'moving';
+    const forked = advanceMove(gSky);
+    assert.equal(forked.forked, true);
+    const gateStep = chooseFork(gSky, gateA.id);
+    assert.equal(gateStep.ok, true);
+    assert.equal(gateStep.gate, true);
+    assert.equal(gSky.players[0].pos, gateB.id);
+    assert.equal(gSky.move.stepsLeft, 2);
+
+    // ランダム転移：小島の転移マスへ
+    const rand = gSky.map.find((n) => n.type === 'warp_random');
+    assert.ok(rand);
+    gSky.players[0].pos = rand.id;
+    gSky.players[0].prevPos = null;
+    gSky.move = { stepsLeft: 0, path: [rand.id], passedBank: false, startPos: gSky.startId };
+    gSky.phase = 'moving';
+    const randLand = advanceMove(gSky);
+    assert.equal(randLand.ok, true);
+    const after = getNode(gSky, gSky.players[0].pos);
+    assert.equal(after.type, 'warp');
+    // 本島の転送マスではない（小島側）
+    const mainlandIds = new Set();
+    {
+      const q = [gSky.startId];
+      mainlandIds.add(gSky.startId);
+      while (q.length) {
+        const id = q.shift();
+        for (const nid of getNode(gSky, id).nexts || []) {
+          if (mainlandIds.has(nid)) continue;
+          mainlandIds.add(nid);
+          q.push(nid);
+        }
+      }
+    }
+    assert.equal(mainlandIds.has(after.id), false);
 
     const mine = buildBoard('greed_mine');
     assert.equal(mine.mapName, '強欲鉱山');

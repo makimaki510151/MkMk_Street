@@ -1158,7 +1158,7 @@ export function shopTooltip(g, sq) {
     return `${sq.label} — 止まると${dest ? `「${dest.label}」へ` : ''}ワープ`;
   }
   if (sq.type === 'warp_random') {
-    return `${sq.label} — 止まると反対ゾーンの転送マスへランダム転移`;
+    return `${sq.label} — 止まると小島のいずれかの転移マスへランダム転移`;
   }
   if (sq.type === 'shaft') {
     return sq.shaft === 'down'
@@ -1178,7 +1178,7 @@ export function shopTooltip(g, sq) {
     return `${sq.label} — 止まると薬品効果（5種を順に消化）`;
   }
   if (sq.type === 'gate') {
-    return `${sq.label} — 島の入口（効果なし）`;
+    return `${sq.label} — 入ると反対側の門へ飛び、残りの出目で移動継続`;
   }
   if (sq.type === 'switch') {
     const st = g.switchState ? 2 : 1;
