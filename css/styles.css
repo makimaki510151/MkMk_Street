@@ -899,12 +899,13 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .player-card {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: var(--surface);
   border: 1px solid var(--line);
   border-left: 3px solid var(--pc);
   border-radius: var(--radius-sm);
   padding: 0.58rem 0.7rem;
+  min-width: 0;
 }
 .player-card.active {
   background: color-mix(in srgb, var(--pc) 12%, var(--surface));
@@ -1002,8 +1003,26 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .pc-assets { color: var(--accent-strong); font-size: 0.8rem; font-weight: 700; }
 .pc-sub { font-size: 0.7rem; color: var(--muted); }
-.pc-marks { display: flex; gap: 0.22rem; margin-top: 0.2rem; flex-wrap: wrap; align-items: center; }
-.mark { opacity: 0.22; }
+.pc-marks {
+  display: flex;
+  gap: 0.22rem;
+  margin-top: 0.28rem;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 1.25rem;
+  line-height: 1.2;
+}
+.pc-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-top: 0.28rem;
+}
+.mark {
+  opacity: 0.22;
+  font-size: 0.95rem;
+  flex: 0 0 auto;
+}
 .mark.on { opacity: 1; color: var(--accent); }
 .pc-wilds {
   display: inline-flex;
@@ -4120,4 +4139,117 @@ body.your-turn #btn-roll:not(:disabled) {
   .results-legend { gap: 0.35rem 0.65rem; }
   .rs-table { min-width: 640px; }
   .ra-table { min-width: 480px; }
+}
+
+/* Soft celebration bloom (jackpot / monopoly) */
+#celebrate-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+#celebrate-fx[hidden] { display: none !important; }
+#celebrate-fx.show { opacity: 1; }
+#celebrate-fx .cfx-bloom {
+  position: absolute;
+  inset: -10
+/* Soft celebration bloom (jackpot / monopoly) */
+#celebrate-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+#celebrate-fx[hidden] { display: none !important; }
+#celebrate-fx.show { opacity: 1; }
+#celebrate-fx .cfx-bloom {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(ellipse 55% 40% at 50% 42%, color-mix(in srgb, var(--cfx, #ffe08a) 38%, transparent), transparent 70%),
+    radial-gradient(ellipse 70% 50% at 50% 55%, rgba(255, 248, 230, 0.16), transparent 72%);
+  animation: cfxBloom 2.1s ease-out forwards;
+}
+#celebrate-fx[data-variant="jackpot"] .cfx-bloom {
+  background:
+    radial-gradient(ellipse 60% 42% at 50% 40%, color-mix(in srgb, var(--cfx, #ffe08a) 42%, transparent), transparent 68%),
+    radial-gradient(ellipse 80% 55% at 50% 60%, rgba(255, 236, 190, 0.18), transparent 75%);
+}
+#celebrate-fx[data-variant="monopoly"] .cfx-bloom {
+  background:
+    radial-gradient(ellipse 58% 44% at 50% 45%, color-mix(in srgb, var(--cfx, #c4a574) 36%, transparent), transparent 70%),
+    radial-gradient(ellipse 75% 50% at 50% 58%, rgba(255, 244, 220, 0.14), transparent 74%);
+}
+@keyframes cfxBloom {
+  0% { opacity: 0; transform: scale(0.92); }
+  18% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.06); }
+}
+#celebrate-fx .cfx-sparkles {
+  position: absolute;
+  inset: 18% 12%;
+  pointer-events: none;
+}
+#celebrate-fx .cfx-sparkles span {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cfx, #ffe08a) 70%, #fff);
+  opacity: 0;
+  animation: cfxSpark 1.8s ease-out forwards;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cfx, #ffe08a) 45%, transparent);
+}
+#celebrate-fx .cfx-sparkles span:nth-child(1) { left: 12%; top: 28%; animation-delay: 0.05s; }
+#celebrate-fx .cfx-sparkles span:nth-child(2) { left: 78%; top: 22%; animation-delay: 0.12s; }
+#celebrate-fx .cfx-sparkles span:nth-child(3) { left: 22%; top: 68%; animation-delay: 0.18s; }
+#celebrate-fx .cfx-sparkles span:nth-child(4) { left: 70%; top: 62%; animation-delay: 0.24s; }
+#celebrate-fx .cfx-sparkles span:nth-child(5) { left: 48%; top: 16%; animation-delay: 0.1s; }
+#celebrate-fx .cfx-sparkles span:nth-child(6) { left: 54%; top: 74%; animation-delay: 0.28s; }
+@keyframes cfxSpark {
+  0% { opacity: 0; transform: translateY(6px) scale(0.4); }
+  25% { opacity: 0.85; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-18px) scale(0.7); }
+}
+#celebrate-fx .cfx-copy {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 0.85rem 1.25rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, #1a1612 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cfx, #ffe08a) 35%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  animation: cfxCopy 2s ease-out forwards;
+  max-width: min(88vw, 360px);
+}
+@keyframes cfxCopy {
+  0% { opacity: 0; transform: translateY(10px) scale(0.96); }
+  16% { opacity: 1; transform: translateY(0) scale(1); }
+  78% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+#celebrate-fx .cfx-title {
+  font-family: var(--display);
+  font-size: clamp(1.15rem, 3.2vw, 1.55rem);
+  font-weight: 800;
+  color: color-mix(in srgb, var(--cfx, #ffe08a) 82%, #fff);
+  letter-spacing: 0.04em;
+}
+#celebrate-fx .cfx-detail {
+  margin-top: 0.3rem;
+  font-size: 0.88rem;
+  color: #f2e8d4;
+  opacity: 0.9;
+}
+.lobby-guest-map {
+  margin: 0.65rem 0 0.35rem;
 }

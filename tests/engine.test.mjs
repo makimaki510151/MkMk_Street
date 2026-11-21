@@ -34,8 +34,6 @@ import {
   rollDice,
   getMoveDiceMax,
   MOVE_DICE_MAX_DEFAULT,
-  MOVE_DICE_MAX_LARGE,
-  LARGE_MAP_AREA_THRESHOLD,
   advanceMove,
   applyChoice,
   chooseFork,
@@ -149,11 +147,12 @@ describe('MkMk Street engine', () => {
     assert.ok(ids.has('central_cross'));
     assert.ok(ids.has('shell_harbor'));
     assert.ok(ids.has('cliff_isle'));
-    assert.ok(ids.has('bin'));
-    assert.ok(ids.has('thumbs_up'));
+    assert.ok(!ids.has('bin'));
+    assert.ok(!ids.has('thumbs_up'));
     assert.ok(ids.has('torima'));
     assert.ok(ids.has('bullet'));
     assert.ok(ids.has('tagai'));
+    assert.equal(MAP_CATALOG.find((m) => m.id === 'torima')?.name, 'アーチ');
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -490,57 +489,25 @@ describe('MkMk Street engine', () => {
     assert.ok(rimEnds.length >= 4, `expected rim gaps to break the outer loop, ends=${rimEnds.length}`);
   });
 
-  it('builds the bottle-shaped bin map with warps and 13 areas', () => {
-    const board = buildBoard('bin');
-    assert.equal(board.mapId, 'bin');
-    assert.equal(board.mapName, '瓶');
-    assert.equal(board.cols, 9);
-    assert.equal(board.rows, 14);
-    assert.equal(Object.keys(board.areas).length, 13);
-    for (const a of Object.keys(board.areas).map(Number)) {
-      const shops = board.nodes.filter((n) => n.type === 'shop' && n.area === a);
-      assert.equal(shops.length, 4, `area ${a}`);
-    }
-    const warps = board.nodes.filter((n) => n.type === 'warp');
-    assert.equal(warps.length, 2);
-    assert.equal(warps[0].warpTo, warps[1].id);
-    assert.equal(warps[1].warpTo, warps[0].id);
-    assert.ok(board.nodes.some((n) => n.type === 'suit_fill'));
-    assert.ok(board.nodes.some((n) => n.type === 'lucky'));
-    assert.ok(board.nodes.filter((n) => n.type === 'minigame').length >= 2);
-    const bank = board.nodes.find((n) => n.type === 'bank');
-    assert.equal(bank?.col, 4);
-    assert.equal(bank?.row, 0);
+  it('removed bin and thumbs_up from selectable catalog', () => {
+    const ids = new Set(MAP_CATALOG.map((m) => m.id));
+    assert.ok(!ids.has('bin'));
+    assert.ok(!ids.has('thumbs_up'));
+    // 旧IDで build してもカタログ先頭（中央クロス）にフォールバック
+    const fallback = buildBoard('bin');
+    assert.equal(fallback.mapId, 'central_cross');
   });
 
-  it('builds the thumbs-up map with 19 areas and no dead ends', () => {
-    const board = buildBoard('thumbs_up');
-    assert.equal(board.mapId, 'thumbs_up');
-    assert.equal(board.mapName, 'サムズアップ');
-    assert.equal(board.cols, 21);
-    assert.equal(board.rows, 18);
-    assert.equal(Object.keys(board.areas).length, 19);
-    for (const a of Object.keys(board.areas).map(Number)) {
-      const shops = board.nodes.filter((n) => n.type === 'shop' && n.area === a);
-      assert.ok(shops.length >= 4 && shops.length <= 5, `area ${a}: ${shops.length}`);
-    }
-    assert.equal(
-      board.nodes.filter((n) => n.type === 'shop' && n.area === 18).length,
-      5,
-      'thumb tip area has 5 shops',
-    );
-    assert.ok(board.nodes.some((n) => n.type === 'lucky'));
-    assert.ok(board.nodes.some((n) => n.type === 'rollon'));
-    assert.ok(board.nodes.some((n) => n.type === 'scratch'));
-    assert.ok(board.nodes.filter((n) => n.type === 'minigame').length >= 2);
-    assert.ok(board.nodes.filter((n) => n.type === 'event').length >= 3);
-    assert.equal(board.nodes.filter((n) => n.type === 'mark').length, 4);
-    const bank = board.nodes.find((n) => n.type === 'bank');
-    assert.equal(bank?.col, 5);
-    assert.equal(bank?.row, 8);
-    for (const n of board.nodes) {
-      assert.ok((n.nexts?.length || 0) >= 2, `${n.type}:${n.label} deg=${n.nexts?.length || 0}`);
-    }
+  it('keeps arch (torima) and tagai dice faces in catalog', () => {
+    const arch = MAP_CATALOG.find((m) => m.id === 'torima');
+    const tagai = MAP_CATALOG.find((m) => m.id === 'tagai');
+    assert.equal(arch?.name, 'アーチ');
+    assert.equal(arch?.diceMax, 7);
+    assert.equal(tagai?.diceMax, 8);
+    const archBoard = buildBoard('torima');
+    assert.equal(archBoard.mapName, 'アーチ');
+    assert.equal(archBoard.diceMax, 7);
+    assert.equal(buildBoard('tagai').diceMax, 8);
   });
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {
@@ -1069,37 +1036,42 @@ describe('MkMk Street engine', () => {
     assert.ok(g.pending.options.length >= 2);
   });
 
-  it('uses d10 move dice on maps with 11+ areas, otherwise d6', () => {
-    const small = createGame({
+  it('uses per-map move dice faces from board.diceMax', () => {
+    const cross = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 1,
       mapId: 'central_cross',
     });
-    assert.ok(Object.keys(small.areas).length < LARGE_MAP_AREA_THRESHOLD);
-    assert.equal(getMoveDiceMax(small), MOVE_DICE_MAX_DEFAULT);
+    assert.equal(getMoveDiceMax(cross), 6);
 
-    const large = createGame({
+    const arch = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 1,
-      mapId: 'bin',
+      mapId: 'torima',
     });
-    assert.ok(Object.keys(large.areas).length >= LARGE_MAP_AREA_THRESHOLD);
-    assert.equal(getMoveDiceMax(large), MOVE_DICE_MAX_LARGE);
+    assert.equal(getMoveDiceMax(arch), 7);
+
+    const tagai = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 1,
+      mapId: 'tagai',
+    });
+    assert.equal(getMoveDiceMax(tagai), 8);
 
     let sawHigh = false;
     for (let seed = 1; seed <= 80 && !sawHigh; seed++) {
       const g = createGame({
         players: [{ name: 'A' }, { name: 'B' }],
         seed,
-        mapId: 'thumbs_up',
+        mapId: 'torima',
       });
       const r = rollDice(g);
       assert.equal(r.ok, true);
-      assert.equal(r.diceMax, MOVE_DICE_MAX_LARGE);
-      assert.ok(r.dice >= 1 && r.dice <= MOVE_DICE_MAX_LARGE);
+      assert.equal(r.diceMax, 7);
+      assert.ok(r.dice >= 1 && r.dice <= 7);
       if (r.dice > MOVE_DICE_MAX_DEFAULT) sawHigh = true;
     }
-    assert.ok(sawHigh, 'expected at least one roll above 6 on a large map');
+    assert.ok(sawHigh, 'expected at least one roll above 6 on arch (d7)');
   });
 
   it('continues movement after choosing a fork', () => {
@@ -1936,6 +1908,8 @@ describe('MkMk Street engine', () => {
   it('torima map builds with holiday squares that close own shops for one turn', () => {
     const board = buildBoard('torima');
     assert.equal(board.mapId, 'torima');
+    assert.equal(board.mapName, 'アーチ');
+    assert.equal(board.diceMax, 7);
     assert.equal(board.cols, 19);
     assert.equal(board.rows, 11);
     assert.equal(Object.keys(board.areas).length, 10);

@@ -67,6 +67,8 @@ export function createRenderer(canvas) {
   /** 株購入中に盤面で強調するエリア番号（null=特定エリアなし＝通常表示のまま） */
   let stockHighlightArea = null;
   let stockHighlightMode = false;
+  /** 増資選択中に強調する店ID（出目ハイライトとは別色） */
+  let investHighlightShopId = null;
   /** 出目ネタバレ防止中は着地候補を出さない */
   let hideDiceResult = false;
   /** 1 = 全体フィット。拡大時は pan で移動 */
@@ -779,6 +781,22 @@ export function createRenderer(canvas) {
         ctx.restore();
       }
 
+      // 増資選択：琥珀色の内側グロー（出目のシアン縁とは別）
+      if (investHighlightShopId != null && n.id === investHighlightShopId) {
+        ctx.save();
+        const pulse = 0.28 + Math.sin(anim.pulse * 1.15) * 0.14;
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = '#f0c878';
+        roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
+        ctx.fill();
+        ctx.globalAlpha = 0.55 + Math.sin(anim.pulse) * 0.2;
+        ctx.strokeStyle = '#ffe6a8';
+        ctx.lineWidth = Math.max(2.5, size * 0.07);
+        roundRect(ctx, x + pad - 1.5, y + pad - 1.5, size - pad * 2 + 3, size - pad * 2 + 3, r + 1);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.strokeStyle = forkOpt ? '#ffe08a' : (areaHot && stockHighlightArea != null ? '#fffef5' : stroke);
       ctx.lineWidth = forkOpt ? 4 : (areaHot && stockHighlightArea != null ? 3.5 : (owner ? 3.5 : 1.5));
       roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, r);
@@ -980,6 +998,15 @@ export function createRenderer(canvas) {
     stockHighlightArea = null;
   }
 
+  /** @param {number|null} shopId 増資で選択中の店。出目ハイライトとは別演出 */
+  function setInvestHighlight(shopId) {
+    investHighlightShopId = shopId == null ? null : Number(shopId);
+  }
+
+  function clearInvestHighlight() {
+    investHighlightShopId = null;
+  }
+
   return {
     resize,
     draw,
@@ -991,6 +1018,8 @@ export function createRenderer(canvas) {
     animateTileSlide,
     setStockHighlight,
     clearStockHighlight,
+    setInvestHighlight,
+    clearInvestHighlight,
     setHideDiceResult,
     getZoom,
     setZoom,

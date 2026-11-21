@@ -105,6 +105,8 @@ const app = {
   localSeat: 0,
   localName: '',
   lobbyPlayers: [],
+  /** ロビーで選択中のマップ（ゲスト同期用） */
+  lobbyMapId: DEFAULT_MAP_ID,
   /** 自分が選んだロビー色 */
   lobbyColor: PLAYER_COLORS[0],
   /** 開始前の順番決めダイス状態 */
@@ -371,6 +373,37 @@ function renderColorPicker(box, selected, opts = {}) {
   });
 }
 
+function currentLobbyMapId() {
+  return selectedMapId('#lobby-map-options') || app.lobbyMapId || DEFAULT_MAP_ID;
+}
+
+function broadcastLobbySync(extra = {}) {
+  if (app.mode !== 'host' || !app.net) return;
+  const mapId = extra.mapId || currentLobbyMapId();
+  app.lobbyMapId = mapId;
+  app.net.broadcast({
+    type: 'lobby_sync',
+    players: app.lobbyPlayers,
+    mapId,
+    ...extra,
+  });
+}
+
+function applyLobbyMapPreview(mapId) {
+  const id = mapId || DEFAULT_MAP_ID;
+  app.lobbyMapId = id;
+  updateMapPreview(id, {
+    canvasId: 'lobby-map-preview',
+    nameId: 'lobby-map-preview-name',
+  });
+  const guestName = $('#lobby-guest-map-name');
+  if (guestName) guestName.textContent = getMapDefName(id);
+  updateMapPreview(id, {
+    canvasId: 'lobby-guest-map-preview',
+    nameId: 'lobby-guest-map-name',
+  });
+}
+
 function applyLocalLobbyColor(color) {
   const next = normalizePlayerColor(color, 0, []);
   app.lobbyColor = next;
@@ -383,7 +416,7 @@ function applyLocalLobbyColor(color) {
     renderLobbyPlayers();
     refreshLobbyColorPicker();
     if (app.mode === 'host' && app.net) {
-      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+      broadcastLobbySync();
     } else if (app.mode === 'guest' && app.net) {
       app.net.sendToHost({ type: 'lobby_color', color: next, peerId: app.net.peerId });
     }
@@ -418,7 +451,7 @@ function setHostPlayerColor(peerId, color) {
   resyncLobbyColors();
   renderLobbyPlayers();
   refreshLobbyColorPicker();
-  app.net?.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+  broadcastLobbySync();
 }
 
 function clearDisconnectTimer(seat) {
@@ -1000,6 +1033,7 @@ function renderMapPicker(containerId, preferredId = DEFAULT_MAP_ID, goalInputId 
       if (cashInput && def.defaultCash != null) cashInput.value = String(def.defaultCash);
     }
     if (preview) updateMapPreview(def.id, preview);
+    if (typeof preview?.onChange === 'function') preview.onChange(def.id);
   };
   box.querySelectorAll('input[name="map-id"]').forEach((el) => {
     el.addEventListener('change', syncMapDefaults);
@@ -1136,17 +1170,23 @@ async function openLobby(role, prefill = {}) {
   $('#lobby-code-display').textContent = '------';
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
+  const guestMap = $('#lobby-guest-map');
+  if (guestMap) guestMap.hidden = role === 'host';
+  app.lobbyMapId = DEFAULT_MAP_ID;
   if (role === 'host') {
     renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash', {
       canvasId: 'lobby-map-preview',
       nameId: 'lobby-map-preview-name',
+      onChange: (mapId) => {
+        applyLobbyMapPreview(mapId);
+        broadcastLobbySync({ mapId });
+      },
     });
     requestAnimationFrame(() => {
-      updateMapPreview(selectedMapId('#lobby-map-options'), {
-        canvasId: 'lobby-map-preview',
-        nameId: 'lobby-map-preview-name',
-      });
+      applyLobbyMapPreview(selectedMapId('#lobby-map-options'));
     });
+  } else {
+    applyLobbyMapPreview(DEFAULT_MAP_ID);
   }
   const nameInput = $('#lobby-name');
   const savedName = loadSavedPlayerName();
@@ -1250,7 +1290,7 @@ async function openLobby(role, prefill = {}) {
         }];
         renderLobbyPlayers();
         refreshLobbyColorPicker();
-        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        broadcastLobbySync();
         setStatus(`部屋 ${info.roomCode} を公開中。建て直すときは「部屋を解体」`, 'ok');
       } else {
         const rejoinSeat = readRejoinSession(roomInput);
@@ -1303,7 +1343,7 @@ async function openLobby(role, prefill = {}) {
     });
     resyncLobbyColors();
     renderLobbyPlayers();
-    app.net?.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+    broadcastLobbySync();
   };
 
   $('#btn-copy-code').onclick = async () => {
@@ -1395,7 +1435,7 @@ function handleNetEvent({ from, data }) {
           reclaimOrPushLobbyPlayer(from, data);
           resyncLobbyColors();
           renderLobbyPlayers();
-          app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+          broadcastLobbySync();
           app.net.sendTo(from, {
             type: 'order_roll_sync',
             ...serializeOrderRoll(),
@@ -1415,7 +1455,7 @@ function handleNetEvent({ from, data }) {
       }
       resyncLobbyColors();
       renderLobbyPlayers();
-      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+      broadcastLobbySync();
       return;
     }
     if (data.type === 'lobby_color') {
@@ -1427,7 +1467,7 @@ function handleNetEvent({ from, data }) {
       app.lobbyPlayers[idx].color = normalizePlayerColor(data.color, idx, others);
       resyncLobbyColors();
       renderLobbyPlayers();
-      app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+      broadcastLobbySync();
       return;
     }
     if (data.type === 'order_roll_claim') {
@@ -1485,7 +1525,7 @@ function handleNetEvent({ from, data }) {
       if (!app.game) {
         app.lobbyPlayers = app.lobbyPlayers.filter((p) => p.peerId !== data.peerId);
         renderLobbyPlayers();
-        app.net.broadcast({ type: 'lobby_sync', players: app.lobbyPlayers });
+        broadcastLobbySync();
         return;
       }
       const seat = app.game.players.findIndex((p) => p.peerId === data.peerId);
@@ -1506,6 +1546,9 @@ function handleNetEvent({ from, data }) {
     if (data.type === 'lobby_sync') {
       app.lobbyPlayers = normalizeLobbyColors(data.players || []);
       renderLobbyPlayers();
+      if (data.mapId) applyLobbyMapPreview(data.mapId);
+      const guestWrap = $('#lobby-guest-map');
+      if (guestWrap) guestWrap.hidden = false;
       return;
     }
     if (data.type === 'lobby_full') {
@@ -1675,6 +1718,12 @@ function playRemoteFx(data) {
   if (data.kind === 'monopoly') {
     audio.sfx.monopoly();
     if (data.payload) enqueueBanner(data.payload);
+    presentCelebrateFx({
+      title: data.payload?.kicker || 'エリア独占！',
+      detail: [data.payload?.title, data.payload?.detail].filter(Boolean).join(' — '),
+      color: data.payload?.color || '#ffe08a',
+      variant: 'monopoly',
+    });
   }
   if (data.kind === 'monopolyBreak') {
     audio.sfx.toll();
@@ -1730,6 +1779,33 @@ function presentFiveBuyFx(result = {}) {
   }
 }
 
+/** 目に優しいソフトな祝福演出（ジャックポット／独占など） */
+function presentCelebrateFx({
+  title = 'おめでとう！',
+  detail = '',
+  color = '#ffe08a',
+  variant = 'soft',
+} = {}) {
+  const root = $('#celebrate-fx');
+  if (!root) return;
+  root.hidden = false;
+  root.dataset.variant = variant;
+  root.style.setProperty('--cfx', color);
+  const titleEl = root.querySelector('.cfx-title');
+  const detailEl = root.querySelector('.cfx-detail');
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail || '';
+  root.classList.remove('show');
+  // reflow して再アニメ
+  void root.offsetWidth;
+  root.classList.add('show');
+  clearTimeout(presentCelebrateFx._t);
+  presentCelebrateFx._t = setTimeout(() => {
+    root.classList.remove('show');
+    root.hidden = true;
+  }, 2200);
+}
+
 function presentMonopolyFx(result) {
   if (!result?.monopoly || !app.game) return;
   const who = app.game.players.find((p) => p.flags?.monopolyBonusClaimed?.[result.area])
@@ -1747,6 +1823,12 @@ function presentMonopolyFx(result) {
   };
   broadcastFx({ kind: 'monopoly', payload, area: result.area, bonus });
   enqueueBanner(payload);
+  presentCelebrateFx({
+    title: 'エリア独占！',
+    detail: bonus ? `${areaName} +${bonus.toLocaleString()}G` : areaName,
+    color: who?.color || '#ffe08a',
+    variant: 'monopoly',
+  });
 }
 
 function presentMonopolyBreakFx(result) {
@@ -2286,12 +2368,10 @@ function startLocal(seats) {
   const demo = params.get('demo');
   const mapFromDemo = demo === 'map-cliff' ? 'cliff_isle'
     : demo === 'map-shell' ? 'shell_harbor'
-      : demo === 'map-bin' ? 'bin'
-      : demo === 'map-thumbs-up' ? 'thumbs_up'
-        : demo === 'map-torima' ? 'torima'
-          : demo === 'map-bullet' ? 'bullet'
-            : demo === 'map-tagai' ? 'tagai'
-              : params.get('map');
+      : demo === 'map-torima' || demo === 'map-arch' ? 'torima'
+        : demo === 'map-bullet' ? 'bullet'
+          : demo === 'map-tagai' ? 'tagai'
+            : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);
@@ -3310,6 +3390,19 @@ function bindBoardZoomControls(canvas) {
     app.inspectedId = hit.id;
     updateInspectPanel();
     if (app.busy || app.forkResolving) return;
+    // 株購入モーダル中：店マス直クリックでエリア選択
+    if (
+      app.game.phase === 'await_choice'
+      && app.game.pending?.type === 'stock'
+      && hit.type === 'shop'
+      && hit.area != null
+    ) {
+      const card = document.querySelector(`.stock-card[data-area="${hit.area}"]`);
+      if (card && !card.disabled) {
+        card.click();
+        return;
+      }
+    }
     if (app.game.phase === 'await_fork' && app.game.pending?.type === 'fork') {
       const mine = app.mode === 'local'
         ? !app.game.players[app.game.pending.playerId]?.isCPU
@@ -3758,7 +3851,7 @@ async function playDiceOverlay(face, remote = false) {
   const overlay = $('#dice-overlay');
   const faceEl = $('#dice-overlay-face');
   const label = $('#dice-overlay-label');
-  const diceMax = Math.max(6, Number(getMoveDiceMax(app.game)) || 6);
+  const diceMax = Math.max(2, Number(getMoveDiceMax(app.game)) || 6);
   app.hideDiceResult = true;
   overlay.hidden = false;
   overlay.classList.remove('landed');
@@ -4265,8 +4358,22 @@ async function playMinigameReveal(reveal) {
 
   if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
     audio.sfx.slotWin(true);
+    presentCelebrateFx({
+      title: reveal.title || 'ジャックポット！',
+      detail: summarizeMinigameResults(reveal) || '',
+      color: reveal.playerColor || '#ffe08a',
+      variant: 'jackpot',
+    });
   } else if (reveal.win) {
     audio.sfx.slotWin(false);
+    if (reveal.tier === 'fullhouse' || reveal.tier === 'win') {
+      presentCelebrateFx({
+        title: reveal.title || '大当たり！',
+        detail: summarizeMinigameResults(reveal) || '',
+        color: reveal.playerColor || '#9ef0c8',
+        variant: 'soft',
+      });
+    }
   } else {
     audio.sfx.buy();
   }
@@ -5066,6 +5173,7 @@ function refreshGameUI() {
   const box = $('#players-panel');
   box.innerHTML = g.players.map((p) => {
     const a = getPlayerAssets(g, p);
+    const shopCount = g.map.filter((s) => s.type === 'shop' && s.owner === p.id).length;
     const marks = SUIT_LABELS.map((s, i) => `<span class="mark ${p.marks[i] ? 'on' : ''}">${s}</span>`).join('');
     const wildN = Math.max(0, Math.floor(Number(p.wildcards) || 0));
     const wilds = wildN > 0
@@ -5114,9 +5222,10 @@ function refreshGameUI() {
         <div class="pc-head"><span class="pc-dot"></span><strong>${escapeHtml(p.name)}</strong>${myTurnCard ? '<span class="pc-turn-badge">あなたの番</span>' : ''}<span class="pc-lv">Lv.${p.level}</span></div>
         <div class="pc-money${a.cash < 0 ? ' debt' : ''}" data-cash="${a.cash}">${a.cash.toLocaleString()}G</div>
         <div class="pc-assets">総資産 ${a.total.toLocaleString()}G</div>
-        <div class="pc-sub">店 ${a.shopAsset.toLocaleString()} / 株 ${a.stockAsset.toLocaleString()}</div>
+        <div class="pc-sub">店 ${shopCount}軒 · ${a.shopAsset.toLocaleString()}G / 株 ${a.stockAsset.toLocaleString()}G</div>
         ${stockLine}
-        <div class="pc-marks">${marks}${wilds}${status}</div>
+        <div class="pc-marks">${marks}${wilds}</div>
+        ${status ? `<div class="pc-status">${status}</div>` : ''}
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
     `;
@@ -6695,16 +6804,21 @@ function showChoiceModal(g) {
 
     body.innerHTML = `
       ${hasHalf ? '<div class="invest-half-banner" role="status">増資半額クーポン適用中 — 今回の増資支払いが半分</div>' : ''}
-      <p class="hint">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}好きな自分の店へ増資できます</p>
+      <p class="hint">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}好きな自分の店へ増資できます（選択店は盤面で琥珀色に光ります）</p>
       <div class="pick-invest-list invest-pick-list">${rows || '<p class="hint">所持店がありません</p>'}</div>
       <div id="invest-amount-panel"></div>`;
+    const syncInvestHighlight = () => {
+      app.renderer?.setInvestHighlight(selectedId);
+    };
     $$('.invest-pick-shop').forEach((btn) => {
       btn.onclick = () => {
         selectedId = Number(btn.dataset.shop);
         $$('.invest-pick-shop').forEach((b) => b.classList.toggle('selected', Number(b.dataset.shop) === selectedId));
+        syncInvestHighlight();
         renderAmount();
       };
     });
+    syncInvestHighlight();
     renderAmount();
     return;
   }
@@ -7044,7 +7158,7 @@ function showChoiceModal(g) {
     }).join('');
 
     body.innerHTML = `
-      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。カードに触れると盤面のそのエリアの店が光ります（マス表記は通常のまま）。</p>
+      <p class="hint">1種類だけ選べます。枚数は下の入力欄で指定（所持金 ${Number(p?.cash || 0).toLocaleString()}G）。盤面の店を直接クリックするか、カードに触れるとそのエリアが光ります。</p>
       <div class="stock-grid">${cards}</div>
       <div id="stock-buy-panel" class="stock-buy-panel" hidden>
         <label class="field">枚数 <input type="number" id="m-stock-count" min="1" value="1" /></label>
@@ -7397,6 +7511,7 @@ function hideModal() {
   card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'wide');
   $('#modal')?.classList.remove('centered');
   app.renderer?.clearStockHighlight();
+  app.renderer?.clearInvestHighlight();
 }
 
 function buildResultsExportPayload(g, results) {
