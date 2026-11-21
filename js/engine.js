@@ -29,6 +29,9 @@ import {
   remainingInvest as remainingInvestOf,
 } from './investLimits.js';
 
+/** 移動ダイス面数の既定値（マップ未指定時） */
+export const MOVE_DICE_MAX_DEFAULT = 6;
+
 /** ロビー／席で選べるプレイヤー色（暗い盤面でも見分けやすい高彩度・色相分散） */
 export const PLAYER_COLORS = [
   '#FF4455', // あか
@@ -85,60 +88,60 @@ export const CPU_PERSONALITY_KEYS = ['tycoon', 'broker', 'magnate', 'gambler'];
 export const CPU_PERSONALITIES = {
   tycoon: {
     label: '店舗王',
-    shopBuy: 1.28,
+    shopBuy: 1.55,
     fiveBuy: 0.48,
     investRate: 0.4,
     stockBudget: 0.22,
-    vacant: 3.1,
-    ownArea: 2.35,
+    vacant: 4.2,
+    ownArea: 2.55,
     enemyToll: -2.9,
     bank: 0.7,
-    mark: 0.75,
+    mark: 1.55,
     stockbroker: 0.3,
     scratch: 0.4,
     minigame: 0.45,
   },
   broker: {
     label: '株マニア',
-    shopBuy: 0.48,
+    shopBuy: 0.85,
     fiveBuy: 0.16,
     investRate: 0.16,
     stockBudget: 0.64,
-    vacant: 0.95,
-    ownArea: 1.45,
+    vacant: 2.1,
+    ownArea: 1.55,
     enemyToll: -3.35,
     bank: 1.75,
-    mark: 0.5,
+    mark: 1.35,
     stockbroker: 2.85,
     scratch: 0.45,
     minigame: 0.4,
   },
   magnate: {
     label: '独占屋',
-    shopBuy: 1.12,
+    shopBuy: 1.38,
     fiveBuy: 0.68,
     investRate: 0.5,
     stockBudget: 0.3,
-    vacant: 1.85,
-    ownArea: 3.7,
+    vacant: 3.0,
+    ownArea: 3.9,
     enemyToll: -2.55,
     bank: 1.0,
-    mark: 1.05,
+    mark: 1.85,
     stockbroker: 0.95,
     scratch: 0.8,
     minigame: 0.55,
   },
   gambler: {
     label: '勝負師',
-    shopBuy: 0.78,
+    shopBuy: 1.05,
     fiveBuy: 0.4,
     investRate: 0.24,
     stockBudget: 0.28,
-    vacant: 1.35,
-    ownArea: 1.15,
+    vacant: 2.4,
+    ownArea: 1.35,
     enemyToll: -1.85,
     bank: 0.55,
-    mark: 2.2,
+    mark: 3.1,
     stockbroker: 0.4,
     scratch: 2.4,
     minigame: 2.2,
@@ -414,6 +417,74 @@ const BOARD_EVENTS = [
     grantLucky(p);
     return '他者の買い物料の20%を銀行から受取（次の自分の番まで）';
   }},
+  /** スクラッチと差別化：盤面イベントは「街の出来事」寄り（即時効果・全体影響・状態変化） */
+  { id: 'street_buzz', label: '街の話題', apply: (g, p) => {
+    const n = 90 + p.level * 35;
+    p.cash += n;
+    const areas = Object.keys(g.areas).map(Number);
+    const a = areas[Math.floor(Math.random() * areas.length)];
+    if (g.areas[a]) {
+      g.areas[a].B = Math.min(250, Math.floor((g.areas[a].B || 100) * 1.06));
+      updateAreaStockPrices(g);
+    }
+    return `話題沸騰！ +${n}G／${getAreaCode(g, a)}株↑`;
+  }},
+  { id: 'charity_drive', label: 'チャリティ募金', apply: (g, p) => {
+    let pool = 0;
+    for (const pl of g.players) {
+      if (pl.bankrupt) continue;
+      const take = Math.min(pl.cash, 40 + p.level * 10);
+      pl.cash -= take;
+      pool += take;
+    }
+    const alive = g.players.filter((x) => !x.bankrupt).length;
+    const share = Math.floor(pool / Math.max(1, alive));
+    for (const pl of g.players) {
+      if (pl.bankrupt) continue;
+      pl.cash += share;
+    }
+    return `募金を分け合い 各自+${share}G`;
+  }},
+  { id: 'suit_drop', label: 'スーツ補給', apply: (g, p) => {
+    const empty = [];
+    for (let i = 0; i < 4; i++) if (!p.marks[i]) empty.push(i);
+    if (!empty.length) {
+      p.wildcards = Math.min((p.wildcards || 0) + 1, 3);
+      return 'マーク揃い済み → ワイルド+1';
+    }
+    const idx = empty[Math.floor(Math.random() * empty.length)];
+    p.marks[idx] = true;
+    return `マーク獲得（${['♠', '♥', '♦', '♣'][idx]}）`;
+  }},
+  { id: 'toll_shield', label: '通行守り', apply: (g, p) => {
+    p.flags.tollShield = true;
+    return '次の買い物料が免除';
+  }},
+  { id: 'rival_tax', label: 'ライバル課税', apply: (g, p) => {
+    let total = 0;
+    for (const pl of g.players) {
+      if (pl.bankrupt || pl.id === p.id) continue;
+      const n = Math.min(pl.cash, 60 + p.level * 20);
+      pl.cash -= n;
+      total += n;
+    }
+    p.cash += total;
+    return `他者から徴収 +${total}G`;
+  }},
+  { id: 'shop_boost', label: '看板リニューアル', apply: (g, p) => {
+    const mine = g.map.filter((n) => n.type === 'shop' && n.owner === p.id);
+    if (!mine.length) {
+      const gift = 120 + p.level * 30;
+      p.cash += gift;
+      return `店なし → 支度金 +${gift}G`;
+    }
+    const sq = mine[Math.floor(Math.random() * mine.length)];
+    const add = 80 + p.level * 25;
+    const gained = applyCappedShopBoost(g, sq, add);
+    return gained > 0
+      ? `「${sq.label || sq.name || '店'}」+${gained}G`
+      : '増資枠なし → スキップ';
+  }},
   { id: 'mini_highlow', label: 'ハイ＆ロー', apply: (g, p) => {
     p.flags.pendingMinigame = { game: 'high_low', label: 'ハイ＆ロー' };
     return 'ミニゲーム！';
@@ -482,11 +553,21 @@ export function createGame({
     };
   });
 
+  const mapDef = getMapDef(mapId);
+  const resolvedDiceMax = (() => {
+    const fromBoard = Number(board.diceMax);
+    if (Number.isFinite(fromBoard) && fromBoard >= 2) return Math.floor(fromBoard);
+    const fromCat = Number(mapDef?.diceMax);
+    if (Number.isFinite(fromCat) && fromCat >= 2) return Math.floor(fromCat);
+    return MOVE_DICE_MAX_DEFAULT;
+  })();
+
   const g = {
     map: board.nodes,
     areas: board.areas,
-    mapId: board.mapId || getMapDef(mapId).id,
-    mapName: board.mapName || getMapDef(mapId).name,
+    mapId: board.mapId || mapDef.id,
+    mapName: board.mapName || mapDef.name,
+    diceMax: resolvedDiceMax,
     /** 全員共通のイベント表（1マスずつ誰かがめくる） */
     sharedEventTable: createEventTable((seed >>> 0) + 7771),
     cols: board.cols,
@@ -1497,6 +1578,7 @@ export function serializeState(g) {
     areas: g.areas,
     mapId: g.mapId || DEFAULT_MAP_ID,
     mapName: g.mapName || '',
+    diceMax: getMoveDiceMax(g),
     switchState: g.switchState ? 1 : 0,
     switchGates: g.switchGates || [],
     switchMoves: g.switchMoves || [],
@@ -1557,6 +1639,10 @@ export function restoreState(data) {
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
   g.switchState = g.switchState ? 1 : 0;
+  {
+    const raw = Number(g.diceMax);
+    g.diceMax = Number.isFinite(raw) && raw >= 2 ? Math.floor(raw) : MOVE_DICE_MAX_DEFAULT;
+  }
   applySwitchState(g);
   return g;
 }
@@ -1817,16 +1903,11 @@ export function chooseFork(g, nextId) {
 }
 
 /** エリア数が多いマップは移動ダイスの面数を広げる（11以上 → 1〜10） */
-export const LARGE_MAP_AREA_THRESHOLD = 11;
-export const MOVE_DICE_MAX_DEFAULT = 6;
-export const MOVE_DICE_MAX_LARGE = 10;
-
-export function getMoveDiceMax(gOrAreas) {
-  const areas = gOrAreas?.areas ?? gOrAreas;
-  const count = areas && typeof areas === 'object'
-    ? Object.keys(areas).length
-    : 0;
-  return count >= LARGE_MAP_AREA_THRESHOLD ? MOVE_DICE_MAX_LARGE : MOVE_DICE_MAX_DEFAULT;
+/** マップごとの移動ダイス最大出目（game.diceMax／board.diceMax。未設定時は6） */
+export function getMoveDiceMax(gOrBoard) {
+  const raw = Number(gOrBoard?.diceMax);
+  if (Number.isFinite(raw) && raw >= 2) return Math.floor(raw);
+  return MOVE_DICE_MAX_DEFAULT;
 }
 
 /** サイコロを振る（移動は開始せず、演出後に advanceMove） */
@@ -4164,7 +4245,15 @@ function scoreNodeForCpu(g, p, node, traits, focus, phase) {
     if (phase.trailing && traits.key === 'broker') bank *= 1.3;
     s += bank;
   } else if (node.type === 'mark' || node.type === 'suit_fill') {
-    s += traits.mark * (phase.trailing && traits.key === 'gambler' ? 1.35 : 1);
+    const missing = (p.marks || []).filter((m) => !m).length;
+    const needLvl = missing > 0 || (Number(p.wildcards) || 0) === 0;
+    let markBoost = traits.mark * (needLvl ? 1.85 : 1);
+    if (missing >= 3) markBoost *= 1.55;
+    else if (missing >= 2) markBoost *= 1.3;
+    else if (missing >= 1) markBoost *= 1.15;
+    if (phase.trailing) markBoost *= 1.25;
+    if (traits.key === 'gambler' && phase.trailing) markBoost *= 1.2;
+    s += markBoost;
   } else if (node.type === 'stockbroker') {
     s += traits.stockbroker * (phase.nearGoal ? 0.55 : 1);
   } else if (node.type === 'scratch' || node.type === 'event') {
@@ -4240,22 +4329,29 @@ export function cpuShouldBuyShop(g, p, sq, traits = getCpuPersonality(p)) {
   const focus = cpuFocusAreas(g, p, traits);
   const inFocus = focus.includes(sq.area);
   if (completesMono) return true;
-  if (inFocus && areaCnt >= 1 && vacantLeft <= 2 && traits.shopBuy >= 0.9) return true;
-
-  let desire = traits.shopBuy + areaCnt * 0.42 * Math.min(1.5, traits.ownArea / 2);
-  if (areaCnt >= 1 && vacantLeft <= 2) desire += 0.55;
-  if (inFocus) desire += 0.5 * Math.min(1.3, traits.ownArea / 2.2);
-  if (phase.trailing && traits.shopBuy >= 1) desire += 0.18;
-  if (phase.nearGoal) desire -= 0.55;
-  if (price > p.cash) desire -= 0.35;
-  if (p.cash - price < cpuCashReserve(g, p)) desire -= 0.4;
-
-  if (desire >= 1.08) return true;
-  if (desire < 0.62) return false;
-  if (traits.key === 'gambler') {
-    return cpuNoise(g, p, sq.id + 31) < Math.min(0.88, desire * 0.58);
+  // 空き家は積極購入（フォーカス内・独占寄りはほぼ即決）
+  if (vacantLeft >= 1 && traits.vacant >= 2.0 && traits.shopBuy >= 0.8) {
+    if (inFocus || areaCnt >= 1) return true;
   }
-  return desire >= 0.9;
+  if (inFocus && vacantLeft <= 3 && traits.shopBuy >= 0.8) return true;
+  if (inFocus && areaCnt >= 1 && vacantLeft <= 2 && traits.shopBuy >= 0.75) return true;
+
+  let desire = traits.shopBuy + areaCnt * 0.48 * Math.min(1.6, traits.ownArea / 2);
+  desire += Math.min(1.4, traits.vacant * 0.22);
+  if (areaCnt >= 1 && vacantLeft <= 2) desire += 0.7;
+  if (vacantLeft >= 1) desire += 0.35;
+  if (inFocus) desire += 0.65 * Math.min(1.4, traits.ownArea / 2.2);
+  if (phase.trailing && traits.shopBuy >= 0.85) desire += 0.28;
+  if (phase.nearGoal) desire -= 0.4;
+  if (price > p.cash) desire -= 0.28;
+  if (p.cash - price < cpuCashReserve(g, p)) desire -= 0.32;
+
+  if (desire >= 0.95) return true;
+  if (desire < 0.5) return false;
+  if (traits.key === 'gambler') {
+    return cpuNoise(g, p, sq.id + 31) < Math.min(0.92, desire * 0.62);
+  }
+  return desire >= 0.78;
 }
 
 export function cpuShouldFiveBuy(g, p, pend, traits = getCpuPersonality(p)) {

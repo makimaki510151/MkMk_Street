@@ -200,6 +200,8 @@ function packBoard(nodes, bank, cols, rows, extra = {}) {
     rows,
     mapId: extra.mapId,
     mapName: extra.mapName,
+    /** 移動ダイスの面数（未指定時はカタログ／既定6） */
+    diceMax: extra.diceMax != null ? Math.max(2, Math.floor(Number(extra.diceMax)) || 6) : null,
     switchState: extra.switchState || 0,
     switchGates: extra.switchGates || [],
     switchMoves: extra.switchMoves || [],
@@ -303,6 +305,7 @@ export function buildCentralCross() {
 
   return packBoard(nodes, bank, 11, 11, {
     mapId: 'central_cross',
+    diceMax: 6,
     mapName: '中央クロス',
   });
 }
@@ -418,6 +421,7 @@ export function buildShellHarbor() {
   return packBoard(nodes, bank, 9, 8, {
     mapId: 'shell_harbor',
     mapName: '貝がら港',
+    diceMax: 6,
     goal: 12000,
     initialCash: 2300,
     switchState: 0,
@@ -581,6 +585,7 @@ export function buildCliffIsle() {
   return packBoard(nodes, bank, 12, 7, {
     mapId: 'cliff_isle',
     mapName: 'がけした島',
+    diceMax: 6,
     goal: 14000,
     initialCash: 2100,
     areaOverrides: {
@@ -1159,7 +1164,8 @@ export function buildTorima() {
 
   return packBoard(nodes, bank, 19, gridRows.length, {
     mapId: 'torima',
-    mapName: 'とりま',
+    mapName: 'アーチ',
+    diceMax: 7,
     goal: 13000,
     initialCash: 2200,
     areaOverrides: {
@@ -1356,6 +1362,7 @@ export function buildBullet() {
   return packBoard(nodes, bank, 19, gridRows.length, {
     mapId: 'bullet',
     mapName: '弾丸',
+    diceMax: 6,
     goal: 15000,
     initialCash: 2100,
     areaOverrides: {
@@ -1541,6 +1548,7 @@ export function buildTagai() {
   return packBoard(nodes, bank, 19, gridRows.length, {
     mapId: 'tagai',
     mapName: '田改',
+    diceMax: 8,
     goal: 16000,
     initialCash: 2200,
     areaOverrides: {
@@ -1566,65 +1574,55 @@ export const MAP_CATALOG = [
   {
     id: 'central_cross',
     name: '中央クロス',
-    blurb: '銀行中心の十字＋外周。定番の分岐マップ',
+    blurb: '銀行中心の十字＋外周。定番の分岐マップ（ダイス1〜6）',
     defaultGoal: 10000,
     defaultCash: 2200,
+    diceMax: 6,
     build: buildCentralCross,
   },
   {
     id: 'shell_harbor',
     name: '貝がら港',
-    blurb: '海岸と埠頭の並列ルート。スイッチで航路も切り替わる',
+    blurb: '海岸と埠頭の並列ルート。スイッチで航路も切り替わる（ダイス1〜6）',
     defaultGoal: 12000,
     defaultCash: 2300,
+    diceMax: 6,
     build: buildShellHarbor,
   },
   {
     id: 'cliff_isle',
     name: 'がけした島',
-    blurb: '本島7×7＋離れ小島。ワープで行き来し、島にはマーク補充マスあり',
+    blurb: '本島7×7＋離れ小島。ワープで行き来し、島にはマーク補充マスあり（ダイス1〜6）',
     defaultGoal: 14000,
     defaultCash: 2100,
+    diceMax: 6,
     build: buildCliffIsle,
   },
   {
-    id: 'bin',
-    name: '瓶',
-    blurb: '縦長のボトル形。首の銀行から胴・底へ分岐し、底のワープで往復',
-    defaultGoal: 16000,
-    defaultCash: 2000,
-    build: buildBin,
-  },
-  {
-    id: 'thumbs_up',
-    name: 'サムズアップ',
-    blurb: '親指を立てた形。銀行から指先・手首へ長く分岐する大会戦マップ',
-    defaultGoal: 18000,
-    defaultCash: 1900,
-    build: buildThumbsUp,
-  },
-  {
     id: 'torima',
-    name: 'とりま',
-    blurb: '中央銀行から上下左右に広がる交差マップ（斜め接続あり）。休みマスは自分の店が1ターン休店',
+    name: 'アーチ',
+    blurb: '中央銀行から上下左右に広がる交差マップ（斜め接続あり）。休みマスは自分の店が1ターン休店（ダイス1〜7）',
     defaultGoal: 13000,
     defaultCash: 2200,
+    diceMax: 7,
     build: buildTorima,
   },
   {
     id: 'bullet',
     name: '弾丸',
-    blurb: '弾の形。転送3組で弾倉側と弾頭側を往復する中〜大会戦マップ',
+    blurb: '弾の形。転送3組で弾倉側と弾頭側を往復する中〜大会戦マップ（ダイス1〜6）',
     defaultGoal: 15000,
     defaultCash: 2100,
+    diceMax: 6,
     build: buildBullet,
   },
   {
     id: 'tagai',
     name: '田改',
-    blurb: '田んぼ形。表記はA1／B1〜B6／C1〜C6。上田・下田は高め物件',
+    blurb: '田んぼ形。表記はA1／B1〜B6／C1〜C6。上田・下田は高め物件（ダイス1〜8）',
     defaultGoal: 16000,
     defaultCash: 2200,
+    diceMax: 8,
     build: buildTagai,
   },
 ];
