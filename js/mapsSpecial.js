@@ -323,7 +323,10 @@ export function buildKurechigai() {
 }
 
 /**
- * 空島地帯（22×17）。転は島ネットワーク、ら＝ゾーン間ランダム転移、薬＝薬品マス。
+ * 空島地帯（22×17）。
+ * 本島転Ａ↔♥右、Ｄ転↔♠左。♥左↔♦上、♠右↔♣下。
+ * ♣上↔隣島Ｂ、♦下↔隣島Ｅ。ら＝ランダム転移（小島の転移マスへ）。
+ * げ＝門（反対側の門へ即時ジャンプし残移動）。薬＝薬品マス。
  */
 export function buildSkyIsles() {
   const { nodes, N } = makeNodeFactory();
@@ -388,6 +391,8 @@ export function buildSkyIsles() {
   const ctx = { bank: null, slotCount: 0 };
   /** @type {object[]} */
   const warps = [];
+  /** @type {object[]} */
+  const gates = [];
 
   for (let row = 0; row < gridRows.length; row++) {
     const chars = [...gridRows[row]];
@@ -410,7 +415,8 @@ export function buildSkyIsles() {
         continue;
       }
       if (ch === 'げ') {
-        put(col, row, N('gate', { label: 'ゲート', col, row }));
+        const gate = put(col, row, N('gate', { label: '門', col, row }));
+        gates.push(gate);
         continue;
       }
       if (ch === '薬') {
@@ -421,17 +427,19 @@ export function buildSkyIsles() {
     }
   }
   if (!ctx.bank) throw new Error('空島地帯: 銀行なし');
+  if (gates.length !== 2) throw new Error(`空島地帯: 門は2つ必要（今${gates.length}）`);
+  gates[0].gateTo = gates[1].id;
+  gates[1].gateTo = gates[0].id;
 
-  // 島ネットワーク: 本島2出口＋島どうしをチェーン接続
-  // 座標キーで特定（解析済みペア）
+  // 本島転Ａ↔♥右、Ｄ転↔♠左。♥左↔♦上、♠右↔♣下。♣上↔Ｂ、♦下↔Ｅ
   const byPos = new Map(warps.map((w) => [`${w.col},${w.row}`, w]));
   const pairs = [
-    ['11,7', '3,7'],   // 本島A ↔ G上
-    ['3,9', '6,4'],    // G下 ↔ H左
-    ['8,4', '15,4'],   // H右 ↔ B
-    ['10,9', '18,7'],  // 本島D ↔ J上
-    ['18,9', '15,12'], // J下 ↔ I右
-    ['13,12', '6,12'], // I左 ↔ E
+    ['11,7', '8,4'],   // 本島転Ａ ↔ ハート右
+    ['10,9', '13,12'], // 本島Ｄ転 ↔ スペード左
+    ['6,4', '3,7'],    // ハート左 ↔ ダイヤ上
+    ['15,12', '18,9'], // スペード右 ↔ クローバー下
+    ['18,7', '15,4'],  // クローバー上 ↔ 隣島Ｂ
+    ['3,9', '6,12'],   // ダイヤ下 ↔ 隣島Ｅ
   ];
   for (const [a, b] of pairs) {
     const wa = byPos.get(a);

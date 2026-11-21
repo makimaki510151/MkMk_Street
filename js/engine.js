@@ -1868,6 +1868,20 @@ function tryShaftTransit(g, p) {
   return teleportPlayer(g, p, dest.id, sq.label || '階層移動');
 }
 
+/** 門：乗った時点で反対側の門へ（残出目継続） */
+function tryGateTransit(g, p) {
+  const sq = getNode(g, p.pos);
+  if (!sq || sq.type !== 'gate') return false;
+  const destId = sq.gateTo;
+  if (destId == null) {
+    const other = g.map.find((n) => n.type === 'gate' && n.id !== sq.id);
+    if (!other) return false;
+    return teleportPlayer(g, p, other.id, '門');
+  }
+  if (destId === sq.id) return false;
+  return teleportPlayer(g, p, destId, '門');
+}
+
 /** 転移坑：ぴったり停止時のみ */
 function tryPitTransit(g, p) {
   const sq = getNode(g, p.pos);
@@ -1994,6 +2008,21 @@ export function advanceMove(g) {
     };
   }
 
+  // 門：乗った時点で反対側へ（残出目は維持）
+  if (tryGateTransit(g, p)) {
+    if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, gate: true };
+    return {
+      ok: true,
+      stepped: true,
+      from,
+      to: p.pos,
+      gate: true,
+      done: false,
+      stepsLeft: g.move.stepsLeft,
+      state: serializeState(g),
+    };
+  }
+
   if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: nextId };
 
   // 銀行を通過（まだ歩数が残る）→ 昇進 → 株1種 → 進行方向
@@ -2068,6 +2097,20 @@ export function chooseFork(g, nextId) {
       from,
       to: p.pos,
       shaft: true,
+      done: false,
+      stepsLeft: g.move.stepsLeft,
+      state: serializeState(g),
+    };
+  }
+
+  if (tryGateTransit(g, p)) {
+    if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, gate: true };
+    return {
+      ok: true,
+      stepped: true,
+      from,
+      to: p.pos,
+      gate: true,
       done: false,
       stepsLeft: g.move.stepsLeft,
       state: serializeState(g),
@@ -2206,15 +2249,8 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
       finishLanding(g, p);
       return;
     }
-    const onMain = isMainlandNode(g, sq.id);
-    const candidates = g.map.filter((n) => {
-      if (n.type !== 'warp') return false;
-      const main = isMainlandNode(g, n.id);
-      return onMain ? !main : main;
-    });
-    const pool = candidates.length
-      ? candidates
-      : g.map.filter((n) => n.type === 'warp_random' && n.id !== sq.id);
+    // 小島（本島以外）の転移マスへランダム転移
+    const pool = g.map.filter((n) => n.type === 'warp' && !isMainlandNode(g, n.id));
     if (!pool.length) {
       addLog(g, `${p.name} のランダム転移先がない…`, 'system');
       finishLanding(g, p);
@@ -2269,7 +2305,8 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
   }
 
   if (sq.type === 'gate') {
-    addLog(g, `${p.name} はゲートに停止`, 'system');
+    // 移動中の tryGateTransit で既に反対側へ飛んでいる想定。着地のみならその場で停止
+    addLog(g, `${p.name} は門に停止`, 'system');
     finishLanding(g, p);
     return;
   }
