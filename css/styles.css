@@ -1736,10 +1736,9 @@ body.your-turn #btn-roll:not(:disabled) {
   padding: 1.1rem 1.25rem 1rem;
   border-radius: var(--radius);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--efc, var(--accent)) 14%, transparent), transparent 55%),
-    color-mix(in srgb, var(--surface) 94%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--efc, var(--accent)) 14%, #1a1612 40%), #1a1612 100%);
   border: 1px solid color-mix(in srgb, var(--efc, var(--accent)) 55%, var(--line));
-  box-shadow: var(--shadow);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   transform: scale(0.86) translateY(10px);
   opacity: 0;
   transition: transform .28s cubic-bezier(.2,.85,.2,1), opacity .22s ease;
@@ -1818,8 +1817,10 @@ body.your-turn #btn-roll:not(:disabled) {
 .ef-detail {
   margin-top: 0.3rem;
   font-size: 0.84rem;
-  color: var(--muted);
-  line-height: 1.35;
+  color: #d7cfc2;
+  line-height: 1.4;
+  word-break: break-word;
+  text-wrap: pretty;
 }
 .ef-chips {
   display: flex;
@@ -2670,11 +2671,13 @@ body.your-turn #btn-roll:not(:disabled) {
   font-weight: 800;
   font-size: 0.95rem;
   letter-spacing: 0.02em;
-  color: #ffe08a;
-  padding: 0.35rem 0.6rem;
+  color: #fff8e0;
+  padding: 0.4rem 0.7rem;
   border-radius: 6px;
-  background: color-mix(in srgb, #ffe08a 14%, rgba(12, 14, 16, 0.55));
-  border: 1px solid color-mix(in srgb, #ffe08a 35%, transparent);
+  background: rgba(12, 14, 16, 0.72);
+  border: 1px solid color-mix(in srgb, #ffe08a 45%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  margin: 0 0 0.15rem;
 }
 .mg-result-board {
   list-style: none;
@@ -3292,7 +3295,8 @@ body.your-turn #btn-roll:not(:disabled) {
   font-size: 1.1em;
 }
 
-/* minigame reveal overlay */
+/* minigame reveal overlay
+   z-index は feed(14)・zoom(8)・inspect(7) より上。祝福FX(85)とは同時表示しない。 */
 #minigame-overlay {
   position: absolute;
   inset: 0;
@@ -3300,28 +3304,30 @@ body.your-turn #btn-roll:not(:disabled) {
   place-items: center;
   background:
     radial-gradient(ellipse at 50% 40%, rgba(255, 224, 138, 0.18), transparent 55%),
-    rgba(12, 14, 16, 0.55);
-  z-index: 6;
+    rgba(8, 10, 12, 0.72);
+  z-index: 20;
   pointer-events: none;
 }
 #minigame-overlay[hidden] { display: none !important; }
 .mg-stage {
   text-align: center;
-  padding: 1rem 1.25rem;
+  padding: 1.05rem 1.2rem 1.2rem;
   max-width: min(92%, 420px);
+  width: min(92%, 420px);
+  border-radius: 14px;
+  background: rgba(10, 12, 14, 0.88);
+  border: 1px solid rgba(255, 224, 138, 0.22);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.45);
 }
 .mg-stage.party {
   max-width: min(94%, 520px);
+  width: min(94%, 520px);
   padding: 1.1rem 1.15rem 1.25rem;
-  border-radius: 14px;
-  background: rgba(10, 12, 14, 0.42);
-  border: 1px solid rgba(255, 224, 138, 0.18);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
 }
 #minigame-overlay.party {
   background:
-    radial-gradient(ellipse at 50% 36%, rgba(255, 224, 138, 0.22), transparent 52%),
-    rgba(8, 10, 12, 0.62);
+    radial-gradient(ellipse at 50% 36%, rgba(255, 224, 138, 0.2), transparent 52%),
+    rgba(6, 8, 10, 0.78);
 }
 .mg-kicker {
   color: var(--accent);
@@ -3337,6 +3343,24 @@ body.your-turn #btn-roll:not(:disabled) {
   place-items: center;
   margin-bottom: 0.75rem;
 }
+.mg-answer {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto 0.55rem;
+  padding: 0.42rem 0.85rem;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: clamp(0.95rem, 2.4vw, 1.1rem);
+  letter-spacing: 0.03em;
+  color: #fff8e0;
+  background: rgba(8, 10, 12, 0.92);
+  border: 1px solid color-mix(in srgb, #ffe08a 50%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  position: relative;
+  z-index: 2;
+}
+.mg-answer[hidden] { display: none !important; }
 .mg-title {
   font-family: var(--display);
   font-size: clamp(1.75rem, 4.2vw, 2.35rem);
@@ -3346,9 +3370,12 @@ body.your-turn #btn-roll:not(:disabled) {
   opacity: 0;
   transform: translateY(8px) scale(0.92);
   transition: opacity .28s ease, transform .28s ease;
+  position: relative;
+  z-index: 1;
+  margin: 0 0 0.35rem;
 }
 .mg-detail {
-  margin-top: 0.45rem;
+  margin-top: 0.35rem;
   color: var(--ink);
   font-weight: 700;
   font-size: 1.02rem;
@@ -3356,16 +3383,18 @@ body.your-turn #btn-roll:not(:disabled) {
   opacity: 0;
   transition: opacity .3s ease .05s;
   max-width: min(92vw, 420px);
+  position: relative;
+  z-index: 1;
 }
 .mg-stage.party .mg-detail {
   max-width: none;
   width: 100%;
-  margin-top: 0.65rem;
+  margin-top: 0.45rem;
   text-shadow: none;
 }
 .mg-stage.party .mg-title {
   font-size: clamp(1.45rem, 3.6vw, 1.95rem);
-  margin-bottom: 0.15rem;
+  margin-bottom: 0.35rem;
 }
 .mg-stage.party .mg-body {
   min-height: 88px;
@@ -4141,23 +4170,8 @@ body.your-turn #btn-roll:not(:disabled) {
   .ra-table { min-width: 480px; }
 }
 
-/* Soft celebration bloom (jackpot / monopoly) */
-#celebrate-fx {
-  position: fixed;
-  inset: 0;
-  z-index: 85;
-  pointer-events: none;
-  display: grid;
-  place-items: center;
-  opacity: 0;
-  transition: opacity 0.35s ease;
-}
-#celebrate-fx[hidden] { display: none !important; }
-#celebrate-fx.show { opacity: 1; }
-#celebrate-fx .cfx-bloom {
-  position: absolute;
-  inset: -10
-/* Soft celebration bloom (jackpot / monopoly) */
+/* Soft celebration bloom (jackpot / monopoly)
+   ミニゲーム結果オーバーレイ表示中は出さない（正解テキスト被り防止）。 */
 #celebrate-fx {
   position: fixed;
   inset: 0;
