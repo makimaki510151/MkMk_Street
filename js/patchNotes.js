@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.9',
+    date: '2026-11-21',
+    items: [
+      '出目の最終到達ハイライトで、転移マス着地時は転移元と転移先の両方を表示',
+    ],
+  },
+  {
     version: '1.9.6',
     date: '2026-11-21',
     items: [

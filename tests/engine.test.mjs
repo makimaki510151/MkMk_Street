@@ -1246,7 +1246,7 @@ describe('MkMk Street engine', () => {
     assert.deepEqual(getLandingCandidates(g, 0, null, 3), [1]);
   });
 
-  it('getLandingCandidates resolves warp landings to the destination', () => {
+  it('getLandingCandidates highlights both warp source and destination', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
       seed: 1,
@@ -1266,8 +1266,11 @@ describe('MkMk Street engine', () => {
     ];
     g.startId = 0;
     assert.deepEqual(getLandingCandidates(g, 0, null, 1).sort((a, b) => a - b), [1, 2]);
-    // 0→1→3(warp→4) と 0→2→4 の両経路とも最終は 4
-    assert.deepEqual(getLandingCandidates(g, 0, null, 2), [4]);
+    // 0→1→3(warp) と 0→2→4：転移着地は元(3)と先(4)の両方
+    assert.deepEqual(getLandingCandidates(g, 0, null, 2).sort((a, b) => a - b), [3, 4]);
+    // 転移元／先どちらをクリックしても同じ一歩
+    assert.equal(findForkNextForLanding(g, 0, null, 2, 3, [1, 2]), 1);
+    assert.equal(findForkNextForLanding(g, 0, null, 2, 4, [1, 2]), 1);
   });
 
   it('findForkNextForLanding maps a final stop click to the next fork step', () => {
