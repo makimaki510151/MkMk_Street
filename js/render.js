@@ -1148,7 +1148,7 @@ export function shopTooltip(g, sq) {
   if (sq.type === 'event') return `${sq.label} — 止まるとイベント発生`;
   if (sq.type === 'scratch') return `${sq.label} — 止まるとイベント表を1マススクラッチ`;
   if (sq.type === 'suit_fill') {
-    return `${sq.label} — 通過／停止でワイルドカードを入手（最大4枚・銀行で空きマークに変化）`;
+    return `${sq.label} — 通過／停止でワイルドカードを入手（最大4枚・銀行でレベルアップできるときだけ必要枚数を消費）`;
   }
   if (sq.type === 'lucky') return `${sq.label} — ラッキーステータス獲得`;
   if (sq.type === 'rollon') return `${sq.label} — もう一度サイコロ`;

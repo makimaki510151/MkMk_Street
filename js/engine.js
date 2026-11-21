@@ -537,7 +537,7 @@ export function createGame({
       pos: board.startId,
       prevPos: null,
       marks: [false, false, false, false],
-      /** ワイルドカード枚数（銀行で空きマークに変化。上限 MAX_WILDCARDS） */
+      /** ワイルドカード枚数（銀行でレベルアップできるときだけ必要枚数を消費。上限 MAX_WILDCARDS） */
       wildcards: 0,
       level: 1,
       stocks: {},
@@ -1544,22 +1544,25 @@ export function grantWildcard(g, p) {
 }
 
 /**
- * 銀行到達時：ワイルドカードを空きマークへ変換。
+ * 銀行到達時：ワイルドカードで空きマークを埋める。
+ * レベルアップできる枚数そろっているときだけ、必要枚数だけ消費する。
+ * 足りない場合は一切消費しない。
  * @returns {number} 埋めた枚数
  */
 export function applyWildcardsToMarks(p) {
   if (!p?.marks) return 0;
-  let w = getWildcardCount(p);
+  const w = getWildcardCount(p);
   if (!w) return 0;
-  let used = 0;
-  for (let i = 0; i < p.marks.length && w > 0; i++) {
-    if (p.marks[i]) continue;
-    p.marks[i] = true;
-    w -= 1;
-    used += 1;
+  const missingIdx = [];
+  for (let i = 0; i < p.marks.length; i++) {
+    if (!p.marks[i]) missingIdx.push(i);
   }
-  p.wildcards = w;
-  return used;
+  const need = missingIdx.length;
+  // すでに揃っている／足りない → 消費しない
+  if (need === 0 || w < need) return 0;
+  for (const i of missingIdx) p.marks[i] = true;
+  p.wildcards = w - need;
+  return need;
 }
 
 function addLog(g, text, kind = 'info') {
