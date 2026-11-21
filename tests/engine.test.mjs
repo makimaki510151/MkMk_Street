@@ -523,9 +523,26 @@ describe('MkMk Street engine', () => {
     const sky = buildBoard('sky_isles');
     assert.equal(sky.mapName, '空島地帯');
     assert.equal(sky.diceMax, 6);
-    assert.ok(sky.nodes.some((n) => n.type === 'warp_random'));
     assert.ok(sky.nodes.some((n) => n.type === 'potion'));
-    assert.equal(sky.nodes.filter((n) => n.type === 'warp').length, 12);
+    assert.equal(sky.nodes.filter((n) => n.type === 'warp').length, 14);
+    // 本島上から: ら→♣上、転Ａ→♥右、Ｄ転→♠左、ら→♦下
+    const byPos = Object.fromEntries(
+      sky.nodes.filter((n) => n.type === 'warp').map((w) => [`${w.col},${w.row}`, w]),
+    );
+    const link = (a, b) => {
+      const wa = byPos[a];
+      const wb = byPos[b];
+      assert.ok(wa && wb, `warp ${a} or ${b} missing`);
+      assert.equal(wa.warpTo, wb.id, `${a} -> ${b}`);
+      assert.equal(wb.warpTo, wa.id, `${b} -> ${a}`);
+    };
+    link('14,5', '18,7');
+    link('11,7', '8,4');
+    link('10,9', '13,12');
+    link('7,11', '3,9');
+    link('6,4', '15,4');
+    link('18,9', '15,12');
+    link('3,7', '6,12');
 
     const mine = buildBoard('greed_mine');
     assert.equal(mine.mapName, '強欲鉱山');
