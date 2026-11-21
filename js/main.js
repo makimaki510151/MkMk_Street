@@ -4261,14 +4261,14 @@ function formatMinigamePrize(amount) {
 }
 
 /** 全員参加向けの結果ボードHTML（金額・勝敗が一目で分かる） */
-function renderPartyMinigameResults(reveal) {
+function renderPartyMinigameResults(reveal, { includeShared = false } = {}) {
   const rows = [...(reveal.results || [])].sort((a, b) => {
     const pa = Number(a.prizeWon) || 0;
     const pb = Number(b.prizeWon) || 0;
     if (pb !== pa) return pb - pa;
     return Number(!!b.win) - Number(!!a.win);
   });
-  const shared = formatMinigameSharedLine(reveal);
+  const shared = includeShared ? formatMinigameSharedLine(reveal) : '';
   const showPick = (reveal.game || '') === 'guess_dice';
   const board = rows.map((r, i) => {
     const win = !!r.win;
@@ -4305,6 +4305,7 @@ async function playMinigameReveal(reveal) {
   const overlay = $('#minigame-overlay');
   const stage = overlay?.querySelector('.mg-stage');
   const body = $('#mg-body');
+  const answer = $('#mg-answer');
   const title = $('#mg-title');
   const detail = $('#mg-detail');
   const kicker = $('#mg-kicker');
@@ -4322,6 +4323,10 @@ async function playMinigameReveal(reveal) {
   title.textContent = '';
   detail.textContent = '';
   body.innerHTML = '';
+  if (answer) {
+    answer.hidden = true;
+    answer.textContent = '';
+  }
   audio.sfx.minigameDrum();
 
   const game = reveal.game || 'slot';
@@ -4350,11 +4355,23 @@ async function playMinigameReveal(reveal) {
     await wait(400);
   }
 
+  // 正解／共通結果はタイトルより上の専用枠へ（他テキストと被らない）
+  const sharedLine = formatMinigameSharedLine(reveal);
+  if (answer) {
+    if (sharedLine) {
+      answer.hidden = false;
+      answer.textContent = sharedLine;
+    } else {
+      answer.hidden = true;
+      answer.textContent = '';
+    }
+  }
+
   title.textContent = party
     ? 'みんなの結果'
     : (reveal.title || (reveal.win ? '当たり！' : '結果発表'));
   if (party) {
-    detail.innerHTML = renderPartyMinigameResults(reveal);
+    detail.innerHTML = renderPartyMinigameResults(reveal, { includeShared: !sharedLine });
   } else if (reveal.results?.length === 1) {
     const r = reveal.results[0];
     detail.innerHTML = `<div class="mg-solo-result" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
@@ -4367,27 +4384,33 @@ async function playMinigameReveal(reveal) {
   }
   overlay.classList.add('show-result');
 
-  if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
-    audio.sfx.slotWin(true);
-    presentCelebrateFx({
-      title: reveal.title || 'ジャックポット！',
-      detail: summarizeMinigameResults(reveal) || '',
-      color: reveal.playerColor || '#ffe08a',
-      variant: 'jackpot',
-    });
-  } else if (reveal.win) {
-    audio.sfx.slotWin(false);
-    if (reveal.tier === 'fullhouse' || reveal.tier === 'win') {
-      presentCelebrateFx({
-        title: reveal.title || '大当たり！',
+  // 祝福FXはオーバーレイ表示中に重ねると「正解」白文字が他UIに被るため、
+  // ここでは SE のみ。祝福はオーバーレイ閉じた後に出す。
+  const celebrateAfter = (() => {
+    if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
+      audio.sfx.slotWin(true);
+      return {
+        title: reveal.title || 'ジャックポット！',
         detail: summarizeMinigameResults(reveal) || '',
-        color: reveal.playerColor || '#9ef0c8',
-        variant: 'soft',
-      });
+        color: reveal.playerColor || '#ffe08a',
+        variant: 'jackpot',
+      };
     }
-  } else {
+    if (reveal.win) {
+      audio.sfx.slotWin(false);
+      if (reveal.tier === 'fullhouse' || reveal.tier === 'win') {
+        return {
+          title: reveal.title || '大当たり！',
+          detail: summarizeMinigameResults(reveal) || '',
+          color: reveal.playerColor || '#9ef0c8',
+          variant: 'soft',
+        };
+      }
+      return null;
+    }
     audio.sfx.buy();
-  }
+    return null;
+  })();
 
   const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'fullhouse';
   const holdMs = party ? 2600 : (bigHold ? 1600 : 1100);
@@ -4397,6 +4420,11 @@ async function playMinigameReveal(reveal) {
   stage?.classList.remove('party');
   body.innerHTML = '';
   detail.innerHTML = '';
+  if (answer) {
+    answer.hidden = true;
+    answer.textContent = '';
+  }
+  if (celebrateAfter) presentCelebrateFx(celebrateAfter);
   pumpEventFlash();
 }
 

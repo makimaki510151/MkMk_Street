@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.7',
+    date: '2026-11-21',
+    items: [
+      'ミニゲーム結果の正解テキストが他UIに被らないよう表示順・背景・祝福演出タイミングを調整',
+    ],
+  },
+  {
     version: '1.9.6',
     date: '2026-11-21',
     items: [
