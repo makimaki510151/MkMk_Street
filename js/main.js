@@ -1829,7 +1829,53 @@ function presentFiveBuyFx(result = {}) {
   }
 }
 
-/** 目に優しいソフトな祝福演出（ジャックポット／独占など） */
+const CELEBRATE_CONFETTI_COLORS = [
+  '#ffe08a', '#ffb347', '#ff6b6b', '#ff8fab', '#c77dff',
+  '#4cc9f0', '#80ed99', '#fff1a8', '#f72585', '#f4a261',
+];
+
+/**
+ * 紙吹雪をコンテナへ流し込む。
+ * @param {HTMLElement|null} host
+ * @param {{ count?: number, durationMs?: number }} [opts]
+ */
+function spawnConfettiBurst(host, { count = 48, durationMs = 2600 } = {}) {
+  if (!host) return;
+  host.innerHTML = '';
+  const n = Math.max(12, Math.min(120, Math.floor(count)));
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < n; i++) {
+    const bit = document.createElement('span');
+    const shape = i % 5 === 0 ? 'ribbon' : (i % 3 === 0 ? 'square' : 'rect');
+    bit.className = `cfx-bit cfx-bit-${shape}`;
+    const left = Math.random() * 100;
+    const y0 = Math.random() * 28; // 画面上部〜中上から散らす
+    const delay = Math.random() * 0.45;
+    const dur = 2.2 + Math.random() * 1.6;
+    const drift = (Math.random() * 2 - 1) * 160;
+    const spin = 180 + Math.random() * 720;
+    const size = 11 + Math.random() * 15;
+    const color = CELEBRATE_CONFETTI_COLORS[i % CELEBRATE_CONFETTI_COLORS.length];
+    bit.style.setProperty('--x', `${left}%`);
+    bit.style.setProperty('--y0', `${y0}%`);
+    bit.style.setProperty('--delay', `${delay}s`);
+    bit.style.setProperty('--dur', `${dur}s`);
+    bit.style.setProperty('--drift', `${drift}px`);
+    bit.style.setProperty('--spin', `${spin}deg`);
+    bit.style.setProperty('--size', `${size}px`);
+    bit.style.setProperty('--c', color);
+    bit.style.animationDuration = `${dur}s`;
+    bit.style.animationDelay = `${delay}s`;
+    frag.appendChild(bit);
+  }
+  host.appendChild(frag);
+  clearTimeout(spawnConfettiBurst._clean);
+  spawnConfettiBurst._clean = setTimeout(() => {
+    if (host.isConnected) host.innerHTML = '';
+  }, durationMs + 400);
+}
+
+/** 祝福演出（ジャックポット／上役／独占など）。紙吹雪で盛り上がりを出す。 */
 function presentCelebrateFx({
   title = 'おめでとう！',
   detail = '',
@@ -1845,15 +1891,24 @@ function presentCelebrateFx({
   const detailEl = root.querySelector('.cfx-detail');
   if (titleEl) titleEl.textContent = title;
   if (detailEl) detailEl.textContent = detail || '';
+
+  const confettiHost = root.querySelector('.cfx-confetti');
+  const intensity = variant === 'jackpot' ? 88
+    : variant === 'big' ? 64
+      : variant === 'monopoly' ? 56
+        : 36;
+  const holdMs = variant === 'jackpot' ? 3200 : (variant === 'big' ? 2800 : 2400);
+  spawnConfettiBurst(confettiHost, { count: intensity, durationMs: holdMs });
+
   root.classList.remove('show');
-  // reflow して再アニメ
   void root.offsetWidth;
   root.classList.add('show');
   clearTimeout(presentCelebrateFx._t);
   presentCelebrateFx._t = setTimeout(() => {
     root.classList.remove('show');
     root.hidden = true;
-  }, 2200);
+    if (confettiHost) confettiHost.innerHTML = '';
+  }, holdMs);
 }
 
 function presentMonopolyFx(result) {
@@ -4563,8 +4618,7 @@ async function playMinigameReveal(reveal) {
   }
   overlay.classList.add('show-result');
 
-  // 祝福FXはオーバーレイ表示中に重ねると「正解」白文字が他UIに被るため、
-  // ここでは SE のみ。祝福はオーバーレイ閉じた後に出す。
+  // 上役は結果表示中にも紙吹雪を重ね、閉じた後に本祝福を出す
   const celebrateAfter = (() => {
     if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
       audio.sfx.slotWin(true);
@@ -4577,11 +4631,28 @@ async function playMinigameReveal(reveal) {
     }
     if (reveal.win) {
       audio.sfx.slotWin(false);
-      if (reveal.tier === 'fullhouse' || reveal.tier === 'win') {
+      if (reveal.tier === 'fullhouse' || reveal.tier === 'triple') {
         return {
           title: reveal.title || '大当たり！',
           detail: summarizeMinigameResults(reveal) || '',
           color: reveal.playerColor || '#9ef0c8',
+          variant: 'big',
+        };
+      }
+      if (reveal.tier === 'two_pair' || reveal.tier === 'win') {
+        return {
+          title: reveal.title || '当たり！',
+          detail: summarizeMinigameResults(reveal) || '',
+          color: reveal.playerColor || '#9ef0c8',
+          variant: 'soft',
+        };
+      }
+      // pair も軽く祝福
+      if (reveal.tier === 'pair') {
+        return {
+          title: reveal.title || 'ワンペア！',
+          detail: summarizeMinigameResults(reveal) || '',
+          color: reveal.playerColor || '#ffe08a',
           variant: 'soft',
         };
       }
@@ -4591,14 +4662,31 @@ async function playMinigameReveal(reveal) {
     return null;
   })();
 
-  const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'fullhouse';
-  const holdMs = party ? 2600 : (bigHold ? 1600 : 1100);
+  if (celebrateAfter) {
+    const stageConfetti = overlay.querySelector('.mg-confetti') || (() => {
+      const el = document.createElement('div');
+      el.className = 'mg-confetti';
+      el.setAttribute('aria-hidden', 'true');
+      overlay.appendChild(el);
+      return el;
+    })();
+    const burst = celebrateAfter.variant === 'jackpot' ? 70
+      : celebrateAfter.variant === 'big' ? 48
+        : 28;
+    spawnConfettiBurst(stageConfetti, { count: burst, durationMs: 2200 });
+  }
+
+  const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad'
+    || reveal.tier === 'fullhouse' || reveal.tier === 'triple' || reveal.tier === 'exact';
+  const holdMs = party ? 2800 : (bigHold ? 2000 : 1200);
   await wait(holdMs);
   overlay.hidden = true;
   overlay.classList.remove('show-result', 'party');
   stage?.classList.remove('party');
   body.innerHTML = '';
   detail.innerHTML = '';
+  const leftoverConfetti = overlay.querySelector('.mg-confetti');
+  if (leftoverConfetti) leftoverConfetti.innerHTML = '';
   if (answer) {
     answer.hidden = true;
     answer.textContent = '';
