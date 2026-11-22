@@ -1139,6 +1139,40 @@ body.your-turn #btn-roll:not(:disabled) {
   gap: 0.2rem;
   margin-top: 0.28rem;
 }
+.pc-status-detail {
+  margin-top: 0.28rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.pc-status-detail[hidden] { display: none !important; }
+button.pc-flag {
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.08rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  line-height: 1.2;
+}
+button.pc-flag:hover,
+button.pc-flag:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--ink);
+}
+button.pc-flag.peek-on {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ac, var(--accent)) 65%, #fff);
+  border-color: color-mix(in srgb, var(--ac, var(--accent)) 55%, var(--line));
+}
 .mark {
   opacity: 0.22;
   font-size: 0.95rem;
@@ -1182,6 +1216,18 @@ body.your-turn #btn-roll:not(:disabled) {
   font-weight: 800;
 }
 .pc-flag.coupon { color: #7ec8ff; }
+.pc-flag.fixed-dice { color: #9ec5ff; }
+.pc-flag.extra-roll { color: #8fd9a8; }
+.pc-flag.protect {
+  color: #d4b483;
+  border-color: color-mix(in srgb, var(--ac, #d4b483) 45%, transparent);
+  background: color-mix(in srgb, var(--ac, #d4b483) 14%, transparent);
+}
+.pc-flag.co-own {
+  color: #b7a0e8;
+  border-color: color-mix(in srgb, var(--ac, #b7a0e8) 45%, transparent);
+  background: color-mix(in srgb, var(--ac, #b7a0e8) 14%, transparent);
+}
 .pc-flag.offline {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);
@@ -3195,16 +3241,17 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 .fork-btn small { font-weight: 600; opacity: 0.75; }
 .hint { font-size: 0.78rem; color: var(--muted); }
-.pc-flag {
-  margin-left: 0.35rem;
+.pc-status .pc-flag {
+  margin-left: 0;
   font-size: 0.68rem;
   font-weight: 800;
-  color: #ffe08a;
   opacity: 0.95;
 }
 .pc-flag.closed { color: #ffb087; }
 .pc-flag.lucky { color: #e8b84a; }
 .pc-flag.coupon { color: #7ec8ff; }
+.pc-flag.fixed-dice { color: #9ec5ff; }
+.pc-flag.extra-roll { color: #8fd9a8; }
 .scratch-board-fit {
   flex: 1 1 auto;
   min-height: 0;

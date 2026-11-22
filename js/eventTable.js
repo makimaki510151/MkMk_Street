@@ -514,16 +514,15 @@ function scaledAmount(def, player, field = 'cash') {
   return Math.floor(base + lv * scale);
 }
 
+/**
+ * 現金の増減。罰金・出費は所持金を下回ってマイナスになり得る（買い物料と同様）。
+ * 不足時の資金調達は呼び出し側（engine）が openRaiseFunds する。
+ */
 function applyCash(player, amount, messages) {
-  if (!amount) return;
-  if (amount > 0) {
-    player.cash += amount;
-    messages.push(`+${amount}G`);
-  } else {
-    const n = Math.min(player.cash, -amount);
-    player.cash -= n;
-    messages.push(`-${n}G`);
-  }
+  const n = Math.floor(Number(amount) || 0);
+  if (!n) return;
+  player.cash += n;
+  messages.push(n > 0 ? `+${n}G` : `${n}G`);
 }
 
 /** 生存プレイヤー全員に同額支給（原作の景気・給料イベント） */
@@ -1050,7 +1049,7 @@ function applyEventDef(g, player, def, messages) {
         break;
       }
       const poorest = others.reduce((a, b) => (a.cash <= b.cash ? a : b));
-      const amt = Math.min(player.cash, def.amount || 60);
+      const amt = Math.max(0, Number(def.amount) || 60);
       player.cash -= amt;
       poorest.cash += amt;
       messages.push(`${poorest.name} に ${amt}G プレゼント`);
@@ -1443,21 +1442,35 @@ function applyEventDef(g, player, def, messages) {
       break;
     }
     case 'retreat': {
+      // 双方向グラフで隣をランダムに選ぶと往復して実質動かないことがある。
+      // 到着元（prevPos）へ戻り、以降は「今来たマス」を除外して後退を続ける。
       const maxSteps = Math.max(1, Math.min(6, Number(def.amount) || 4));
       const from = player.pos;
+      let cur = player.pos;
+      let prefer = player.prevPos; // 最初の1歩は来た道へ
+      let exclude = null; // 直後に来たマスへ戻らない
       let moved = 0;
+      let last = from;
       for (let i = 0; i < maxSteps; i++) {
-        const preds = g.map.filter((n) => (n.nexts || []).includes(player.pos) && n.type !== 'junction');
+        const linked = g.map.filter((n) => (n.nexts || []).includes(cur) && n.id !== exclude);
+        let preds = linked.filter((n) => n.type !== 'junction');
+        if (!preds.length) preds = linked;
         if (!preds.length) break;
-        const dest = pickRandom(preds);
-        player.prevPos = player.pos;
-        player.pos = dest.id;
+        let dest = prefer != null ? preds.find((n) => n.id === prefer) : null;
+        if (!dest) dest = pickRandom(preds);
+        if (!dest || dest.id === cur) break;
+        exclude = cur;
+        prefer = null;
+        last = cur;
+        cur = dest.id;
         moved++;
       }
       if (moved) {
-        recordWarp(g, player.id, from, player.pos);
+        player.prevPos = last;
+        player.pos = cur;
+        recordWarp(g, player.id, from, cur);
         messages.push(`${moved}マス後退`);
-        collectWarpSquareRewards(g, player, player.pos, messages);
+        collectWarpSquareRewards(g, player, cur, messages);
       } else {
         player.flags.forceStopNext = true;
         messages.push('後退路なし → 強制停止を付与');
