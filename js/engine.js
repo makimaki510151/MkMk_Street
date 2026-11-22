@@ -5478,6 +5478,8 @@ function takeEventNpcTurn(g, npc) {
     type: 'move',
     npcId: npc.id,
     kind: npc.kind,
+    label: npc.label,
+    diceMax: npc.diceMax || 6,
     from: path[0],
     to: pos,
     path: path.slice(),

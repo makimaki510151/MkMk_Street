@@ -56,6 +56,7 @@ import {
   getGoalPressurePlayers,
   POTION_CARD_COUNT,
   POTION_EFFECT_LABELS,
+  takeEventNpcFx,
 } from './engine.js';
 import {
   AREA_META,
@@ -505,7 +506,7 @@ function applyConvertToCpu(seat, { auto = false } = {}) {
   clearDisconnectTimer(seat);
   const result = convertPlayerToCpu(app.game, seat);
   if (!result.ok) return;
-  if (result.state) app.game = restoreState(result.state);
+  if (result.state) commitGameState(result.state);
   if (auto) {
     app.game.logs.unshift({
       text: `${app.game.players[seat].name} を自動でCPU化`,
@@ -519,7 +520,9 @@ function applyConvertToCpu(seat, { auto = false } = {}) {
   }
   syncState();
   refreshGameUI();
-  scheduleCpu();
+  flushPendingEventNpcFx().finally(() => {
+    if (clearBusyUnlessEventUi()) scheduleCpu();
+  });
   toast(`${app.game.players[seat].name} をCPUに切り替えました`);
 }
 
@@ -532,10 +535,12 @@ function applyKickPlayer(seat) {
   }
   const result = kickDisconnectedPlayer(app.game, seat);
   if (!result.ok) return;
-  if (result.state) app.game = restoreState(result.state);
+  if (result.state) commitGameState(result.state);
   syncState();
   refreshGameUI();
-  scheduleCpu();
+  flushPendingEventNpcFx().finally(() => {
+    if (clearBusyUnlessEventUi()) scheduleCpu();
+  });
   toast(`${name} をキックしました`);
 }
 
@@ -1684,9 +1689,43 @@ function handleNetEvent({ from, data }) {
 function playRemoteFx(data) {
   if (data.kind === 'dice') {
     app.hideDiceResult = true;
-    playDiceOverlay(data.face, true).finally(() => {
+    playDiceOverlay(data.face, true, { diceMax: data.diceMax, label: data.label }).finally(() => {
       app.hideDiceResult = false;
       refreshGameUI();
+    });
+  }
+  if (data.kind === 'eventNpcHold' && data.npcId != null && data.from != null) {
+    app.renderer?.holdToken(data.npcId, data.from);
+  }
+  if (data.kind === 'eventNpcMove') {
+    app.busy = true;
+    presentEventNpcMove(data, true).finally(() => {
+      clearBusyUnlessEventUi();
+      refreshGameUI();
+    });
+  }
+  if (data.kind === 'eventNpcSpawn') {
+    const nk = data.npcKind;
+    pushEventStamp({
+      kicker: 'イベントNPC',
+      title: '異界から現れた！',
+      detail: nk === 'mark_fairy' ? 'マークの妖精'
+        : nk === 'merchant' ? '大商人'
+          : nk === 'poverty' ? '貧乏神' : 'NPC',
+      kind: 'event',
+      color: '#c5a3ff',
+      silentStamp: true,
+    });
+  }
+  if (data.kind === 'eventNpcDepart') {
+    app.renderer?.clearTokenHold(data.npcId);
+    pushEventStamp({
+      kicker: 'イベントNPC',
+      title: '異界へ帰っていった',
+      detail: data.label || '',
+      kind: 'event',
+      color: '#9aa3b5',
+      silentStamp: true,
     });
   }
   if (data.kind === 'scratchOutcome') {
@@ -3114,9 +3153,10 @@ function maybeAutoSkipRest() {
       mine: app.mode === 'local' ? !p.isCPU : p.id === app.localSeat,
     });
     const result = rollDice(app.game);
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     syncState();
     refreshGameUI();
+    await flushPendingEventNpcFx();
     if (clearBusyUnlessEventUi()) scheduleCpu();
   }, 700);
 }
@@ -3786,10 +3826,11 @@ async function applyLocalAction(action) {
     noteActionActor(app.game.currentPlayerIdx);
     const result = rollDice(app.game);
     if (!result.ok) return toast(result.error || '失敗');
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     if (result.skipped) {
       syncState();
       refreshGameUI();
+      await flushPendingEventNpcFx();
       if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
@@ -3830,12 +3871,12 @@ async function applyLocalAction(action) {
     try {
       const result = applyChoice(app.game, action.choice);
       if (!result.ok) {
-        if (result.state) app.game = restoreState(result.state);
+        if (result.state) commitGameState(result.state);
         toast(choiceErrorMessage(result.error));
         refreshGameUI();
         return;
       }
-      if (result.state) app.game = restoreState(result.state);
+      if (result.state) commitGameState(result.state);
       if (result.warps?.length) armWarpHolds(result.warps);
       if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
       if (result.fiveBuy) presentFiveBuyFx(result);
@@ -3871,10 +3912,13 @@ async function applyLocalAction(action) {
         app.busy = true;
         app.deferEventFlash = true;
         await continueAdvancing();
-        resumeAfterMovement();
-      } else if (clearBusyUnlessEventUi()) {
-        refreshGameUI();
-        scheduleCpu();
+        await resumeAfterMovement();
+      } else {
+        await flushPendingEventNpcFx();
+        if (clearBusyUnlessEventUi()) {
+          refreshGameUI();
+          scheduleCpu();
+        }
       }
     } finally {
       app.choiceResolving = false;
@@ -3892,7 +3936,7 @@ async function applyLocalAction(action) {
     }
     const result = preTurnSell(app.game, pid, action.area, action.count);
     if (!result.ok) return toast(result.error || '売却できません');
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -3911,7 +3955,7 @@ async function applyLocalAction(action) {
     noteActionActor(pid);
     const result = openShopTradeCompose(app.game, pid);
     if (!result.ok) return toast(choiceErrorMessage(result.error));
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     syncState();
     refreshGameUI();
   }
@@ -3923,7 +3967,7 @@ async function resolveForkChoice(nextId) {
   const from = app.game.players[pid].pos;
   const result = chooseFork(app.game, nextId);
   if (!result.ok) return toast(result.error || '失敗');
-  if (result.state) app.game = restoreState(result.state);
+  if (result.state) commitGameState(result.state);
   hideModal();
   app.modalPendingKey = null;
   app.busy = true;
@@ -3934,7 +3978,7 @@ async function resolveForkChoice(nextId) {
   refreshGameUI();
   await wait(420);
   await continueAdvancing();
-  resumeAfterMovement();
+  await resumeAfterMovement();
   // 着地が購入/増資待ちなら確実に選択UIを再掲（busy 残留や告知での欠落防止）
   if (isLocalPendingChoice(app.game)) {
     app.busy = false;
@@ -3961,7 +4005,7 @@ async function runDiceAndMove(face) {
   // サイコロ結果はオーバーレイ済み。ここでイベントUIを出すと着地モーダルが塞がるため出さない
   app.deferEventFlash = true;
   await continueAdvancing();
-  resumeAfterMovement();
+  await resumeAfterMovement();
 }
 
 /** スイッチ・スライドを描画ループより先に予約（瞬時切替フラッシュ防止） */
@@ -3980,7 +4024,7 @@ async function continueAdvancing() {
     const from = app.game.players[pid].pos;
     const result = advanceMove(app.game);
     if (!result.ok) break;
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く。
     // presentSwitchFx が to へ戻してからスライドを開始する（瞬時切替→巻き戻り防止）。
     if (result.switchMoves?.length) {
@@ -4063,15 +4107,17 @@ function onLandingSfx() {
   else if (g.logs[0]?.kind === 'toll') audio.sfx.toll();
 }
 
-async function playDiceOverlay(face, remote = false) {
+async function playDiceOverlay(face, remote = false, opts = {}) {
   const overlay = $('#dice-overlay');
   const faceEl = $('#dice-overlay-face');
   const label = $('#dice-overlay-label');
-  const diceMax = Math.max(2, Number(getMoveDiceMax(app.game)) || 6);
+  const diceMax = Math.max(2, Number(opts.diceMax) || Number(getMoveDiceMax(app.game)) || 6);
   app.hideDiceResult = true;
   overlay.hidden = false;
   overlay.classList.remove('landed');
-  label.textContent = diceMax > 6 ? `サイコロ（1〜${diceMax}）…` : 'サイコロ…';
+  const who = opts.label ? `${opts.label}の` : '';
+  label.textContent = opts.shuffleText
+    || (diceMax > 6 ? `${who}サイコロ（1〜${diceMax}）…` : `${who}サイコロ…`);
   faceEl.textContent = '?';
   $('#dice-face').textContent = '?';
   $('#dice-face').classList.remove('pop');
@@ -4084,7 +4130,7 @@ async function playDiceOverlay(face, remote = false) {
   }
   faceEl.textContent = String(face);
   overlay.classList.add('landed');
-  label.textContent = `${face} が出た！`;
+  label.textContent = opts.landText || `${face} が出た！`;
   app.hideDiceResult = false;
   $('#dice-face').textContent = String(face);
   $('#dice-face').classList.add('pop');
@@ -4092,6 +4138,143 @@ async function playDiceOverlay(face, remote = false) {
   await wait(650);
   overlay.hidden = true;
   pumpEventFlash();
+}
+
+/** restoreState の前にイベントNPC演出キューを退避し、見た目を出発マスに固定する */
+function commitGameState(state) {
+  if (app.game) {
+    const fx = takeEventNpcFx(app.game);
+    if (fx.length) {
+      if (!Array.isArray(app.pendingEventNpcFx)) app.pendingEventNpcFx = [];
+      app.pendingEventNpcFx.push(...fx);
+      armEventNpcMoveHolds(fx);
+      // ゲストが state 同期で瞬移しないよう、先にホールドを通知
+      for (const f of fx) {
+        if (f.type === 'move' && f.npcId != null && f.from != null) {
+          broadcastFx({ kind: 'eventNpcHold', npcId: f.npcId, from: f.from });
+        }
+      }
+    }
+  }
+  if (state) app.game = restoreState(state);
+}
+
+function armEventNpcMoveHolds(fxList) {
+  for (const fx of fxList || []) {
+    if (fx?.type === 'move' && fx.npcId != null && fx.from != null) {
+      app.renderer?.holdToken(fx.npcId, fx.from);
+    }
+  }
+}
+
+async function flushPendingEventNpcFx() {
+  const fx = app.pendingEventNpcFx || [];
+  app.pendingEventNpcFx = [];
+  if (!fx.length) return;
+  await presentEventNpcFx(fx);
+}
+
+async function presentEventNpcFx(fxList, remote = false) {
+  if (!fxList?.length) return;
+  const wasBusy = app.busy;
+  app.busy = true;
+  for (const fx of fxList) {
+    if (!fx) continue;
+    if (fx.type === 'spawn') {
+      if (!remote) {
+        broadcastFx({
+          kind: 'eventNpcSpawn',
+          npcId: fx.npcId,
+          npcKind: fx.kind,
+          pos: fx.pos,
+        });
+        pushEventStamp({
+          kicker: 'イベントNPC',
+          title: '異界から現れた！',
+          detail: fx.kind === 'mark_fairy' ? 'マークの妖精'
+            : fx.kind === 'merchant' ? '大商人'
+              : fx.kind === 'poverty' ? '貧乏神' : 'NPC',
+          kind: 'event',
+          color: '#c5a3ff',
+          silentStamp: true,
+        });
+      }
+      await wait(420);
+      continue;
+    }
+    if (fx.type === 'move') {
+      await presentEventNpcMove(fx, remote);
+      continue;
+    }
+    if (fx.type === 'depart') {
+      if (!remote) {
+        broadcastFx({
+          kind: 'eventNpcDepart',
+          npcId: fx.npcId,
+          npcKind: fx.kind,
+          label: fx.label,
+          pos: fx.pos,
+        });
+        pushEventStamp({
+          kicker: 'イベントNPC',
+          title: '異界へ帰っていった',
+          detail: fx.label || '',
+          kind: 'event',
+          color: '#9aa3b5',
+          silentStamp: true,
+        });
+      }
+      app.renderer?.clearTokenHold(fx.npcId);
+      await wait(360);
+    }
+  }
+  if (!wasBusy && clearBusyUnlessEventUi()) {
+    /* keep busy cleared unless flash open */
+  } else if (wasBusy) {
+    app.busy = true;
+  }
+}
+
+async function presentEventNpcMove(fx, remote = false) {
+  const path = Array.isArray(fx.path) && fx.path.length
+    ? fx.path
+    : [fx.from, fx.to].filter((id) => id != null);
+  if (!path.length || fx.npcId == null) return;
+  const diceMax = Math.max(2, Number(fx.diceMax) || 6);
+  const roll = Math.max(1, Math.min(diceMax, Number(fx.roll) || path.length - 1));
+  const label = fx.label || 'イベントNPC';
+
+  app.renderer?.holdToken(fx.npcId, path[0]);
+  if (!remote) {
+    broadcastFx({
+      kind: 'eventNpcMove',
+      npcId: fx.npcId,
+      kind: fx.kind,
+      label,
+      diceMax,
+      roll,
+      path,
+      from: path[0],
+      to: path[path.length - 1],
+    });
+  }
+  await playDiceOverlay(roll, remote, {
+    diceMax,
+    label,
+    landText: `${label} → ${roll}`,
+  });
+
+  for (let i = 1; i < path.length; i += 1) {
+    const from = path[i - 1];
+    const to = path[i];
+    app.renderer?.animateToken(fx.npcId, from, to, 400);
+    audio.sfx.step();
+    // ゲストは eventNpcMove パケット側で歩行するため、ここは状態のみ同期（二重ホップ防止）
+    if (!remote) syncState();
+    refreshGameUI();
+    await wait(420);
+  }
+  app.renderer?.clearTokenHold(fx.npcId);
 }
 
 function scratchEffectLines(messages = []) {
@@ -5353,10 +5536,11 @@ async function handleHostAction(from, data) {
     }
     noteActionActor(seat);
     const result = rollDice(app.game);
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     if (result.skipped) {
       syncState();
       refreshGameUI();
+      await flushPendingEventNpcFx();
       if (clearBusyUnlessEventUi()) scheduleCpu();
       return;
     }
@@ -5377,7 +5561,7 @@ async function handleHostAction(from, data) {
       app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
       return;
     }
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     syncState();
     refreshGameUI();
     return;
@@ -5417,13 +5601,13 @@ async function handleHostAction(from, data) {
     try {
       const result = applyChoice(app.game, action.choice);
       if (!result.ok) {
-        if (result.state) app.game = restoreState(result.state);
+        if (result.state) commitGameState(result.state);
         app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
         syncState();
         refreshGameUI();
         return;
       }
-      if (result.state) app.game = restoreState(result.state);
+      if (result.state) commitGameState(result.state);
       if (result.warps?.length) armWarpHolds(result.warps);
       if (result.fiveBuy) presentFiveBuyFx(result);
       if (result.monopolyBreak) presentMonopolyBreakFx(result);
@@ -5466,10 +5650,13 @@ async function handleHostAction(from, data) {
         app.busy = true;
         app.deferEventFlash = true;
         await continueAdvancing();
-        resumeAfterMovement();
-      } else if (clearBusyUnlessEventUi()) {
-        refreshGameUI();
-        scheduleCpu();
+        await resumeAfterMovement();
+      } else {
+        await flushPendingEventNpcFx();
+        if (clearBusyUnlessEventUi()) {
+          refreshGameUI();
+          scheduleCpu();
+        }
       }
     } finally {
       app.choiceResolving = false;
@@ -5487,7 +5674,7 @@ async function handleHostAction(from, data) {
       app.net.sendTo(from, { type: 'reject', reason: result.error || '売却できません' });
       return;
     }
-    if (result.state) app.game = restoreState(result.state);
+    if (result.state) commitGameState(result.state);
     audio.sfx.buy();
     syncState();
     refreshGameUI();
@@ -5556,7 +5743,7 @@ function scheduleCpu() {
     if (phase === 'await_roll') {
       if (!currentPlayer(app.game)?.isCPU) return;
       const result = cpuAct(app.game);
-      if (result?.state) app.game = restoreState(result.state);
+      if (result?.state) commitGameState(result.state);
       if (result?.dice) {
         app.hideDiceResult = true;
         refreshGameUI();
@@ -5564,6 +5751,7 @@ function scheduleCpu() {
       } else {
         syncState();
         refreshGameUI();
+        await flushPendingEventNpcFx();
         if (clearBusyUnlessEventUi()) scheduleCpu();
       }
       return;
@@ -5586,7 +5774,7 @@ function scheduleCpu() {
       }
       const pid = app.game.currentPlayerIdx;
       // chooseFork already applied in cpuAct
-      if (result.state) app.game = restoreState(result.state);
+      if (result.state) commitGameState(result.state);
       if (result.stepped) {
         app.busy = true;
         app.deferEventFlash = true;
@@ -5596,7 +5784,7 @@ function scheduleCpu() {
         refreshGameUI();
         await wait(420);
         await continueAdvancing();
-        resumeAfterMovement();
+        await resumeAfterMovement();
       } else {
         refreshGameUI();
         if (clearBusyUnlessEventUi()) scheduleCpu();
@@ -5606,7 +5794,7 @@ function scheduleCpu() {
 
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
-      if (result?.state) app.game = restoreState(result.state);
+      if (result?.state) commitGameState(result.state);
       if (result?.warps?.length) armWarpHolds(result.warps);
       if (result?.fiveBuy) presentFiveBuyFx(result);
       if (result?.monopolyBreak) presentMonopolyBreakFx(result);
@@ -5626,10 +5814,13 @@ function scheduleCpu() {
         app.busy = true;
         app.deferEventFlash = true;
         await continueAdvancing();
-        resumeAfterMovement();
-      } else if (clearBusyUnlessEventUi()) {
-        refreshGameUI();
-        scheduleCpu();
+        await resumeAfterMovement();
+      } else {
+        await flushPendingEventNpcFx();
+        if (clearBusyUnlessEventUi()) {
+          refreshGameUI();
+          scheduleCpu();
+        }
       }
     }
   }, 550 + Math.random() * 350);
@@ -6294,8 +6485,12 @@ function pumpEventFlash() {
 }
 
 /** 移動完了後: 遅延したイベントUIを出し、なければ選択UI／次手番へ */
-function resumeAfterMovement() {
+async function resumeAfterMovement() {
   app.deferEventFlash = false;
+  // プレイヤー移動完了後にイベントNPCのダイス／歩行を再生
+  if (app.pendingEventNpcFx?.length) {
+    await flushPendingEventNpcFx();
+  }
   // 分かれ道直後の購入/増資など、選択待ちなら演出 busy を先に解放してモーダルを出す
   if (isLocalPendingChoice(app.game)) {
     if (isEventUiBlocking()) {
