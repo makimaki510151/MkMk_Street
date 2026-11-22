@@ -3740,7 +3740,7 @@ body.your-turn #btn-roll:not(:disabled) {
   letter-spacing: 0.06em;
 }
 
-/* coin flip */
+/* coin flip — 表／裏は1文字で円内に収める */
 .mg-coin {
   width: 96px;
   height: 96px;
@@ -3748,12 +3748,23 @@ body.your-turn #btn-roll:not(:disabled) {
   display: grid;
   place-items: center;
   font-family: var(--display);
-  font-size: 1.35rem;
+  font-size: 2.4rem;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
   background: radial-gradient(circle at 35% 30%, #fff3b0, #e0a020 55%, #8a5a10);
   color: #3a2400;
   box-shadow: 0 14px 36px rgba(0,0,0,0.4), inset 0 -6px 12px rgba(0,0,0,0.2);
   border: 3px solid rgba(255, 224, 138, 0.65);
+}
+.mg-die.mg-coin-face {
+  font-size: 1.75rem;
+  line-height: 1;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
 }
 .mg-coin.flipping {
   animation: mgCoinFlip 0.18s linear infinite;

@@ -4639,8 +4639,8 @@ function scoreMinigamePlayer(g, p, game, pick, shared) {
     detail = `${labels[pick]} vs ${labels[foe]}`;
   } else if (game === 'coin') {
     const face = shared.face;
-    const faceLabel = face === 'heads' ? 'おもて' : 'うら';
-    const pickLabel = pick === 'heads' ? 'おもて' : 'うら';
+    const faceLabel = face === 'heads' ? '表' : '裏';
+    const pickLabel = pick === 'heads' ? '表' : '裏';
     outcome.face = face;
     if (pick === face) {
       win = true; tier = 'win'; title = '当たり！';

@@ -4396,7 +4396,7 @@ function minigameViewerRow(reveal) {
 }
 
 function formatCoinPickLabel(pick) {
-  return pick === 'tails' ? 'うら' : 'おもて';
+  return pick === 'tails' ? '裏' : '表';
 }
 
 function formatHighLowPickLabel(pick) {
@@ -4411,7 +4411,7 @@ function formatMinigameSharedLine(reveal) {
   if (game === 'high_low' && s.secret != null) {
     return `数字 ${s.secret}（${s.band === 'high' ? 'ハイ' : 'ロー'}）`;
   }
-  if (game === 'coin' && s.face) return s.face === 'heads' ? 'おもて' : 'うら';
+  if (game === 'coin' && s.face) return s.face === 'heads' ? '表' : '裏';
   if (game === 'roulette' && s.spin != null) {
     const colorLabel = { red: '赤', black: '黒', green: '緑' };
     return `${colorLabel[s.color] || ''}${s.spin}`;
@@ -5017,7 +5017,7 @@ async function animateHighLowReveal(body, reveal) {
 
 async function animateCoinReveal(body, reveal) {
   const face = (reveal.shared?.face ?? reveal.outcome?.face) === 'tails' ? 'tails' : 'heads';
-  const faceLabel = face === 'heads' ? 'おもて' : 'うら';
+  const faceLabel = face === 'heads' ? '表' : '裏';
   const partyRows = (reveal.results || []).map((r) => ({
     name: r.playerName || '',
     color: r.playerColor || '#c4a574',
@@ -5036,7 +5036,7 @@ async function animateCoinReveal(body, reveal) {
           <div class="mg-dice-pick-grid">
             ${partyRows.map((r) => `
               <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
-                <div class="mg-die mg-die-sm">${formatCoinPickLabel(r.pick)}</div>
+                <div class="mg-die mg-die-sm mg-coin-face">${formatCoinPickLabel(r.pick)}</div>
                 <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
               </div>
             `).join('')}
@@ -5056,7 +5056,7 @@ async function animateCoinReveal(body, reveal) {
       </div>`;
   }
   const coin = body.querySelector('#mg-coin');
-  const labels = ['おもて', 'うら'];
+  const labels = ['表', '裏'];
   for (let i = 0; i < 12; i++) {
     coin.textContent = labels[i % 2];
     audio.sfx.coinFlip();
@@ -7884,8 +7884,8 @@ function showChoiceModal(g) {
         <p class="hint">${partyHint ? `${partyHint} ` : ''}当たればボーナス。外れは参加賞。</p>
         ${statusHtml}
         <div class="modal-actions">
-          <button class="btn primary" id="m-heads">おもて</button>
-          <button class="btn" id="m-tails">うら</button>
+          <button class="btn primary" id="m-heads">表</button>
+          <button class="btn" id="m-tails">裏</button>
         </div>`;
       $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };

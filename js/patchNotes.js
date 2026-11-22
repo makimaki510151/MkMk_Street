@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.19',
+    date: '2026-11-22',
+    items: [
+      'コイントスの予想表示を「表／裏」にし、枠内に1文字で収まるように修正',
+    ],
+  },
+  {
     version: '1.9.18',
     date: '2026-11-22',
     items: [
