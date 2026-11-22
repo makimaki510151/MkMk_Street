@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.30',
+    date: '2026-11-22',
+    items: [
+      'プレイヤーコマの矢印を、進める方向すべてに表示するように変更',
+    ],
+  },
+  {
     version: '1.9.28',
     date: '2026-11-22',
     items: [
