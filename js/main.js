@@ -1829,7 +1829,53 @@ function presentFiveBuyFx(result = {}) {
   }
 }
 
-/** 目に優しいソフトな祝福演出（ジャックポット／独占など） */
+const CELEBRATE_CONFETTI_COLORS = [
+  '#ffe08a', '#ffb347', '#ff6b6b', '#ff8fab', '#c77dff',
+  '#4cc9f0', '#80ed99', '#fff1a8', '#f72585', '#f4a261',
+];
+
+/**
+ * 紙吹雪をコンテナへ流し込む。
+ * @param {HTMLElement|null} host
+ * @param {{ count?: number, durationMs?: number }} [opts]
+ */
+function spawnConfettiBurst(host, { count = 48, durationMs = 2600 } = {}) {
+  if (!host) return;
+  host.innerHTML = '';
+  const n = Math.max(12, Math.min(120, Math.floor(count)));
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < n; i++) {
+    const bit = document.createElement('span');
+    const shape = i % 5 === 0 ? 'ribbon' : (i % 3 === 0 ? 'square' : 'rect');
+    bit.className = `cfx-bit cfx-bit-${shape}`;
+    const left = Math.random() * 100;
+    const y0 = Math.random() * 28; // 画面上部〜中上から散らす
+    const delay = Math.random() * 0.45;
+    const dur = 2.2 + Math.random() * 1.6;
+    const drift = (Math.random() * 2 - 1) * 160;
+    const spin = 180 + Math.random() * 720;
+    const size = 11 + Math.random() * 15;
+    const color = CELEBRATE_CONFETTI_COLORS[i % CELEBRATE_CONFETTI_COLORS.length];
+    bit.style.setProperty('--x', `${left}%`);
+    bit.style.setProperty('--y0', `${y0}%`);
+    bit.style.setProperty('--delay', `${delay}s`);
+    bit.style.setProperty('--dur', `${dur}s`);
+    bit.style.setProperty('--drift', `${drift}px`);
+    bit.style.setProperty('--spin', `${spin}deg`);
+    bit.style.setProperty('--size', `${size}px`);
+    bit.style.setProperty('--c', color);
+    bit.style.animationDuration = `${dur}s`;
+    bit.style.animationDelay = `${delay}s`;
+    frag.appendChild(bit);
+  }
+  host.appendChild(frag);
+  clearTimeout(spawnConfettiBurst._clean);
+  spawnConfettiBurst._clean = setTimeout(() => {
+    if (host.isConnected) host.innerHTML = '';
+  }, durationMs + 400);
+}
+
+/** 祝福演出（ジャックポット／上役／独占など）。紙吹雪で盛り上がりを出す。 */
 function presentCelebrateFx({
   title = 'おめでとう！',
   detail = '',
@@ -1845,15 +1891,24 @@ function presentCelebrateFx({
   const detailEl = root.querySelector('.cfx-detail');
   if (titleEl) titleEl.textContent = title;
   if (detailEl) detailEl.textContent = detail || '';
+
+  const confettiHost = root.querySelector('.cfx-confetti');
+  const intensity = variant === 'jackpot' ? 88
+    : variant === 'big' ? 64
+      : variant === 'monopoly' ? 56
+        : 36;
+  const holdMs = variant === 'jackpot' ? 3200 : (variant === 'big' ? 2800 : 2400);
+  spawnConfettiBurst(confettiHost, { count: intensity, durationMs: holdMs });
+
   root.classList.remove('show');
-  // reflow して再アニメ
   void root.offsetWidth;
   root.classList.add('show');
   clearTimeout(presentCelebrateFx._t);
   presentCelebrateFx._t = setTimeout(() => {
     root.classList.remove('show');
     root.hidden = true;
-  }, 2200);
+    if (confettiHost) confettiHost.innerHTML = '';
+  }, holdMs);
 }
 
 function presentMonopolyFx(result) {
@@ -4396,11 +4451,11 @@ function minigameViewerRow(reveal) {
 }
 
 function formatCoinPickLabel(pick) {
-  return pick === 'tails' ? 'うら' : 'おもて';
+  return pick === 'tails' ? '裏' : '表';
 }
 
 function formatHighLowPickLabel(pick) {
-  return pick === 'high' ? 'ハイ' : 'ロー';
+  return pick === 'high' ? '高' : '低';
 }
 
 /** 全員参加ミニゲームの共通結果一行（出目・着順など） */
@@ -4409,9 +4464,9 @@ function formatMinigameSharedLine(reveal) {
   const game = reveal?.game || '';
   if (game === 'guess_dice' && s.roll != null) return `出目 ${s.roll}`;
   if (game === 'high_low' && s.secret != null) {
-    return `数字 ${s.secret}（${s.band === 'high' ? 'ハイ' : 'ロー'}）`;
+    return `数字 ${s.secret}（${s.band === 'high' ? '高' : '低'}）`;
   }
-  if (game === 'coin' && s.face) return s.face === 'heads' ? 'おもて' : 'うら';
+  if (game === 'coin' && s.face) return s.face === 'heads' ? '表' : '裏';
   if (game === 'roulette' && s.spin != null) {
     const colorLabel = { red: '赤', black: '黒', green: '緑' };
     return `${colorLabel[s.color] || ''}${s.spin}`;
@@ -4563,8 +4618,7 @@ async function playMinigameReveal(reveal) {
   }
   overlay.classList.add('show-result');
 
-  // 祝福FXはオーバーレイ表示中に重ねると「正解」白文字が他UIに被るため、
-  // ここでは SE のみ。祝福はオーバーレイ閉じた後に出す。
+  // 上役は結果表示中にも紙吹雪を重ね、閉じた後に本祝福を出す
   const celebrateAfter = (() => {
     if (reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'exact') {
       audio.sfx.slotWin(true);
@@ -4577,11 +4631,28 @@ async function playMinigameReveal(reveal) {
     }
     if (reveal.win) {
       audio.sfx.slotWin(false);
-      if (reveal.tier === 'fullhouse' || reveal.tier === 'win') {
+      if (reveal.tier === 'fullhouse' || reveal.tier === 'triple') {
         return {
           title: reveal.title || '大当たり！',
           detail: summarizeMinigameResults(reveal) || '',
           color: reveal.playerColor || '#9ef0c8',
+          variant: 'big',
+        };
+      }
+      if (reveal.tier === 'two_pair' || reveal.tier === 'win') {
+        return {
+          title: reveal.title || '当たり！',
+          detail: summarizeMinigameResults(reveal) || '',
+          color: reveal.playerColor || '#9ef0c8',
+          variant: 'soft',
+        };
+      }
+      // pair も軽く祝福
+      if (reveal.tier === 'pair') {
+        return {
+          title: reveal.title || 'ワンペア！',
+          detail: summarizeMinigameResults(reveal) || '',
+          color: reveal.playerColor || '#ffe08a',
           variant: 'soft',
         };
       }
@@ -4591,14 +4662,31 @@ async function playMinigameReveal(reveal) {
     return null;
   })();
 
-  const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad' || reveal.tier === 'fullhouse';
-  const holdMs = party ? 2600 : (bigHold ? 1600 : 1100);
+  if (celebrateAfter) {
+    const stageConfetti = overlay.querySelector('.mg-confetti') || (() => {
+      const el = document.createElement('div');
+      el.className = 'mg-confetti';
+      el.setAttribute('aria-hidden', 'true');
+      overlay.appendChild(el);
+      return el;
+    })();
+    const burst = celebrateAfter.variant === 'jackpot' ? 70
+      : celebrateAfter.variant === 'big' ? 48
+        : 28;
+    spawnConfettiBurst(stageConfetti, { count: burst, durationMs: 2200 });
+  }
+
+  const bigHold = reveal.tier === 'jackpot' || reveal.tier === 'quad'
+    || reveal.tier === 'fullhouse' || reveal.tier === 'triple' || reveal.tier === 'exact';
+  const holdMs = party ? 2800 : (bigHold ? 2000 : 1200);
   await wait(holdMs);
   overlay.hidden = true;
   overlay.classList.remove('show-result', 'party');
   stage?.classList.remove('party');
   body.innerHTML = '';
   detail.innerHTML = '';
+  const leftoverConfetti = overlay.querySelector('.mg-confetti');
+  if (leftoverConfetti) leftoverConfetti.innerHTML = '';
   if (answer) {
     answer.hidden = true;
     answer.textContent = '';
@@ -4961,7 +5049,7 @@ async function animateBalloonDashReveal(body, reveal) {
 async function animateHighLowReveal(body, reveal) {
   const secret = reveal.shared?.secret ?? reveal.outcome?.secret ?? 1;
   const bandRaw = reveal.shared?.band ?? reveal.outcome?.band;
-  const band = bandRaw === 'high' ? 'ハイ' : 'ロー';
+  const band = bandRaw === 'high' ? '高' : '低';
   const partyRows = (reveal.results || []).map((r) => ({
     name: r.playerName || '',
     color: r.playerColor || '#c4a574',
@@ -4980,7 +5068,7 @@ async function animateHighLowReveal(body, reveal) {
           <div class="mg-dice-pick-grid">
             ${partyRows.map((r) => `
               <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
-                <div class="mg-die mg-die-sm">${formatHighLowPickLabel(r.pick)}</div>
+                <div class="mg-die mg-die-sm mg-hl-face">${formatHighLowPickLabel(r.pick)}</div>
                 <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
               </div>
             `).join('')}
@@ -5017,7 +5105,7 @@ async function animateHighLowReveal(body, reveal) {
 
 async function animateCoinReveal(body, reveal) {
   const face = (reveal.shared?.face ?? reveal.outcome?.face) === 'tails' ? 'tails' : 'heads';
-  const faceLabel = face === 'heads' ? 'おもて' : 'うら';
+  const faceLabel = face === 'heads' ? '表' : '裏';
   const partyRows = (reveal.results || []).map((r) => ({
     name: r.playerName || '',
     color: r.playerColor || '#c4a574',
@@ -5036,7 +5124,7 @@ async function animateCoinReveal(body, reveal) {
           <div class="mg-dice-pick-grid">
             ${partyRows.map((r) => `
               <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
-                <div class="mg-die mg-die-sm">${formatCoinPickLabel(r.pick)}</div>
+                <div class="mg-die mg-die-sm mg-coin-face">${formatCoinPickLabel(r.pick)}</div>
                 <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
               </div>
             `).join('')}
@@ -5056,7 +5144,7 @@ async function animateCoinReveal(body, reveal) {
       </div>`;
   }
   const coin = body.querySelector('#mg-coin');
-  const labels = ['おもて', 'うら'];
+  const labels = ['表', '裏'];
   for (let i = 0; i < 12; i++) {
     coin.textContent = labels[i % 2];
     audio.sfx.coinFlip();
@@ -6812,6 +6900,89 @@ function phaseLabel(g) {
   }
 }
 
+/** 店IDをエリア順にグループ化 */
+function groupShopIdsByArea(g, ids) {
+  /** @type {Map<number, number[]>} */
+  const groups = new Map();
+  for (const raw of ids || []) {
+    const id = Number(raw);
+    const sq = getNode(g, id);
+    if (!sq || sq.type !== 'shop') continue;
+    const area = Number(sq.area);
+    if (!groups.has(area)) groups.set(area, []);
+    groups.get(area).push(id);
+  }
+  return [...groups.entries()].sort((a, b) => {
+    const ca = getAreaCode(g, a[0]);
+    const cb = getAreaCode(g, b[0]);
+    return String(ca).localeCompare(String(cb), 'ja') || a[0] - b[0];
+  });
+}
+
+function shopAreaDisplayName(g, area) {
+  return AREA_META[area]?.name || g.areas?.[area]?.name || getAreaCode(g, area);
+}
+
+/**
+ * エリア見出し付きの店選びリストHTML。
+ * @param {(id:number)=>string} renderShopBtn
+ */
+function renderGroupedShopPickList(g, ids, renderShopBtn) {
+  const groups = groupShopIdsByArea(g, ids);
+  if (!groups.length) return '';
+  const tabs = groups.map(([area, shopIds]) => {
+    const color = AREA_META[area]?.color || g.areas?.[area]?.color || '#888';
+    const code = getAreaCode(g, area);
+    return `<button type="button" class="shop-pick-tab" data-jump-area="${area}" style="--ac:${color}" title="${escapeHtml(shopAreaDisplayName(g, area))}">
+      <span class="shop-pick-tab-swatch" aria-hidden="true"></span>${escapeHtml(code)}<small>${shopIds.length}</small>
+    </button>`;
+  }).join('');
+  const sections = groups.map(([area, shopIds]) => {
+    const color = AREA_META[area]?.color || g.areas?.[area]?.color || '#888';
+    const code = getAreaCode(g, area);
+    const name = shopAreaDisplayName(g, area);
+    return `<section class="shop-pick-area" data-area="${area}" id="shop-pick-area-${area}" style="--ac:${color}">
+      <header class="shop-pick-area-head" data-peek-area="${area}">
+        <span class="shop-pick-area-swatch" aria-hidden="true"></span>
+        <span class="shop-pick-area-code">${escapeHtml(code)}</span>
+        <span class="shop-pick-area-name">${escapeHtml(name)}</span>
+        <span class="shop-pick-area-count">${shopIds.length}店</span>
+      </header>
+      <div class="shop-pick-area-shops">${shopIds.map((id) => renderShopBtn(id)).join('')}</div>
+    </section>`;
+  }).join('');
+  return `<div class="shop-pick-tabs" role="tablist">${tabs}</div>
+    <div class="pick-invest-list shop-pick-scroll">${sections}</div>`;
+}
+
+/** エリアタブ／見出しのホバーで盤面エリアを光らせ、タブで該当ブロックへスクロール */
+function bindShopPickAreaChrome(g, listRoot) {
+  const root = listRoot || $('#modal-body');
+  if (!root) return;
+  const clearPeek = () => app.renderer?.clearStockHighlight?.();
+  root.querySelectorAll('[data-peek-area], .shop-pick-tab').forEach((el) => {
+    const area = Number(el.dataset.peekArea || el.dataset.jumpArea);
+    if (!Number.isFinite(area)) return;
+    el.addEventListener('mouseenter', () => app.renderer?.setStockHighlight?.(area, true));
+    el.addEventListener('mouseleave', clearPeek);
+  });
+  root.querySelectorAll('.shop-pick-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const area = Number(tab.dataset.jumpArea);
+      const section = root.querySelector(`#shop-pick-area-${area}`);
+      section?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      app.renderer?.setStockHighlight?.(area, true);
+      root.querySelectorAll('.shop-pick-tab').forEach((t) => {
+        t.classList.toggle('is-active', Number(t.dataset.jumpArea) === area);
+      });
+    });
+  });
+}
+
+function enableShopPickModalCard() {
+  $('#modal-card')?.classList.add('shop-pick-modal');
+}
+
 function showChoiceModal(g) {
   const pend = g.pending;
   const modal = $('#modal');
@@ -6842,6 +7013,7 @@ function showChoiceModal(g) {
   $('#modal-card').classList.remove('stock-modal');
   $('#modal-card').classList.remove('scratch-modal');
   $('#modal-card').classList.remove('raise-modal');
+  $('#modal-card').classList.remove('shop-pick-modal');
   hideForkRails();
 
   if (pend.type === 'fork') {
@@ -7059,22 +7231,26 @@ function showChoiceModal(g) {
       const rate = getAreaMonopolyRate(g, pend.playerId, sq.area);
       const multi = investMultiByMonopolyRate(rate);
       const pct = Math.round(rate * 100);
-      const area = AREA_META[sq.area]?.name || g.areas[sq.area]?.name || getAreaCode(g, sq.area);
-      return { sq, rem, maxInv, owned, total, multi, pct, area };
+      const area = shopAreaDisplayName(g, sq.area);
+      const code = getAreaCode(g, sq.area);
+      return { sq, rem, maxInv, owned, total, multi, pct, area, code };
     };
 
     title.textContent = '好きな店へ増資';
+    enableShopPickModalCard();
     const hasHalf = !!investor?.flags?.investCoupon;
-    const rows = ids.map((id) => {
-      const m = shopMeta(id);
-      if (!m) return '';
-      const landedTag = id === landedId ? '<span class="invest-landed-tag">止まった店</span>' : '';
-      return `<button type="button" class="btn pick-invest-shop invest-pick-shop${id === selectedId ? ' selected' : ''}" data-shop="${id}" style="--ac:${AREA_META[m.sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(m.sq.label)}</strong>${landedTag}
-        <span class="pick-invest-gain">枠 ${m.rem.toLocaleString()}G</span>
-        <small>${escapeHtml(m.area)} · 料 ${calcToll(g, m.sq).toLocaleString()}G · 独占 ${m.owned}/${m.total}（×${m.multi}）</small>
-      </button>`;
-    }).join('');
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const m = shopMeta(id);
+        if (!m) return '';
+        const landedTag = id === landedId ? '<span class="invest-landed-tag">止まった店</span>' : '';
+        return `<button type="button" class="btn pick-invest-shop invest-pick-shop${id === selectedId ? ' selected' : ''}" data-shop="${id}" data-area="${m.sq.area}" style="--ac:${AREA_META[m.sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(m.sq.label)}</strong>${landedTag}
+          <span class="pick-invest-gain">枠 ${m.rem.toLocaleString()}G</span>
+          <small>${escapeHtml(m.code)} · 料 ${calcToll(g, m.sq).toLocaleString()}G · 独占 ${m.owned}/${m.total}（×${m.multi}）</small>
+        </button>`;
+      })
+      : '<p class="hint">所持店がありません</p>';
 
     const renderAmount = () => {
       const m = shopMeta(selectedId);
@@ -7084,7 +7260,7 @@ function showChoiceModal(g) {
       const preview = Math.min(rem, 100);
       const payPreview = hasHalf ? Math.ceil(preview / 2) : preview;
       panel.innerHTML = `
-        <p class="modal-lead">選択中: <strong>${escapeHtml(m.sq.label)}</strong></p>
+        <p class="modal-lead">選択中: <strong>${escapeHtml(m.sq.label)}</strong> <span class="hint">（${escapeHtml(m.code)} ${escapeHtml(m.area)}）</span></p>
         <p>買い物料 ${calcToll(g, m.sq).toLocaleString()}G / 増資残り <strong>${rem.toLocaleString()}G</strong></p>
         <p class="hint">独占率 ${m.owned}/${m.total}（${m.pct}%）→ 上限倍率×${m.multi}（上限 ${m.maxInv.toLocaleString()}G）</p>
         <label class="field">増資額 <input type="number" id="m-amt" min="0" max="${rem}" value="${preview}" ${rem <= 0 ? 'disabled' : ''} /></label>
@@ -7108,14 +7284,26 @@ function showChoiceModal(g) {
     };
 
     body.innerHTML = `
-      ${hasHalf ? '<div class="invest-half-banner" role="status">増資半額クーポン適用中 — 今回の増資支払いが半分</div>' : ''}
-      <p class="hint">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}好きな自分の店へ増資できます（選択店は盤面で琥珀色に光ります）</p>
-      <div class="pick-invest-list invest-pick-list">${rows || '<p class="hint">所持店がありません</p>'}</div>
-      <div id="invest-amount-panel"></div>`;
+      <div class="shop-pick-layout">
+        ${hasHalf ? '<div class="invest-half-banner" role="status">増資半額クーポン適用中 — 今回の増資支払いが半分</div>' : ''}
+        <p class="hint shop-pick-intro">${landed ? `「${escapeHtml(landed.label)}」に止まりました。` : ''}エリア見出し／タブで場所を確認。選択店は盤面で琥珀色に光ります。</p>
+        ${listHtml}
+        <div id="invest-amount-panel" class="shop-pick-footer"></div>
+      </div>`;
     const syncInvestHighlight = () => {
       app.renderer?.setInvestHighlight(selectedId);
+      const sq = getNode(g, selectedId);
+      if (sq) app.renderer?.setStockHighlight?.(sq.area, true);
     };
     $$('.invest-pick-shop').forEach((btn) => {
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        syncInvestHighlight();
+      };
       btn.onclick = () => {
         selectedId = Number(btn.dataset.shop);
         $$('.invest-pick-shop').forEach((b) => b.classList.toggle('selected', Number(b.dataset.shop) === selectedId));
@@ -7123,6 +7311,7 @@ function showChoiceModal(g) {
         renderAmount();
       };
     });
+    bindShopPickAreaChrome(g, body);
     syncInvestHighlight();
     renderAmount();
     return;
@@ -7134,31 +7323,46 @@ function showChoiceModal(g) {
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
     title.textContent = 'スクラッチ特典：店を選んで増資';
-    const rows = ids.map((id) => {
-      const sq = getNode(g, id);
-      if (!sq) return '';
-      const rem = getRemainingInvest(g, sq);
-      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
-      const capped = rem < amount;
-      return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(sq.label)}</strong>
-        <span class="pick-invest-gain">+${Math.min(amount, Math.max(0, rem)).toLocaleString()}G</span>
-        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G · 枠 ${rem.toLocaleString()}G${capped ? '（枠内まで）' : ''}</small>
-      </button>`;
-    }).join('');
+    enableShopPickModalCard();
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const rem = getRemainingInvest(g, sq);
+        const code = getAreaCode(g, sq.area);
+        const capped = rem < amount;
+        return `<button type="button" class="btn pick-invest-shop" data-shop="${sq.id}" data-area="${sq.area}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">+${Math.min(amount, Math.max(0, rem)).toLocaleString()}G</span>
+          <small>${escapeHtml(code)} · 価格 ${sq.price.toLocaleString()}G · 枠 ${rem.toLocaleString()}G${capped ? '（枠内まで）' : ''}</small>
+        </button>`;
+      })
+      : '<p class="hint">所持店がありません</p>';
     body.innerHTML = `
-      <div class="scratch-followup">
-        <p class="scratch-followup-kicker">スクラッチで発動</p>
-        <p class="modal-lead">好きな自分の店へ <strong>+${amount.toLocaleString()}G</strong> 無料増資</p>
-        <p class="hint">タップした店の価値が上がります（増資枠がある店を選んでください）</p>
-      </div>
-      <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">好きな自分の店へ <strong>+${amount.toLocaleString()}G</strong> 無料増資</p>
+          <p class="hint">エリア別に並んでいます。ホバーで盤面の場所が分かります。</p>
+        </div>
+        ${listHtml}
+      </div>`;
     $$('.pick-invest-shop').forEach((btn) => {
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
       btn.onclick = () => {
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'invest', shopId: Number(btn.dataset.shop) } });
       };
     });
+    bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) skip.textContent = 'おまかせで増資';
     return;
@@ -7169,33 +7373,46 @@ function showChoiceModal(g) {
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
     title.textContent = '強制売却：1店舗売る';
-    const rows = ids.map((id) => {
-      const sq = getNode(g, id);
-      if (!sq) return '';
-      const got = Math.floor(sq.price * 0.5);
-      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
-      return `<button type="button" class="btn pick-invest-shop force-sell-shop" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(sq.label)}</strong>
-        <span class="pick-invest-gain">売却 +${got.toLocaleString()}G</span>
-        <small>${escapeHtml(area)} · 価格 ${sq.price.toLocaleString()}G（半額で換金）</small>
-      </button>`;
-    }).join('');
+    enableShopPickModalCard();
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const got = Math.floor(sq.price * 0.5);
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop force-sell-shop" data-shop="${sq.id}" data-area="${sq.area}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">売却 +${got.toLocaleString()}G</span>
+          <small>${escapeHtml(code)} · 価格 ${sq.price.toLocaleString()}G（半額で換金）</small>
+        </button>`;
+      })
+      : '<p class="hint">所持店がありません</p>';
     body.innerHTML = `
-      <div class="scratch-followup">
-        <p class="scratch-followup-kicker">スクラッチで発動</p>
-        <p class="modal-lead">お店を <strong>1店舗</strong> 売却する義務が発生しました</p>
-        <p class="hint">盤面の店をクリックしても選べます（価格の半額が手元に戻ります）</p>
-      </div>
-      <div class="pick-invest-list">${rows || '<p class="hint">所持店がありません</p>'}</div>`;
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">お店を <strong>1店舗</strong> 売却する義務が発生しました</p>
+          <p class="hint">エリア別に表示。盤面の店をクリックしても選べます。</p>
+        </div>
+        ${listHtml}
+      </div>`;
     app.renderer?.setShopPickHighlight?.(ids);
     $$('.force-sell-shop').forEach((btn) => {
-      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
-      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
       btn.onclick = () => {
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'sell', shopId: Number(btn.dataset.shop) } });
       };
     });
+    bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) {
       skip.textContent = 'おまかせで売却';
@@ -7211,36 +7428,49 @@ function showChoiceModal(g) {
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
     title.textContent = `指名買収：${multi}倍で買う`;
-    const rows = ids.map((id) => {
-      const sq = getNode(g, id);
-      if (!sq) return '';
-      const owner = g.players[sq.owner];
-      const price = sq.price * multi;
-      const can = getLiquidatableValue(g, p) >= price;
-      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
-      return `<button type="button" class="btn pick-invest-shop any-shop-buy" data-shop="${sq.id}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(sq.label)}</strong>
-        <span class="pick-invest-gain">${price.toLocaleString()}G</span>
-        <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(area)} · 店価 ${sq.price.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
-      </button>`;
-    }).join('');
+    enableShopPickModalCard();
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const owner = g.players[sq.owner];
+        const price = sq.price * multi;
+        const can = getLiquidatableValue(g, p) >= price;
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop any-shop-buy" data-shop="${sq.id}" data-area="${sq.area}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">${price.toLocaleString()}G</span>
+          <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(code)} · 店価 ${sq.price.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
+        </button>`;
+      })
+      : '<p class="hint">相手の店がありません</p>';
     body.innerHTML = `
-      <div class="scratch-followup">
-        <p class="scratch-followup-kicker">スクラッチで発動</p>
-        <p class="modal-lead">好きな相手の店を <strong>${multi}倍</strong> で買収できます</p>
-        <p class="hint">盤面の候補店（水色の縁）をクリックしても選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G — 不足時は調達へ</p>
-      </div>
-      <div class="pick-invest-list">${rows || '<p class="hint">相手の店がありません</p>'}</div>`;
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">好きな相手の店を <strong>${multi}倍</strong> で買収できます</p>
+          <p class="hint">エリア別に表示。盤面の候補店（水色の縁）でも選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G</p>
+        </div>
+        ${listHtml}
+      </div>`;
     app.renderer?.setShopPickHighlight?.(ids);
     $$('.any-shop-buy').forEach((btn) => {
-      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
-      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
       btn.onclick = () => {
         if (btn.disabled) return;
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'buy', shopId: Number(btn.dataset.shop) } });
       };
     });
+    bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) {
       skip.textContent = '見送る';
@@ -7256,36 +7486,49 @@ function showChoiceModal(g) {
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner < 0).map((s) => s.id);
     title.textContent = `空き店購入：${multi}倍価格`;
-    const rows = ids.map((id) => {
-      const sq = getNode(g, id);
-      if (!sq) return '';
-      const base = Number(sq.basePrice || sq.price) || 0;
-      const price = base * multi;
-      const can = getLiquidatableValue(g, p) >= price;
-      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
-      return `<button type="button" class="btn pick-invest-shop vacant-shop-buy" data-shop="${sq.id}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(sq.label)}</strong>
-        <span class="pick-invest-gain">${price.toLocaleString()}G</span>
-        <small>${escapeHtml(area)} · 定価 ${base.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
-      </button>`;
-    }).join('');
+    enableShopPickModalCard();
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const base = Number(sq.basePrice || sq.price) || 0;
+        const price = base * multi;
+        const can = getLiquidatableValue(g, p) >= price;
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop vacant-shop-buy" data-shop="${sq.id}" data-area="${sq.area}" ${can ? '' : 'disabled'} style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">${price.toLocaleString()}G</span>
+          <small>${escapeHtml(code)} · 定価 ${base.toLocaleString()}G×${multi}${can ? '' : '（資金不足）'}</small>
+        </button>`;
+      })
+      : '<p class="hint">空き店がありません</p>';
     body.innerHTML = `
-      <div class="scratch-followup">
-        <p class="scratch-followup-kicker">スクラッチで発動</p>
-        <p class="modal-lead">好きな空き店を <strong>${multi}倍価格</strong> で購入できます</p>
-        <p class="hint">盤面の空き店をクリックしても選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G</p>
-      </div>
-      <div class="pick-invest-list">${rows || '<p class="hint">空き店がありません</p>'}</div>`;
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">好きな空き店を <strong>${multi}倍価格</strong> で購入できます</p>
+          <p class="hint">エリア別に表示。盤面の空き店でも選べます。所持金 ${Number(p?.cash || 0).toLocaleString()}G</p>
+        </div>
+        ${listHtml}
+      </div>`;
     app.renderer?.setShopPickHighlight?.(ids);
     $$('.vacant-shop-buy').forEach((btn) => {
-      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
-      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
       btn.onclick = () => {
         if (btn.disabled) return;
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'buy', shopId: Number(btn.dataset.shop) } });
       };
     });
+    bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) {
       skip.textContent = '見送る';
@@ -7300,34 +7543,47 @@ function showChoiceModal(g) {
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
     title.textContent = `相手店の強制換金：${multi}倍`;
-    const rows = ids.map((id) => {
-      const sq = getNode(g, id);
-      if (!sq) return '';
-      const owner = g.players[sq.owner];
-      const payout = Math.floor(sq.price * multi);
-      const area = AREA_META[sq.area]?.name || getAreaCode(g, sq.area);
-      return `<button type="button" class="btn pick-invest-shop force-rival-sell" data-shop="${sq.id}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
-        <strong>${escapeHtml(sq.label)}</strong>
-        <span class="pick-invest-gain">銀行→相手 ${payout.toLocaleString()}G</span>
-        <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(area)} · 店価 ${sq.price.toLocaleString()}G×${multi}</small>
-      </button>`;
-    }).join('');
+    enableShopPickModalCard();
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const owner = g.players[sq.owner];
+        const payout = Math.floor(sq.price * multi);
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop force-rival-sell" data-shop="${sq.id}" data-area="${sq.area}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">銀行→相手 ${payout.toLocaleString()}G</span>
+          <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(code)} · 店価 ${sq.price.toLocaleString()}G×${multi}</small>
+        </button>`;
+      })
+      : '<p class="hint">相手の店がありません</p>';
     body.innerHTML = `
-      <div class="scratch-followup">
-        <p class="scratch-followup-kicker">スクラッチで発動</p>
-        <p class="modal-lead">好きな相手の店を空きにし、<strong>店価×${multi}</strong>を銀行が相手に支払います</p>
-        <p class="hint">盤面の候補店をクリックしても選べます（あなたからの支払いはありません）</p>
-      </div>
-      <div class="pick-invest-list">${rows || '<p class="hint">相手の店がありません</p>'}</div>`;
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">好きな相手の店を空きにし、<strong>店価×${multi}</strong>を銀行が相手に支払います</p>
+          <p class="hint">エリア別に表示。盤面の候補店でも選べます。</p>
+        </div>
+        ${listHtml}
+      </div>`;
     app.renderer?.setShopPickHighlight?.(ids);
     $$('.force-rival-sell').forEach((btn) => {
-      btn.onmouseenter = () => app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
-      btn.onmouseleave = () => app.renderer?.clearInvestHighlight();
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
       btn.onclick = () => {
         hideModal();
         sendAction({ type: 'choice', choice: { action: 'sell', shopId: Number(btn.dataset.shop) } });
       };
     });
+    bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) {
       skip.textContent = '見送る';
@@ -7857,12 +8113,12 @@ function showChoiceModal(g) {
       });
     } else if (game === 'high_low') {
       body.innerHTML = `
-        <p class="modal-lead">次の数字はハイ？ ロー？${partyTag}</p>
-        <p class="hint">${partyHint ? `${partyHint} ` : ''}1〜10のうち、6以上がハイ・5以下がロー。</p>
+        <p class="modal-lead">次の数字は高？ 低？${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}1〜10のうち、6以上が高・5以下が低。</p>
         ${statusHtml}
         <div class="modal-actions">
-          <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
-          <button class="btn" id="m-lo">ロー（1〜5）</button>
+          <button class="btn primary" id="m-hi">高（6〜10）</button>
+          <button class="btn" id="m-lo">低（1〜5）</button>
         </div>`;
       $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
@@ -7884,8 +8140,8 @@ function showChoiceModal(g) {
         <p class="hint">${partyHint ? `${partyHint} ` : ''}当たればボーナス。外れは参加賞。</p>
         ${statusHtml}
         <div class="modal-actions">
-          <button class="btn primary" id="m-heads">おもて</button>
-          <button class="btn" id="m-tails">うら</button>
+          <button class="btn primary" id="m-heads">表</button>
+          <button class="btn" id="m-tails">裏</button>
         </div>`;
       $('#m-heads').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'heads' } }); };
       $('#m-tails').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'tails' } }); };
