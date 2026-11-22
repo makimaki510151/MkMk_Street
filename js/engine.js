@@ -12,7 +12,12 @@ import {
   dirLabel,
   getMapDef,
   getAreaCode,
+  STOCK_PRICE_MIN,
+  STOCK_PRICE_MAX,
+  clampStockPrice,
 } from './board.js';
+
+export { STOCK_PRICE_MIN, STOCK_PRICE_MAX, clampStockPrice };
 import {
   createEventTable,
   scratchCell,
@@ -432,7 +437,8 @@ const BOARD_EVENTS = [
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
     if (g.areas[a]) {
-      g.areas[a].B = Math.min(250, Math.floor((g.areas[a].B || 100) * 1.06));
+      // 旧実装の Math.min(250, …) は B≈6500 時代に株価を1Gへ潰すバグだった
+      g.areas[a].B = Math.floor((g.areas[a].B || 100) * 1.06);
       updateAreaStockPrices(g);
     }
     return `話題沸騰！ +${n}G／${getAreaCode(g, a)}株↑`;
@@ -830,7 +836,7 @@ function areaShopAvgPrice(g, area) {
 }
 
 function stockPriceFromB(avg, B) {
-  return Math.max(1, Math.floor((avg / 65536) * (B || 100)));
+  return clampStockPrice(Math.floor((avg / 65536) * (B || 100)));
 }
 
 function playerTurnSellPressure(p, area) {

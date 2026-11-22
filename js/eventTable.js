@@ -1,7 +1,7 @@
 /** MkMk Street — 10×10 イベント表（1〜200番をランダム配置） */
 
 import { remainingInvest } from './investLimits.js';
-import { getAreaCode } from './board.js';
+import { getAreaCode, clampStockPrice } from './board.js';
 
 export const TABLE_SIZE = 10;
 export const EVENT_COUNT = 200;
@@ -484,7 +484,7 @@ function refreshAreaStockPrice(g, area) {
   const shops = g.map.filter((s) => s.type === 'shop' && Number(s.area) === area);
   if (!shops.length) return;
   const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
-  meta.stockPrice = Math.max(1, Math.floor((avg / 65536) * (meta.B || 100)));
+  meta.stockPrice = clampStockPrice(Math.floor((avg / 65536) * (meta.B || 100)));
 }
 
 /** スクラッチ後にエンジン側で処理する副作用（循環 import 回避） */
@@ -1175,7 +1175,7 @@ function applyEventDef(g, player, def, messages) {
         const shops = g.map.filter((s) => s.type === 'shop' && s.area === a);
         if (shops.length) {
           const avg = shops.reduce((s, sq) => s + sq.price, 0) / shops.length;
-          g.areas[a].stockPrice = Math.max(1, Math.floor((avg / 65536) * g.areas[a].B));
+          g.areas[a].stockPrice = clampStockPrice(Math.floor((avg / 65536) * g.areas[a].B));
         }
         messages.push(`${getAreaCode(g, a)} の相場が${mult >= 1 ? '上昇' : '調整'}（${g.areas[a].stockPrice}G）`);
       }
