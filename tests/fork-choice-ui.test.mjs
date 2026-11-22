@@ -17,7 +17,8 @@ function isLocalPendingChoice(app, g) {
 function ensureChoiceUi(app, g) {
   const mine = isLocalPendingChoice(app, g);
   if (!mine) {
-    if (!app.busy) app.modalShown = false;
+    // busy 中でも相手／CPU待ちの古い選択UIは閉じる（逆交渉連打の残留ボタン対策）
+    app.modalShown = false;
     return { mine: false, shown: false };
   }
   if (app.eventFlashOpen || app.holdingBusy || (app.queue?.length > 0)) {

@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.22',
+    date: '2026-11-22',
+    items: [
+      '物件取引の逆交渉を連打すると進行が止まる不具合を修正',
+    ],
+  },
+  {
     version: '1.9.21',
     date: '2026-11-22',
     items: [

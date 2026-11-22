@@ -4294,6 +4294,46 @@ describe('MkMk Street engine', () => {
     assert.equal(g.players[1].cash, cashB + 80);
   });
 
+  it('keeps shop_trade_offer pending through rapid counter ping-pong then accept', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }],
+      seed: 17,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    const aShop = shops[0];
+    const bShop = shops[1];
+    aShop.owner = 0;
+    bShop.owner = 1;
+    aShop.price = 250;
+    bShop.price = 250;
+    g.players[0].cash = 5000;
+    g.players[1].cash = 5000;
+    g.phase = 'await_roll';
+    g.currentPlayerIdx = 0;
+
+    openShopTradeCompose(g, 0);
+    applyChoice(g, { action: 'set_target', targetId: 1 });
+    applyChoice(g, { action: 'toggle_give', shopId: aShop.id });
+    applyChoice(g, { action: 'toggle_take', shopId: bShop.id });
+    assert.equal(applyChoice(g, { action: 'propose', cashDelta: 0 }).ok, true);
+    assert.equal(g.pending.playerId, 1);
+
+    // 連打相当: 役割が入れ替わりながらも offer が壊れないこと
+    for (let i = 0; i < 6; i++) {
+      const before = g.pending.playerId;
+      const r = applyChoice(g, { action: 'counter', cashDelta: i * 10 });
+      assert.equal(r.ok, true, `counter ${i}`);
+      assert.equal(r.tradeCountered, true);
+      assert.equal(g.pending?.type, 'shop_trade_offer');
+      assert.equal(g.phase, 'await_choice');
+      assert.notEqual(g.pending.playerId, before);
+      assert.equal(g.pending.fromId, before);
+    }
+    assert.equal(applyChoice(g, { action: 'accept' }).ok, true);
+    assert.equal(g.pending, null);
+    assert.equal(g.phase, 'await_roll');
+  });
+
   it('executeShopTrade requires at least one shop each side', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
