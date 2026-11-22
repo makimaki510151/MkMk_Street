@@ -3365,14 +3365,17 @@ function renderForkRails(pend) {
   });
 }
 
-/** マップ拡大縮小・ドラッグパン・ホイールズーム */
+/** マップ拡大縮小・ドラッグパン・ホイールズーム・ピンチズーム */
 function bindBoardZoomControls(canvas) {
+  const zoomMaxNow = () => app.renderer?.getZoomMax?.()
+    ?? app.renderer?.ZOOM_MAX
+    ?? 2.5;
   const syncZoomButtons = () => {
     const z = app.renderer?.getZoom?.() ?? 1;
     const out = $('#btn-zoom-out');
     const inn = $('#btn-zoom-in');
     if (out) out.disabled = z <= (app.renderer?.ZOOM_MIN ?? 0.65) + 0.001;
-    if (inn) inn.disabled = z >= (app.renderer?.ZOOM_MAX ?? 2.5) - 0.001;
+    if (inn) inn.disabled = z >= zoomMaxNow() - 0.001;
   };
 
   $('#btn-zoom-in')?.addEventListener('click', (e) => {
@@ -3403,8 +3406,54 @@ function bindBoardZoomControls(canvas) {
   }, { passive: false });
 
   let pan = null;
+  /** @type {{ startDist: number, startZoom: number } | null} */
+  let pinch = null;
+  let pinchMoved = false;
+
+  const touchDistance = (a, b) => Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+  const touchMidpoint = (a, b, rect) => ({
+    x: (a.clientX + b.clientX) / 2 - rect.left,
+    y: (a.clientY + b.clientY) / 2 - rect.top,
+  });
+
+  // 2本指ピンチで拡大縮小（touch-action:none 前提）
+  canvas.addEventListener('touchstart', (e) => {
+    if (!app.renderer || e.touches.length !== 2) return;
+    e.preventDefault();
+    pan = null;
+    canvas.classList.remove('is-panning');
+    pinchMoved = false;
+    pinch = {
+      startDist: touchDistance(e.touches[0], e.touches[1]),
+      startZoom: app.renderer.getZoom?.() || 1,
+    };
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (!pinch || !app.renderer || e.touches.length < 2) return;
+    e.preventDefault();
+    const dist = touchDistance(e.touches[0], e.touches[1]);
+    if (!(pinch.startDist > 8) || !(dist > 0)) return;
+    pinchMoved = true;
+    const rect = canvas.getBoundingClientRect();
+    const mid = touchMidpoint(e.touches[0], e.touches[1], rect);
+    const next = pinch.startZoom * (dist / pinch.startDist);
+    app.renderer.setZoom(next, mid.x, mid.y);
+    syncZoomButtons();
+  }, { passive: false });
+
+  const endPinch = () => {
+    pinch = null;
+  };
+  canvas.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) endPinch();
+  });
+  canvas.addEventListener('touchcancel', endPinch);
+
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !app.renderer) return;
+    if (e.button !== 0 || !app.renderer || pinch) return;
+    // 2本目の指は単指パンを開始しない
+    if (e.isPrimary === false) return;
     pan = {
       id: e.pointerId,
       x: e.clientX,
@@ -3415,6 +3464,7 @@ function bindBoardZoomControls(canvas) {
     try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (pinch) return;
     if (!pan || e.pointerId !== pan.id || !app.renderer) return;
     const dx = e.clientX - pan.x;
     const dy = e.clientY - pan.y;
@@ -3431,12 +3481,13 @@ function bindBoardZoomControls(canvas) {
   });
   const endPan = (e) => {
     if (!pan || (e && e.pointerId !== pan.id)) return;
-    const wasClick = !pan.moved;
+    const wasClick = !pan.moved && !pinchMoved;
     const clientX = e?.clientX ?? pan.x;
     const clientY = e?.clientY ?? pan.y;
     canvas.classList.remove('is-panning');
     try { canvas.releasePointerCapture(pan.id); } catch { /* ignore */ }
     pan = null;
+    pinchMoved = false;
     if (!wasClick || !app.game || !app.renderer) return;
     const hit = app.renderer.hitTest(app.game, clientX, clientY);
     if (!hit) return;
