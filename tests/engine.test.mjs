@@ -94,6 +94,12 @@ import {
   cpuShouldFiveBuy,
   cpuPickScratchCell,
   cpuPickStockArea,
+  cpuShopTrafficScore,
+  cpuStockBuyCount,
+  cpuPickStrategicSell,
+  cpuFindMonopolySwap,
+  cpuFiveBuyExpectedValue,
+  cpuTargetCashRatio,
   getSharedEventTable,
   POTION_CARD_COUNT,
   POTION_EFFECT_LABELS,
@@ -3389,6 +3395,159 @@ describe('MkMk Street engine', () => {
     cpuFocusAreas(g, p);
     const picked = cpuPickStockArea(g, p);
     assert.equal(picked, a0);
+  });
+
+  it('CPU buys vacant shops early when cash allows', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'tycoon' }],
+      seed: 101,
+      cash: 6000,
+      goal: 20000,
+    });
+    const p = g.players[1];
+    p.cash = 5000;
+    const vacant = g.map.find((s) => s.type === 'shop' && s.owner < 0);
+    assert.ok(vacant);
+    assert.equal(cpuGamePhase(g, p).progress < 0.78, true);
+    assert.equal(cpuShouldBuyShop(g, p, vacant), true);
+  });
+
+  it('CPU prioritizes completing areas with 2+ owned shops', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 102,
+      cash: 8000,
+    });
+    const p = g.players[1];
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+    assert.ok(shops.length >= 3);
+    shops[0].owner = 1;
+    shops[1].owner = 1;
+    const third = shops[2];
+    third.owner = -1;
+    p.cash = Math.max(p.cash, third.price + cpuCashReserve(g, p) + 100);
+    assert.equal(cpuShouldBuyShop(g, p, third), true);
+    const focus = cpuFocusAreas(g, p);
+    assert.ok(focus.includes(area));
+  });
+
+  it('CPU stock buy count prefers 10-share lots', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 103,
+      cash: 8000,
+    });
+    const a = Number(Object.keys(g.areas)[0]);
+    g.areas[a].stockPrice = 20;
+    const count = cpuStockBuyCount(g, g.players[1], a, 20 * 25);
+    assert.ok(count >= STOCK_BUY_BOOST_MIN);
+    assert.equal(count % STOCK_BUY_BOOST_MIN, 0);
+  });
+
+  it('CPU free-rides rival monopoly stocks', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 104,
+      cash: 5000,
+    });
+    const p = g.players[1];
+    const areas = Object.keys(g.areas).map(Number);
+    const rivalArea = areas[0];
+    for (const sq of g.map.filter((s) => s.type === 'shop' && s.area === rivalArea)) {
+      sq.owner = 0;
+    }
+    assert.equal(hasAreaMonopoly(g, 0, rivalArea), true);
+    // 自陣店なし → 他人独占エリアへの相乗りを選ぶ
+    const picked = cpuPickStockArea(g, p);
+    assert.equal(picked, rivalArea);
+  });
+
+  it('CPU dumps stocks to pressure rivals near the goal', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'broker' }],
+      seed: 105,
+      cash: 3000,
+      goal: 10000,
+    });
+    const p = g.players[1];
+    const a = Number(Object.keys(g.areas)[0]);
+    p.stocks = { [a]: 25 };
+    g.players[0].stocks = { [a]: 40 };
+    g.players[0].cash = 9500;
+    g.currentPlayerIdx = 1;
+    g.phase = 'await_roll';
+    const dump = cpuPickStrategicSell(g, p);
+    assert.ok(dump);
+    assert.equal(dump.area, a);
+    assert.ok(dump.count >= STOCK_SELL_PRESSURE_MIN);
+  });
+
+  it('CPU finds 1-for-1 monopoly swap when both sides are one shop away', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 106,
+      cash: 8000,
+    });
+    const areas = Object.keys(g.areas).map(Number);
+    assert.ok(areas.length >= 2);
+    const a0 = areas[0];
+    const a1 = areas[1];
+    const shops0 = g.map.filter((s) => s.type === 'shop' && s.area === a0);
+    const shops1 = g.map.filter((s) => s.type === 'shop' && s.area === a1);
+    assert.ok(shops0.length >= 2 && shops1.length >= 2);
+    for (const sq of shops0.slice(0, -1)) sq.owner = 1;
+    shops0[shops0.length - 1].owner = 0;
+    for (const sq of shops1.slice(0, -1)) sq.owner = 0;
+    shops1[shops1.length - 1].owner = 1;
+    // CPU側エリアを高めにして提案条件を満たす
+    for (const sq of shops0) sq.price = (sq.basePrice || 100) * 3;
+    const deal = cpuFindMonopolySwap(g, g.players[1]);
+    assert.ok(deal);
+    assert.equal(deal.targetId, 0);
+    assert.equal(deal.takeShopId, shops0[shops0.length - 1].id);
+    assert.equal(deal.giveShopId, shops1[shops1.length - 1].id);
+  });
+
+  it('CPU five-buy EV is positive when completing a monopoly with stock holdings', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true, personality: 'magnate' }],
+      seed: 107,
+      cash: 20000,
+    });
+    const p = g.players[1];
+    const area = Number(Object.keys(g.areas)[0]);
+    const shops = g.map.filter((s) => s.type === 'shop' && s.area === area);
+    for (const sq of shops.slice(0, -1)) sq.owner = 1;
+    const last = shops[shops.length - 1];
+    last.owner = 0;
+    p.stocks = { [area]: 30 };
+    const price = last.price * 5;
+    const ev = cpuFiveBuyExpectedValue(g, p, last, price);
+    assert.ok(Number.isFinite(ev));
+    p.cash = price + cpuCashReserve(g, p) + 500;
+    assert.equal(cpuShouldFiveBuy(g, p, { shopId: last.id, price, toll: calcToll(g, last) }), true);
+  });
+
+  it('CPU traffic score favors junction shops near the bank', () => {
+    const g = createGame({
+      players: [{ name: 'H' }, { name: 'CPU', isCPU: true }],
+      seed: 108,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    assert.ok(shops.length > 0);
+    let max = -Infinity;
+    let min = Infinity;
+    for (const sq of shops) {
+      const s = cpuShopTrafficScore(g, sq);
+      max = Math.max(max, s);
+      min = Math.min(min, s);
+    }
+    assert.ok(max > min);
+  });
+
+  it('cpuTargetCashRatio keeps defense cash lower for brokers', () => {
+    assert.ok(cpuTargetCashRatio({ key: 'broker' }) < cpuTargetCashRatio({ key: 'gambler' }));
   });
 
   it('CPU scratch prefers extending own color lines including diagonals', () => {
