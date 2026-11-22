@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.21',
+    date: '2026-11-22',
+    items: [
+      'スクラッチ図鑑で番号とイベント名がくっついて見えるレイアウトを修正',
+    ],
+  },
+  {
     version: '1.9.20',
     date: '2026-11-22',
     items: [
