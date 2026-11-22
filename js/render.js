@@ -50,8 +50,12 @@ const MINIGAME_ICON = {
   balloon_dash: '球',
 };
 
-/** 盤面まわりのUI（検査パネル・分岐レール・フィード等）を避ける余白 */
-const UI_INSETS = { top: 56, right: 88, bottom: 64, left: 88 };
+/**
+ * 盤面まわりのUI（検査パネル・分岐レール・フィード等）を避ける余白。
+ * left は最初から右寄せ気味にし、出来事フィード展開時は実測でさらに広げる。
+ */
+const UI_INSETS_BASE = { top: 56, right: 88, bottom: 64, left: 200 };
+const FEED_CLEAR_PAD = 40;
 const ZOOM_MIN = 0.65;
 const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.15;
@@ -83,6 +87,33 @@ export function createRenderer(canvas) {
   let userZoom = 1;
   let panX = 0;
   let panY = 0;
+  /** フィード開閉で left inset が変わったときの再フィット用 */
+  let lastInsetLeft = UI_INSETS_BASE.left;
+
+  /** 出来事フィードを避けてマップをずらすための実測 insets */
+  function currentUiInsets() {
+    const board = canvas.parentElement;
+    const br = board?.getBoundingClientRect();
+    const viewW = br?.width || canvas.clientWidth || 640;
+    // 狭い画面では常時シフトを弱め、広い画面ではフィード列ぶん右へ寄せる
+    const baseLeft = viewW < 560 ? 88 : viewW < 820 ? 140 : UI_INSETS_BASE.left;
+    const insets = { ...UI_INSETS_BASE, left: baseLeft };
+    const wrap = document.getElementById('event-feed-wrap');
+    if (!wrap || wrap.classList.contains('feed-collapsed') || wrap.hidden) {
+      return insets;
+    }
+    if (!br) {
+      insets.left = Math.max(insets.left, Math.min(272, Math.floor(viewW * 0.45)));
+      return insets;
+    }
+    const fr = wrap.getBoundingClientRect();
+    if (fr.width < 8 || fr.height < 8) return insets;
+    const clearLeft = Math.ceil(fr.right - br.left + FEED_CLEAR_PAD);
+    // 盤面が潰れすぎないよう、ビュー幅の半分までに抑える
+    const maxLeft = Math.max(insets.left, Math.floor(br.width * 0.5));
+    insets.left = Math.min(Math.max(insets.left, clearLeft), maxLeft);
+    return insets;
+  }
 
   function resize() {
     const parent = canvas.parentElement;
@@ -105,19 +136,19 @@ export function createRenderer(canvas) {
   }
 
   /** UI余白を除いた領域に全体が収まるセルサイズ */
-  function fitCellSize(g, viewW, viewH) {
-    const availW = Math.max(80, viewW - UI_INSETS.left - UI_INSETS.right);
-    const availH = Math.max(80, viewH - UI_INSETS.top - UI_INSETS.bottom);
+  function fitCellSize(g, viewW, viewH, insets = currentUiInsets()) {
+    const availW = Math.max(80, viewW - insets.left - insets.right);
+    const availH = Math.max(80, viewH - insets.top - insets.bottom);
     return Math.min(availW / g.cols, availH / g.rows);
   }
 
-  function clampPan(g, viewW, viewH, size, ox, oy) {
+  function clampPan(g, viewW, viewH, size, ox, oy, insets = currentUiInsets()) {
     const boardW = size * g.cols;
     const boardH = size * g.rows;
-    const minOx = Math.min(UI_INSETS.left, viewW - UI_INSETS.right - boardW);
-    const maxOx = Math.max(UI_INSETS.left, viewW - UI_INSETS.right - boardW);
-    const minOy = Math.min(UI_INSETS.top, viewH - UI_INSETS.bottom - boardH);
-    const maxOy = Math.max(UI_INSETS.top, viewH - UI_INSETS.bottom - boardH);
+    const minOx = Math.min(insets.left, viewW - insets.right - boardW);
+    const maxOx = Math.max(insets.left, viewW - insets.right - boardW);
+    const minOy = Math.min(insets.top, viewH - insets.bottom - boardH);
+    const maxOy = Math.max(insets.top, viewH - insets.bottom - boardH);
     // 盤が余白内より小さいときは中央付近に留める／大きいときは端が見切れすぎないよう制限
     const loX = Math.min(minOx, maxOx);
     const hiX = Math.max(minOx, maxOx);
@@ -131,15 +162,24 @@ export function createRenderer(canvas) {
 
   function computeLayout(g, viewW, viewH) {
     if (!g) return { size: 40, ox: 0, oy: 0, fit: 40, zoom: userZoom };
-    const fit = fitCellSize(g, viewW, viewH);
+    const insets = currentUiInsets();
+    if (insets.left !== lastInsetLeft) {
+      lastInsetLeft = insets.left;
+      // フィード開閉で使える幅が変わったらフィット位置へ寄せ直す
+      if (userZoom <= 1.001) {
+        panX = 0;
+        panY = 0;
+      }
+    }
+    const fit = fitCellSize(g, viewW, viewH, insets);
     const size = fit * userZoom;
     const boardW = size * g.cols;
     const boardH = size * g.rows;
-    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
-    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
-    const ox0 = UI_INSETS.left + (contentW - boardW) / 2 + panX;
-    const oy0 = UI_INSETS.top + (contentH - boardH) / 2 + panY;
-    const clamped = clampPan(g, viewW, viewH, size, ox0, oy0);
+    const contentW = viewW - insets.left - insets.right;
+    const contentH = viewH - insets.top - insets.bottom;
+    const ox0 = insets.left + (contentW - boardW) / 2 + panX;
+    const oy0 = insets.top + (contentH - boardH) / 2 + panY;
+    const clamped = clampPan(g, viewW, viewH, size, ox0, oy0, insets);
     return { size, ox: clamped.ox, oy: clamped.oy, fit, zoom: userZoom };
   }
 
@@ -178,16 +218,17 @@ export function createRenderer(canvas) {
       return userZoom;
     }
 
-    const fit = fitCellSize(g, viewW, viewH);
+    const insets = currentUiInsets();
+    const fit = fitCellSize(g, viewW, viewH, insets);
     const size = fit * userZoom;
-    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
-    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
+    const contentW = viewW - insets.left - insets.right;
+    const contentH = viewH - insets.top - insets.bottom;
     const boardW = size * g.cols;
     const boardH = size * g.rows;
     const desiredOx = ax - wx * size;
     const desiredOy = ay - wy * size;
-    panX = desiredOx - (UI_INSETS.left + (contentW - boardW) / 2);
-    panY = desiredOy - (UI_INSETS.top + (contentH - boardH) / 2);
+    panX = desiredOx - (insets.left + (contentW - boardW) / 2);
+    panY = desiredOy - (insets.top + (contentH - boardH) / 2);
     return userZoom;
   }
 
@@ -217,17 +258,18 @@ export function createRenderer(canvas) {
     if (!lastGame) return;
     const viewW = canvas.clientWidth;
     const viewH = canvas.clientHeight;
+    const insets = currentUiInsets();
     const lay = computeLayout(lastGame, viewW, viewH);
-    const contentW = viewW - UI_INSETS.left - UI_INSETS.right;
-    const contentH = viewH - UI_INSETS.top - UI_INSETS.bottom;
+    const contentW = viewW - insets.left - insets.right;
+    const contentH = viewH - insets.top - insets.bottom;
     const boardW = lay.size * lastGame.cols;
     const boardH = lay.size * lastGame.rows;
-    panX = lay.ox - (UI_INSETS.left + (contentW - boardW) / 2);
-    panY = lay.oy - (UI_INSETS.top + (contentH - boardH) / 2);
+    panX = lay.ox - (insets.left + (contentW - boardW) / 2);
+    panY = lay.oy - (insets.top + (contentH - boardH) / 2);
   }
 
   function getLayout() {
-    return { ...layout, insets: { ...UI_INSETS } };
+    return { ...layout, insets: currentUiInsets() };
   }
 
   function easeInOut(t) {

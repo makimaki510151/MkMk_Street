@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.12',
+    date: '2026-11-22',
+    items: [
+      '出来事フィード展開時にマップを右へずらしてマスがログに隠れないように調整',
+    ],
+  },
+  {
     version: '1.9.11',
     date: '2026-11-21',
     items: [
