@@ -2628,15 +2628,36 @@ function maybeDemoLanding() {
     refreshGameUI();
     return;
   }
-  if (demo === 'minigame' || demo === 'slot' || demo === 'coin' || demo === 'high_low') {
+  if (
+    demo === 'minigame' || demo === 'slot' || demo === 'coin' || demo === 'high_low'
+    || demo === 'memory_match' || demo === 'silent_bid' || demo === 'push_pull'
+    || demo === 'divide_pool' || demo === 'target_roulette' || demo === 'hot_potato'
+    || demo === 'pick_dice'
+  ) {
+    if (demo === 'pick_dice') {
+      app.game.phase = 'await_choice';
+      app.game.pending = { type: 'pick_dice', playerId: p.id };
+      app.game.move = null;
+      refreshGameUI();
+      return;
+    }
     const game = demo === 'minigame' ? 'guess_dice' : demo;
     const labels = {
       guess_dice: 'サイコロ当て',
       slot: 'スロット',
       coin: 'コイントス',
       high_low: 'ハイ＆ロー',
+      memory_match: '神経衰弱',
+      silent_bid: 'サイレント入札',
+      push_pull: '押し引き',
+      divide_pool: '配分ゲーム',
+      target_roulette: 'ターゲットルーレット',
+      hot_potato: 'パス禁止',
     };
-    const partyGames = new Set(['guess_dice', 'coin', 'high_low', 'horse_race', 'roulette']);
+    const partyGames = new Set([
+      'guess_dice', 'coin', 'high_low', 'horse_race', 'roulette',
+      'silent_bid', 'hot_potato', 'target_roulette',
+    ]);
     const alive = app.game.players.filter((pl) => !pl.bankrupt).map((pl) => pl.id);
     const ordered = partyGames.has(game)
       ? [p.id, ...alive.filter((id) => id !== p.id)]
