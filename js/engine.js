@@ -34,6 +34,7 @@ import {
   normalizeNewMinigamePick,
   setupNewMinigameShared,
   scoreNewMinigamePlayer,
+  rollSilentBidPot,
 } from './scratchExpand.js';
 
 /** 移動ダイス面数の既定値（マップ未指定時） */
@@ -4664,6 +4665,10 @@ function maybeOpenMinigame(g, p) {
     picks: {},
     party,
   };
+  if (game === 'silent_bid') {
+    g.pending.pot = rollSilentBidPot(() => rngNext(g));
+    addLog(g, `サイレント入札の上限は ${g.pending.pot}G（同額は不成立）`, 'event');
+  }
   if (party) {
     addLog(g, `みんなのミニゲーム「${g.pending.label}」！（${p.name}が開催・${participantIds.length}人参加）`, 'event');
   } else {
@@ -4744,7 +4749,11 @@ function resolveMinigame(g, p, pending, choice) {
   if (pending.picks[p.id] != null) {
     return { ok: false, error: 'already_picked' };
   }
-  const pick = normalizeMinigamePick(pending.game || 'guess_dice', choice);
+  let pick = normalizeMinigamePick(pending.game || 'guess_dice', choice);
+  if (pending.game === 'silent_bid') {
+    const pot = Math.max(1, Math.floor(Number(pending.pot) || 200));
+    pick = Math.max(1, Math.min(pot, Math.floor(Number(pick) || 1)));
+  }
   pending.picks[p.id] = pick;
 
   const waiting = pending.participantIds.filter((id) => {
@@ -4810,7 +4819,10 @@ function finalizeMinigame(g, pending) {
       rng: () => rngNext(g),
       participants,
     }));
-    if (game === 'silent_bid') shared.allBids = { ...pending.picks };
+    if (game === 'silent_bid') {
+      if (pending.pot != null) shared.pot = Math.max(1, Math.floor(Number(pending.pot) || shared.pot || 200));
+      shared.allBids = { ...pending.picks };
+    }
     if (game === 'hot_potato') shared.allPicks = { ...pending.picks };
   }
 
@@ -6707,8 +6719,13 @@ export function cpuAct(g) {
         return applyChoice(g, { action: 'pick', value: `${a},${b}` });
       }
       if (pend.game === 'silent_bid') {
-        const bids = traits.key === 'gambler' ? [100, 150, 150] : traits.key === 'tycoon' ? [30, 60, 60] : [60, 100, 100];
-        return applyChoice(g, { action: 'pick', value: bids[Math.floor(n(522) * 3)] });
+        const pot = Math.max(1, Math.floor(Number(pend.pot) || 150));
+        // 上限ベタ押しを避け、性格で帯をずらした自由額
+        const lo = traits.key === 'tycoon' ? 0.15 : traits.key === 'gambler' ? 0.45 : 0.25;
+        const hi = traits.key === 'tycoon' ? 0.55 : traits.key === 'gambler' ? 0.95 : 0.75;
+        const t = lo + n(522) * Math.max(0.05, hi - lo);
+        const bid = Math.max(1, Math.min(pot, Math.round(pot * t)));
+        return applyChoice(g, { action: 'pick', value: bid });
       }
       if (pend.game === 'push_pull') {
         const stops = traits.key === 'gambler' ? [4, 5, 5] : traits.key === 'tycoon' ? [1, 2, 3] : [2, 3, 4];

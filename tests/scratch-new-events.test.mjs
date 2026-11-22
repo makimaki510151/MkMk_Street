@@ -190,14 +190,14 @@ describe('scratch new events & minigames', () => {
     assert.equal(miss.win, false);
   });
 
-  it('silent_bid party settles after all picks', () => {
+  it('silent_bid unique free bids pay; collisions miss', () => {
     const g = createGame({
-      players: [{ name: 'A' }, { name: 'B' }],
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
       seed: 55,
       cash: 2000,
     });
     assert.ok(NEW_PARTY_MINIGAMES.has('silent_bid'));
-    const ordered = [0, 1];
+    const ordered = [0, 1, 2];
     g.phase = 'await_choice';
     g.currentPlayerIdx = 0;
     g.pending = {
@@ -209,16 +209,53 @@ describe('scratch new events & minigames', () => {
       participantIds: ordered,
       picks: {},
       party: true,
+      pot: 120,
     };
-    const mid = applyChoice(g, { action: 'pick', value: 150 });
+    const mid = applyChoice(g, { action: 'pick', value: 80 });
     assert.equal(mid.minigamePick, true);
-    const fin = applyChoice(g, { action: 'pick', value: 60 });
+    applyChoice(g, { action: 'pick', value: 80 }); // collide with A
+    const fin = applyChoice(g, { action: 'pick', value: 55 });
     assert.equal(fin.minigame, true);
     assert.equal(fin.reveal?.game, 'silent_bid');
-    assert.equal(fin.reveal.results.length, 2);
-    const winner = fin.reveal.results.find((r) => r.win);
-    assert.ok(winner);
-    assert.equal(winner.pick, 150);
+    assert.equal(fin.reveal.shared?.pot, 120);
+    assert.equal(fin.reveal.results.length, 3);
+    const byId = Object.fromEntries(fin.reveal.results.map((r) => [r.playerId, r]));
+    assert.equal(byId[0].win, false, 'A collided');
+    assert.equal(byId[1].win, false, 'B collided');
+    assert.equal(byId[2].win, true, 'C unique');
+    assert.equal(byId[2].pick, 55);
+    assert.ok(byId[2].prizeWon >= 55);
+  });
+
+  it('silent_bid clamps free input to pot and rejects max spam via uniqueness', () => {
+    const helpers = {
+      grantMinigamePrize: (p, amount, messages, text) => {
+        p.cash += amount;
+        messages.push(text);
+        return amount;
+      },
+      minigameConsolation: (p, amount, messages, text) => {
+        p.cash += amount;
+        messages.push(text);
+        return amount;
+      },
+      lvPrize: (n) => n,
+      flatPrize: (n) => n,
+    };
+    const g = { goal: 10000, players: [{ id: 0, name: 'A', cash: 100, level: 1 }] };
+    const shared = { pot: 100, allBids: { 0: 100, 1: 100, 2: 40 } };
+    const a = scoreNewMinigamePlayer(g, g.players[0], 'silent_bid', 100, shared, helpers);
+    assert.equal(a.win, false);
+    const c = scoreNewMinigamePlayer(
+      g,
+      { id: 2, name: 'C', cash: 100, level: 1 },
+      'silent_bid',
+      40,
+      shared,
+      helpers,
+    );
+    assert.equal(c.win, true);
+    assert.equal(c.prizeWon, 40);
   });
 
   it('scratch apply opens pick_dice pending from catalog effect', () => {
