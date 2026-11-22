@@ -57,8 +57,21 @@ const MINIGAME_ICON = {
 const UI_INSETS_BASE = { top: 56, right: 88, bottom: 64, left: 200 };
 const FEED_CLEAR_PAD = 40;
 const ZOOM_MIN = 0.65;
-const ZOOM_MAX = 2.5;
+const ZOOM_MAX_DESKTOP = 2.5;
+/** スマホはデスクトップの2倍まで拡大可 */
+const ZOOM_MAX_MOBILE = ZOOM_MAX_DESKTOP * 2;
 const ZOOM_STEP = 0.15;
+const MOBILE_ZOOM_MQ = '(max-width: 900px)';
+
+function isMobileZoomUi() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(MOBILE_ZOOM_MQ).matches;
+}
+
+function getZoomMax() {
+  return isMobileZoomUi() ? ZOOM_MAX_MOBILE : ZOOM_MAX_DESKTOP;
+}
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -132,7 +145,7 @@ export function createRenderer(canvas) {
   }
 
   function clampZoom(z) {
-    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    return Math.max(ZOOM_MIN, Math.min(getZoomMax(), z));
   }
 
   /** UI余白を除いた領域に全体が収まるセルサイズ */
@@ -1137,8 +1150,10 @@ export function createRenderer(canvas) {
     zoomBy,
     panBy,
     getLayout,
+    getZoomMax,
     ZOOM_MIN,
-    ZOOM_MAX,
+    /** @deprecated getZoomMax() を使う（スマホは上限が異なる） */
+    get ZOOM_MAX() { return getZoomMax(); },
   };
 }
 
