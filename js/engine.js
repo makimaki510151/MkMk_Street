@@ -3360,6 +3360,11 @@ export function declareBankrupt(g, p) {
   p.stocks = {};
   p.wildcards = 0;
   for (const area of claimedAreas) applyMonopolyBreak(g, p.id, area);
+  // 破産プレイヤーの選択待ちを残すと誰も解消できず進行不能になる
+  if (g.pending?.playerId === p.id && g.pending?.type !== 'minigame') {
+    g.pending = null;
+    if (g.phase === 'await_choice' || g.phase === 'await_fork') g.phase = 'await_roll';
+  }
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
 }
@@ -3921,42 +3926,48 @@ export function applyChoice(g, choice) {
 
   if (pending.type === 'force_sell_shop') {
     const allowed = new Set(pending.shopIds || []);
+    const ownedEligible = () => g.map.filter((s) => s.type === 'shop' && s.owner === p.id
+      && (!allowed.size || allowed.has(s.id)));
+    const finishForceSell = (extra = {}) => {
+      g.pending = null;
+      if (pending.fromPotion && openNextPotionForceSell(g)) {
+        return { ok: true, forceSell: true, ...extra, state: serializeState(g) };
+      }
+      if (p.flags.extraRoll && !pending.fromPotion) {
+        p.flags.extraRoll = false;
+        g.phase = 'await_roll';
+        return { ok: true, forceSell: true, ...extra, state: serializeState(g) };
+      }
+      endTurn(g);
+      return { ok: true, forceSell: true, ...extra, state: serializeState(g) };
+    };
     let shopId = Number(choice.shopId);
     if (choice.action === 'skip' || !Number.isFinite(shopId)) {
       // おまかせ：安い店から処分
-      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id
-        && (!allowed.size || allowed.has(s.id)));
+      const shops = ownedEligible();
       shops.sort((a, b) => a.price - b.price);
       shopId = shops[0]?.id;
     }
     if (!Number.isFinite(shopId) || (allowed.size && !allowed.has(shopId))) {
+      // 所持店が消えた等で売却不能 → pending を残すと進行不能になる
+      if (!ownedEligible().length) {
+        addLog(g, `${p.name} は売却できる店がなく強制売却を免除`, 'event');
+        return finishForceSell({ skipped: true });
+      }
       return { ok: false, error: 'bad_shop' };
     }
     const sold = sellShopForCash(g, p, shopId);
-    if (!sold.ok) return { ok: false, error: sold.error };
-    g.pending = null;
-    if (pending.fromPotion && openNextPotionForceSell(g)) {
-      return {
-        ok: true,
-        forceSell: true,
-        shopId,
-        ...(sold.monopolyBreak ? { monopolyBreak: sold.monopolyBreak } : {}),
-        state: serializeState(g),
-      };
+    if (!sold.ok) {
+      if (!ownedEligible().length) {
+        addLog(g, `${p.name} は売却できる店がなく強制売却を免除`, 'event');
+        return finishForceSell({ skipped: true });
+      }
+      return { ok: false, error: sold.error };
     }
-    if (p.flags.extraRoll && !pending.fromPotion) {
-      p.flags.extraRoll = false;
-      g.phase = 'await_roll';
-      return { ok: true, forceSell: true, shopId, state: serializeState(g) };
-    }
-    endTurn(g);
-    return {
-      ok: true,
-      forceSell: true,
+    return finishForceSell({
       shopId,
       ...(sold.monopolyBreak ? { monopolyBreak: sold.monopolyBreak } : {}),
-      state: serializeState(g),
-    };
+    });
   }
 
   if (pending.type === 'potion_pick') {
@@ -4338,8 +4349,18 @@ export function applyChoice(g, choice) {
   }
 
   if (pending.type === 'shop_protect') {
-    const shopId = Number(choice?.shopId);
     const allowed = new Set(pending.shopIds || []);
+    const valid = g.map.filter((s) => s.type === 'shop' && s.owner === p.id
+      && (!allowed.size || allowed.has(s.id)));
+    // 所持店が消えた／スキップ → 開幕時と同じ手当で脱出（pending 残留防止）
+    if (choice?.action === 'skip' || !valid.length) {
+      applyCashQuick(p, 40);
+      addLog(g, `${p.name} は守る店がなく手当 +40G`, 'event');
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, skipped: true, state: serializeState(g) };
+    }
+    const shopId = Number(choice?.shopId);
     if (!allowed.has(shopId)) return { ok: false, error: 'bad_shop' };
     const sq = getNode(g, shopId);
     if (!sq || sq.owner !== p.id) return { ok: false, error: 'bad_shop' };
@@ -4351,8 +4372,17 @@ export function applyChoice(g, choice) {
   }
 
   if (pending.type === 'co_own') {
-    const shopId = Number(choice?.shopId);
     const allowed = new Set(pending.shopIds || []);
+    const valid = g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id
+      && (!allowed.size || allowed.has(s.id)));
+    if (choice?.action === 'skip' || !valid.length) {
+      applyCashQuick(p, 40);
+      addLog(g, `${p.name} は共同オーナー対象がなく手当 +40G`, 'event');
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, skipped: true, state: serializeState(g) };
+    }
+    const shopId = Number(choice?.shopId);
     if (!allowed.has(shopId)) return { ok: false, error: 'bad_shop' };
     const sq = getNode(g, shopId);
     if (!sq || sq.owner < 0 || sq.owner === p.id) return { ok: false, error: 'bad_shop' };
@@ -5848,19 +5878,21 @@ function scoreForkPath(g, p, fromId, nextId, traits, focus, phase) {
 }
 
 function cpuPickFork(g, p, options) {
+  if (!options?.length) return null;
   const traits = getCpuPersonality(p);
   const focus = cpuFocusAreas(g, p, traits);
   const phase = cpuGamePhase(g, p);
   let best = options[0];
   let bestScore = -Infinity;
   for (const opt of options) {
+    if (!opt || opt.id == null) continue;
     const score = scoreForkPath(g, p, p.pos, opt.id, traits, focus, phase);
     if (score > bestScore) {
       bestScore = score;
       best = opt;
     }
   }
-  return best.id;
+  return best?.id ?? null;
 }
 
 export function cpuShouldBuyShop(g, p, sq, traits = getCpuPersonality(p)) {
@@ -6300,9 +6332,10 @@ export function cpuPickScratchCell(g, p, openIds) {
 
 function cpuPickInvestShop(g, p, ids, traits, { preferId = null, requireRem = false } = {}) {
   const focus = cpuFocusAreas(g, p, traits);
-  let best = preferId ?? ids[0];
+  // 候補が全て無効なとき古い preferId / ids[0] を返さない（bad_shop 永久ループ防止）
+  let best = null;
   let bestScore = -Infinity;
-  for (const id of ids) {
+  for (const id of ids || []) {
     const sq = getNode(g, id);
     if (!sq || sq.owner !== p.id) continue;
     const rem = getRemainingInvest(g, sq);
@@ -6324,6 +6357,14 @@ function cpuPickInvestShop(g, p, ids, traits, { preferId = null, requireRem = fa
     }
   }
   return best;
+}
+
+/** CPU: applyChoice が失敗したらフォールバックを一度だけ試す（永久リトライ防止） */
+function cpuApplyOrEscape(g, choice, escapeChoice) {
+  const res = applyChoice(g, choice);
+  if (res?.ok) return res;
+  if (escapeChoice) return applyChoice(g, escapeChoice);
+  return res;
 }
 
 /** 増資額：可能なら上限近くまで（1アクション効率最大化） */
@@ -6414,7 +6455,7 @@ export function cpuAct(g) {
     if (pend.type === 'buy_shop') {
       const sq = getNode(g, pend.shopId);
       const buy = cpuShouldBuyShop(g, p, sq, traits);
-      return applyChoice(g, { action: buy ? 'buy' : 'skip' });
+      return cpuApplyOrEscape(g, { action: buy ? 'buy' : 'skip' }, { action: 'skip' });
     }
     if (pend.type === 'invest') {
       const ids = pend.shopIds?.length
@@ -6424,8 +6465,8 @@ export function cpuAct(g) {
       const best = cpuPickInvestShop(g, p, ids, traits, { preferId: prefer, requireRem: true });
       const target = getNode(g, best);
       const amount = cpuInvestAmount(g, p, target, traits, phase);
-      if (amount >= 20) {
-        return applyChoice(g, { action: 'invest', shopId: best, amount });
+      if (amount >= 20 && best != null) {
+        return cpuApplyOrEscape(g, { action: 'invest', shopId: best, amount }, { action: 'skip' });
       }
       return applyChoice(g, { action: 'skip' });
     }
@@ -6435,7 +6476,8 @@ export function cpuAct(g) {
         : g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.id);
       if (!ids.length) return applyChoice(g, { action: 'skip' });
       const best = cpuPickInvestShop(g, p, ids, traits, { preferId: null, requireRem: false });
-      return applyChoice(g, { action: 'invest', shopId: best });
+      if (best == null) return applyChoice(g, { action: 'skip' });
+      return cpuApplyOrEscape(g, { action: 'invest', shopId: best }, { action: 'skip' });
     }
     if (pend.type === 'force_sell_shop') {
       const focus = cpuFocusAreas(g, p, traits);
@@ -6453,7 +6495,7 @@ export function cpuAct(g) {
       });
       const target = shops[0];
       if (!target) return applyChoice(g, { action: 'skip' });
-      return applyChoice(g, { action: 'sell', shopId: target.id });
+      return cpuApplyOrEscape(g, { action: 'sell', shopId: target.id }, { action: 'skip' });
     }
     if (pend.type === 'any_shop_buy') {
       const multi = pend.multi || 6;
@@ -6481,7 +6523,7 @@ export function cpuAct(g) {
         }
       }
       if (!best) return applyChoice(g, { action: 'skip' });
-      return applyChoice(g, { action: 'buy', shopId: best.id });
+      return cpuApplyOrEscape(g, { action: 'buy', shopId: best.id }, { action: 'skip' });
     }
     if (pend.type === 'vacant_shop_buy') {
       if (phase.lethal) return applyChoice(g, { action: 'skip' });
@@ -6509,7 +6551,7 @@ export function cpuAct(g) {
         }
       }
       if (!best) return applyChoice(g, { action: 'skip' });
-      return applyChoice(g, { action: 'buy', shopId: best.id });
+      return cpuApplyOrEscape(g, { action: 'buy', shopId: best.id }, { action: 'skip' });
     }
     if (pend.type === 'force_rival_sell') {
       const ids = pend.shopIds?.length
@@ -6533,7 +6575,7 @@ export function cpuAct(g) {
         }
       }
       if (!best) return applyChoice(g, { action: 'skip' });
-      return applyChoice(g, { action: 'sell', shopId: best.id });
+      return cpuApplyOrEscape(g, { action: 'sell', shopId: best.id }, { action: 'skip' });
     }
     if (pend.type === 'pick_dice') {
       const diceMax = getMoveDiceMax(g);
@@ -6547,8 +6589,8 @@ export function cpuAct(g) {
         ? pend.shopIds
         : g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.id);
       const best = cpuPickInvestShop(g, p, ids, traits, { preferId: null, requireRem: false });
-      if (best == null) return null;
-      return applyChoice(g, { shopId: best });
+      if (best == null) return applyChoice(g, { action: 'skip' });
+      return cpuApplyOrEscape(g, { shopId: best }, { action: 'skip' });
     }
     if (pend.type === 'co_own') {
       const ids = pend.shopIds?.length
@@ -6567,8 +6609,8 @@ export function cpuAct(g) {
           best = sq;
         }
       }
-      if (!best) return null;
-      return applyChoice(g, { shopId: best.id });
+      if (!best) return applyChoice(g, { action: 'skip' });
+      return cpuApplyOrEscape(g, { shopId: best.id }, { action: 'skip' });
     }
     if (pend.type === 'fortune_triple') {
       const opts = pend.options || [];
@@ -6599,7 +6641,7 @@ export function cpuAct(g) {
     }
     if (pend.type === 'five_buy') {
       const buy = cpuShouldFiveBuy(g, p, pend, traits);
-      return applyChoice(g, { action: buy ? 'buy' : 'skip' });
+      return cpuApplyOrEscape(g, { action: buy ? 'buy' : 'skip' }, { action: 'skip' });
     }
     if (pend.type === 'raise_funds') {
       const target = Number(pend.targetCash) || 0;
@@ -6636,7 +6678,11 @@ export function cpuAct(g) {
         const dump = cpuPickStrategicSell(g, p, traits);
         if (dump && (p.stocks?.[dump.area] || 0) >= dump.count) {
           // stock pending の sell は bank 以外で可
-          return applyChoice(g, { action: 'sell', area: dump.area, count: dump.count });
+          return cpuApplyOrEscape(
+            g,
+            { action: 'sell', area: dump.area, count: dump.count },
+            { action: 'done' },
+          );
         }
       }
       const reserve = cpuCashReserve(g, p);
@@ -6668,7 +6714,7 @@ export function cpuAct(g) {
         const budget = Math.floor(spendable * ratio);
         const count = cpuStockBuyCount(g, p, a, budget);
         if (count > 0) {
-          return applyChoice(g, { action: 'buy', area: a, count });
+          return cpuApplyOrEscape(g, { action: 'buy', area: a, count }, { action: 'done' });
         }
       }
       return applyChoice(g, { action: 'done' });
@@ -6681,13 +6727,48 @@ export function cpuAct(g) {
         return { ok: true, state: serializeState(g) };
       }
       const cellId = cpuPickScratchCell(g, p, open);
-      return applyChoice(g, { action: 'scratch', cellId });
+      const res = applyChoice(g, { action: 'scratch', cellId });
+      if (res?.ok) return res;
+      // 候補が壊れていたらターン終了で脱出
+      g.pending = null;
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
     }
     if (pend.type === 'potion_pick') {
+      // playerId が既選択のまま残っていると already_picked で永久停止する
+      if (pend.picks?.[p.id] != null) {
+        const waiting = (pend.participantIds || []).filter((id) => {
+          const pl = g.players[id];
+          return pl && !pl.bankrupt && pend.picks?.[id] == null;
+        });
+        if (waiting.length) {
+          pend.playerId = waiting[0];
+          return { ok: true, state: serializeState(g) };
+        }
+        return finalizePotionPick(g, pend);
+      }
       const slot = Math.floor(cpuNoise(g, p, 611) * POTION_CARD_COUNT);
-      return applyChoice(g, { action: 'pick', slot });
+      const res = applyChoice(g, { action: 'pick', slot });
+      if (res?.ok) return res;
+      for (let s = 0; s < POTION_CARD_COUNT; s += 1) {
+        if (s === slot) continue;
+        const retry = applyChoice(g, { action: 'pick', slot: s });
+        if (retry?.ok) return retry;
+      }
+      return res;
     }
     if (pend.type === 'minigame') {
+      if (pend.picks?.[p.id] != null) {
+        const waiting = (pend.participantIds || []).filter((id) => {
+          const pl = g.players[id];
+          return pl && !pl.bankrupt && pend.picks?.[id] == null;
+        });
+        if (waiting.length) {
+          pend.playerId = waiting[0];
+          return { ok: true, state: serializeState(g) };
+        }
+        return finalizeMinigame(g, pend);
+      }
       const n = (salt) => cpuNoise(g, p, salt);
       if (pend.game === 'guess_dice') {
         // 勝負師は端を避け中央寄り、他は広めに（シード固定）
@@ -6796,7 +6877,10 @@ export function cpuAct(g) {
   }
 
   if (g.phase === 'await_fork' && g.pending?.type === 'fork') {
-    const nextId = cpuPickFork(g, p, g.pending.options);
+    const opts = g.pending.options || [];
+    let nextId = cpuPickFork(g, p, opts);
+    if (nextId == null) nextId = opts[0]?.id;
+    if (nextId == null) return { ok: false, error: 'no_fork' };
     return chooseFork(g, nextId);
   }
 

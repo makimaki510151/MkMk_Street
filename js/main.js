@@ -5570,8 +5570,20 @@ function scheduleCpu() {
     }
 
     if (phase === 'await_fork') {
-      const result = cpuAct(app.game);
-      if (!result?.ok) return;
+      let result = cpuAct(app.game);
+      // cpuAct 失敗で return すると分岐待ちのまま永久停止するため、先頭候補で再試行
+      if (!result?.ok) {
+        const opts = app.game.pending?.options;
+        if (app.game.pending?.type === 'fork' && opts?.length) {
+          result = chooseFork(app.game, opts[0].id);
+        }
+      }
+      if (!result?.ok) {
+        syncState();
+        refreshGameUI();
+        if (clearBusyUnlessEventUi()) scheduleCpu();
+        return;
+      }
       const pid = app.game.currentPlayerIdx;
       // chooseFork already applied in cpuAct
       if (result.state) app.game = restoreState(result.state);
@@ -5608,6 +5620,8 @@ function scheduleCpu() {
       }
       syncState();
       refreshGameUI();
+      // null / !ok で pending が残る場合は再スケジュールすると同じ失敗を繰り返す。
+      // cpuAct 側で escape 済みであることが前提。未解消なら短遅延で再試行（最大は busy 外）。
       if (result?.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
         app.busy = true;
         app.deferEventFlash = true;
@@ -7555,9 +7569,13 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'force_sell_shop') {
-    const ids = pend.shopIds?.length
+    const rawIds = pend.shopIds?.length
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    const ids = rawIds.filter((id) => {
+      const sq = getNode(g, id);
+      return sq && sq.type === 'shop' && sq.owner === pend.playerId;
+    });
     title.textContent = '強制売却：1店舗売る';
     enableShopPickModalCard();
     const listHtml = ids.length
@@ -7572,7 +7590,7 @@ function showChoiceModal(g) {
           <small>${escapeHtml(code)} · 価格 ${sq.price.toLocaleString()}G（半額で換金）</small>
         </button>`;
       })
-      : '<p class="hint">所持店がありません</p>';
+      : '<p class="hint">所持店がありません（つづけるで免除）</p>';
     body.innerHTML = `
       <div class="shop-pick-layout">
         <div class="scratch-followup">
@@ -7601,8 +7619,9 @@ function showChoiceModal(g) {
     bindShopPickAreaChrome(g, body);
     const skip = $('#btn-skip-choice');
     if (skip) {
-      skip.textContent = 'おまかせで売却';
+      skip.hidden = false;
       skip.disabled = false;
+      skip.textContent = ids.length ? 'おまかせで売却' : 'つづける';
     }
     return;
   }
@@ -7803,13 +7822,22 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'shop_protect') {
-    const ids = pend.shopIds?.length
+    const rawIds = pend.shopIds?.length
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    const ids = rawIds.filter((id) => {
+      const sq = getNode(g, id);
+      return sq && sq.type === 'shop' && sq.owner === pend.playerId;
+    });
     const turns = Math.max(1, Number(pend.turns) || 1);
     title.textContent = '店守り契約';
     enableShopPickModalCard();
-    $('#btn-skip-choice').hidden = true;
+    const skipProtect = $('#btn-skip-choice');
+    if (skipProtect) {
+      skipProtect.hidden = ids.length > 0;
+      skipProtect.disabled = false;
+      skipProtect.textContent = 'つづける（手当+40G）';
+    }
     const listHtml = ids.length
       ? renderGroupedShopPickList(g, ids, (id) => {
         const sq = getNode(g, id);
@@ -7821,7 +7849,7 @@ function showChoiceModal(g) {
           <small>${escapeHtml(code)} · 価格 ${sq.price.toLocaleString()}G</small>
         </button>`;
       })
-      : '<p class="hint">所持店がありません</p>';
+      : '<p class="hint">所持店がありません（つづけるで手当）</p>';
     body.innerHTML = `
       <div class="shop-pick-layout">
         <div class="scratch-followup">
@@ -7852,12 +7880,21 @@ function showChoiceModal(g) {
   }
 
   if (pend.type === 'co_own') {
-    const ids = pend.shopIds?.length
+    const rawIds = pend.shopIds?.length
       ? pend.shopIds
       : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
+    const ids = rawIds.filter((id) => {
+      const sq = getNode(g, id);
+      return sq && sq.type === 'shop' && sq.owner >= 0 && sq.owner !== pend.playerId;
+    });
     title.textContent = '共同オーナー';
     enableShopPickModalCard();
-    $('#btn-skip-choice').hidden = true;
+    const skipCoOwn = $('#btn-skip-choice');
+    if (skipCoOwn) {
+      skipCoOwn.hidden = ids.length > 0;
+      skipCoOwn.disabled = false;
+      skipCoOwn.textContent = 'つづける（手当+40G）';
+    }
     const listHtml = ids.length
       ? renderGroupedShopPickList(g, ids, (id) => {
         const sq = getNode(g, id);
@@ -7870,7 +7907,7 @@ function showChoiceModal(g) {
           <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(code)} · ${sq.price.toLocaleString()}G</small>
         </button>`;
       })
-      : '<p class="hint">相手の店がありません</p>';
+      : '<p class="hint">相手の店がありません（つづけるで手当）</p>';
     body.innerHTML = `
       <div class="shop-pick-layout">
         <div class="scratch-followup">
