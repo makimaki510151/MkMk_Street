@@ -1,4 +1,4 @@
-/** MkMk Street — 本家いただきストリート風・分岐マップ群 */
+/** MkMk Street — 分岐マップ群 */
 
 import { buildKurechigai, buildSkyIsles, buildGreedMine } from './mapsSpecial.js';
 
@@ -313,7 +313,7 @@ export function buildCentralCross() {
 }
 
 /**
- * 本家「貝がら島」系：外周の海岸リング＋並列の埠頭ルート＋直径スイッチ。
+ * 貝がら島系：外周の海岸リング＋並列の埠頭ルート＋直径スイッチ。
  * 分かれ道は「海岸どおり / 埠頭へ」の二択が基本（十字マップの東西南北分岐とは別物）。
  * 斜めなし・行き止まりなし。
  */
@@ -441,7 +441,7 @@ export function buildShellHarbor() {
 }
 
 /**
- * 本家「レインフォレスト」系：本島 7×7 ＋ 離れ小島 5×5。
+ * レインフォレスト系：本島 7×7 ＋ 離れ小島 5×5。
  * 小島へはワープのみ。直交隣接のみリンク、行き止まりなし。
  *
  * 本島:
