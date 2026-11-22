@@ -37,8 +37,10 @@ export function normalizeNewMinigamePick(game, choice) {
     return `${a},${b}`;
   }
   if (game === 'silent_bid') {
-    const n = Number(choice?.value);
-    return [30, 60, 100, 150].includes(n) ? n : 60;
+    // 上限は pending.pot 側で再クランプする（ここでは正の整数のみ正規化）
+    const n = Math.floor(Number(choice?.value));
+    if (!Number.isFinite(n) || n < 1) return 1;
+    return Math.min(9999, n);
   }
   if (game === 'push_pull') {
     const n = Number(choice?.value);
@@ -87,9 +89,16 @@ export function setupNewMinigameShared(game, ctx) {
   } else if (game === 'hot_potato') {
     shared.safeStops = Math.max(1, Math.floor(rng() * Math.max(1, participants.length)));
   } else if (game === 'silent_bid') {
-    shared.pot = 180 + Math.floor(rng() * 100);
+    // 申告上限（開始時に pending.pot へ載せ、プレイヤーへ事前公開する）
+    shared.pot = 80 + Math.floor(rng() * 121); // 80〜200
   }
   return shared;
+}
+
+/** サイレント入札の申告上限を開始時に決める */
+export function rollSilentBidPot(rng) {
+  const r = typeof rng === 'function' ? rng() : Math.random();
+  return 80 + Math.floor(r * 121);
 }
 
 /**
@@ -134,33 +143,26 @@ export function scoreNewMinigamePlayer(g, p, game, pick, shared, helpers) {
     }
     detail = `${a + 1}枚目と${b + 1}枚目`;
   } else if (game === 'silent_bid') {
-    const bid = Number(pick) || 60;
-    const pot = Number(shared.pot) || 200;
+    // 自由申告＋同額衝突は不成立。単独なら申告額をそのまま受取（上限=事前公開の pot）
+    const pot = Math.max(1, Math.floor(Number(shared.pot) || 200));
+    const bid = Math.max(1, Math.min(pot, Math.floor(Number(pick) || 1)));
     const allBids = shared.allBids || {};
-    const entries = Object.entries(allBids).map(([id, b]) => ({ id: Number(id), bid: Number(b) }));
-    const maxBid = entries.reduce((m, e) => Math.max(m, e.bid), 0);
-    const leaders = entries.filter((e) => e.bid === maxBid);
+    const same = Object.values(allBids).filter((b) => Number(b) === bid).length;
     outcome.bid = bid;
     outcome.pot = pot;
-    outcome.maxBid = maxBid;
-    const paid = Math.min(p.cash, bid);
-    p.cash -= paid;
-    if (leaders.length === 1 && leaders[0].id === p.id) {
+    outcome.collided = same > 1;
+    outcome.sameCount = same;
+    if (same === 1) {
       win = true;
-      tier = bid >= 100 ? 'jackpot' : 'win';
-      title = '落札！';
-      const prize = flatPrize(pot);
-      prizeWon = grantMinigamePrize(p, prize, messages, `入札${bid}Gで落札 → +${prize}G（支払 ${paid}G）`);
-    } else if (leaders.length > 1 && leaders.some((l) => l.id === p.id)) {
-      title = '同額で流札';
-      p.cash += Math.floor(paid / 2);
-      prizeWon = minigameConsolation(p, 20, messages, `同額入札で流札 → 半額返還＋参加賞`);
+      tier = bid >= Math.floor(pot * 0.8) ? 'jackpot' : bid >= Math.floor(pot * 0.45) ? 'win' : 'near';
+      title = '単独申告！';
+      const prize = flatPrize(bid);
+      prizeWon = grantMinigamePrize(p, prize, messages, `単独 ${bid}G（上限${pot}G）→ +${prize}G`);
     } else {
-      title = '入札負け…';
-      p.cash += Math.floor(paid * 0.7);
-      prizeWon = minigameConsolation(p, 18, messages, `入札${bid}G敗退 → 7割返還＋参加賞`);
+      title = '同額で衝突…';
+      prizeWon = minigameConsolation(p, 12, messages, `同額 ${bid}G が${same}人 → 不成立（参加賞 +12G）`);
     }
-    detail = `入札 ${bid}G / 最高 ${maxBid}G`;
+    detail = `申告 ${bid}G / 上限 ${pot}G${same > 1 ? ` / ${same}人衝突` : ' / 単独'}`;
   } else if (game === 'push_pull') {
     const stop = Number(pick) || 3;
     const popAt = Number(shared.popAt) || 4;
