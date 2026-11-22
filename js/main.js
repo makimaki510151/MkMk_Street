@@ -1849,19 +1849,23 @@ function spawnConfettiBurst(host, { count = 48, durationMs = 2600 } = {}) {
     const shape = i % 5 === 0 ? 'ribbon' : (i % 3 === 0 ? 'square' : 'rect');
     bit.className = `cfx-bit cfx-bit-${shape}`;
     const left = Math.random() * 100;
-    const delay = Math.random() * 0.55;
-    const dur = 1.55 + Math.random() * 1.35;
-    const drift = (Math.random() * 2 - 1) * 140;
+    const y0 = Math.random() * 28; // 画面上部〜中上から散らす
+    const delay = Math.random() * 0.45;
+    const dur = 2.2 + Math.random() * 1.6;
+    const drift = (Math.random() * 2 - 1) * 160;
     const spin = 180 + Math.random() * 720;
-    const size = 6 + Math.random() * 10;
+    const size = 11 + Math.random() * 15;
     const color = CELEBRATE_CONFETTI_COLORS[i % CELEBRATE_CONFETTI_COLORS.length];
     bit.style.setProperty('--x', `${left}%`);
+    bit.style.setProperty('--y0', `${y0}%`);
     bit.style.setProperty('--delay', `${delay}s`);
     bit.style.setProperty('--dur', `${dur}s`);
     bit.style.setProperty('--drift', `${drift}px`);
     bit.style.setProperty('--spin', `${spin}deg`);
     bit.style.setProperty('--size', `${size}px`);
     bit.style.setProperty('--c', color);
+    bit.style.animationDuration = `${dur}s`;
+    bit.style.animationDelay = `${delay}s`;
     frag.appendChild(bit);
   }
   host.appendChild(frag);

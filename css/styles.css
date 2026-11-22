@@ -4374,29 +4374,34 @@ body.your-turn #btn-roll:not(:disabled) {
   inset: 0;
   pointer-events: none;
   overflow: hidden;
-  z-index: 0;
+  z-index: 3;
 }
 #minigame-overlay .mg-confetti {
   z-index: 4;
 }
 .cfx-bit {
   position: absolute;
-  top: -12%;
+  top: var(--y0, 8%);
   left: var(--x, 50%);
-  width: var(--size, 8px);
-  height: calc(var(--size, 8px) * 0.55);
+  width: var(--size, 12px);
+  height: calc(var(--size, 12px) * 0.6);
   background: var(--c, #ffe08a);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--c, #ffe08a) 65%, transparent);
   opacity: 0;
-  animation: cfxConfettiFall var(--dur, 2s) cubic-bezier(0.22, 0.61, 0.36, 1) var(--delay, 0s) forwards;
+  animation-name: cfxConfettiFall;
+  animation-timing-function: cubic-bezier(0.15, 0.7, 0.25, 1);
+  animation-fill-mode: forwards;
+  animation-duration: var(--dur, 2.8s);
+  animation-delay: var(--delay, 0s);
   will-change: transform, opacity;
 }
 .cfx-bit-square {
   border-radius: 2px;
-  height: var(--size, 8px);
+  height: var(--size, 12px);
 }
 .cfx-bit-ribbon {
-  width: calc(var(--size, 8px) * 0.35);
-  height: calc(var(--size, 8px) * 1.6);
+  width: calc(var(--size, 12px) * 0.38);
+  height: calc(var(--size, 12px) * 1.85);
   border-radius: 999px;
 }
 .cfx-bit-rect {
@@ -4405,12 +4410,13 @@ body.your-turn #btn-roll:not(:disabled) {
 @keyframes cfxConfettiFall {
   0% {
     opacity: 0;
-    transform: translate3d(0, -8vh, 0) rotate(0deg) scale(0.7);
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(0.6);
   }
-  8% { opacity: 1; }
+  8% { opacity: 1; transform: translate3d(calc(var(--drift, 40px) * 0.15), 6vh, 0) rotate(40deg) scale(1.1); }
+  55% { opacity: 1; }
   100% {
     opacity: 0;
-    transform: translate3d(var(--drift, 40px), 110vh, 0) rotate(var(--spin, 540deg)) scale(1);
+    transform: translate3d(var(--drift, 40px), 92vh, 0) rotate(var(--spin, 540deg)) scale(0.95);
   }
 }
 
@@ -4449,7 +4455,7 @@ body.your-turn #btn-roll:not(:disabled) {
 }
 #celebrate-fx .cfx-copy {
   position: relative;
-  z-index: 2;
+  z-index: 5;
   text-align: center;
   padding: 0.95rem 1.35rem;
   border-radius: 12px;
