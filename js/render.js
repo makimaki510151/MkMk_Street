@@ -927,7 +927,7 @@ export function createRenderer(canvas) {
         ctx.font = `800 ${Math.max(8, size * 0.15)}px "Zen Maru Gothic", sans-serif`;
         if (n.owner >= 0) {
           // 所有店は「止まると払う料」を主表示（価格より重要）
-          const closed = !!g.players[n.owner]?.shopsClosed;
+          const closed = !!(n.eventHoliday || g.players[n.owner]?.shopsClosed);
           const toll = calcToll(g, n);
           ctx.fillStyle = closed ? 'rgba(255, 196, 150, 0.95)' : '#ffc2b4';
           ctx.fillText(closed ? '店休・料0' : `料${toll.toLocaleString()}`, x + size / 2, y + size / 2 + size * 0.12);
@@ -1013,6 +1013,30 @@ export function createRenderer(canvas) {
       // 進行方向（自分・他プレイヤーとも）
       const facing = tokenFacingAngle(g, p);
       drawFacingChevron(pos.x, pos.y, rad, facing, p.color, isCurrent || warping || !!anim.moves[p.id]);
+    }
+
+    // イベントNPC（妖精・大商人・貧乏神）
+    for (const npc of g.eventNpcs || []) {
+      const node = g.map.find((n) => n.id === npc.pos);
+      if (!node || node.col == null || node.row == null) continue;
+      const x = layout.ox + (node.col + 0.5) * layout.size;
+      const y = layout.oy + (node.row + 0.5) * layout.size;
+      const rad = layout.size * 0.18;
+      ctx.beginPath();
+      ctx.arc(x, y - layout.size * 0.12, rad, 0, Math.PI * 2);
+      ctx.fillStyle = npc.color || '#c5a3ff';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#1a1510';
+      ctx.font = `700 ${Math.max(9, Math.floor(layout.size * 0.22))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(npc.glyph || 'NPC', x, y - layout.size * 0.12);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = `700 ${Math.max(8, Math.floor(layout.size * 0.16))}px sans-serif`;
+      ctx.fillText(npc.label || '', x, y + layout.size * 0.22);
     }
 
     // ブランド表記はトップバーに集約（盤面マスと被らない）
@@ -1258,7 +1282,9 @@ export function shopTooltip(g, sq) {
   if (sq.type !== 'shop') return `${sq.label}`;
   const owner = sq.owner >= 0 ? g.players[sq.owner]?.name : '空き';
   const toll = calcToll(g, sq);
-  const closed = sq.owner >= 0 && g.players[sq.owner]?.shopsClosed ? '／店休中（買い物料0）' : '';
+  const closed = (sq.eventHoliday || (sq.owner >= 0 && g.players[sq.owner]?.shopsClosed))
+    ? '／店休中（買い物料0）'
+    : '';
   const ownTag = sq.owner >= 0 ? `【${owner}の店】` : '【空き】';
   const areaCode = getAreaCode(g, sq.area);
   const areaName = g.areas[sq.area]?.name || AREA_META[sq.area]?.name || '';
