@@ -176,6 +176,8 @@ const app = {
   modalPendingKey: null,
   /** 分岐選択の演出中（二重クリックで購入見送りになるのを防ぐ） */
   forkResolving: false,
+  /** 選択アクション処理中（物件逆交渉などの連打で役割が入れ替わるのを防ぐ） */
+  choiceResolving: false,
   /** 株パネル／プレイヤーカードでピン留めしたエリア（クリックで盤面ハイライト） */
   stockPeekArea: null,
   /** スマホ詳細シート（手番/所持/記録）が開いているか */
@@ -3778,6 +3780,10 @@ async function applyLocalAction(action) {
     const pend = app.game.pending;
     if (!pend) return;
     if (app.mode === 'guest') return;
+    // ホスト自身／ローカル人間以外の pending を操作させない（逆交渉連打で CPU 側に作用するのを防ぐ）
+    if (app.mode === 'host' && pend.playerId !== app.localSeat) return;
+    if (app.mode === 'local' && app.game.players[pend.playerId]?.isCPU) return;
+    if (app.choiceResolving) return;
     noteActionActor(pend.playerId ?? app.game.currentPlayerIdx);
 
     // 分岐演出中の二重 nextId、または着地後に遅れて届いた nextId は無視
@@ -3796,53 +3802,58 @@ async function applyLocalAction(action) {
       return;
     }
 
-    const result = applyChoice(app.game, action.choice);
-    if (!result.ok) {
+    app.choiceResolving = true;
+    try {
+      const result = applyChoice(app.game, action.choice);
+      if (!result.ok) {
+        if (result.state) app.game = restoreState(result.state);
+        toast(choiceErrorMessage(result.error));
+        refreshGameUI();
+        return;
+      }
       if (result.state) app.game = restoreState(result.state);
-      toast(choiceErrorMessage(result.error));
+      if (result.warps?.length) armWarpHolds(result.warps);
+      if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
+      if (result.fiveBuy) presentFiveBuyFx(result);
+      if (result.monopolyBreak) presentMonopolyBreakFx(result);
+      if (result.monopoly) presentMonopolyFx(result);
+      if (result.scratched) {
+        await presentScratchOutcome(result);
+        await presentWarpFx(result.warps);
+      }
+      if (result.reveal) {
+        await presentMinigameResult(result);
+      } else if (result.minigame && result.messages) {
+        if (result.win) audio.sfx.levelUp();
+        else audio.sfx.buy();
+        enqueueBanner({
+          kicker: 'ミニゲーム',
+          title: result.win ? '当たり！' : '結果発表',
+          detail: result.messages.join(' / '),
+          kind: 'event',
+          color: currentPlayer(app.game)?.color || '#ffe08a',
+          mine: true,
+        });
+      }
+      if (result.potionReveal) {
+        await presentPotionReveal(result);
+      }
+      if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
+      syncState();
       refreshGameUI();
-      return;
-    }
-    if (result.state) app.game = restoreState(result.state);
-    if (result.warps?.length) armWarpHolds(result.warps);
-    if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
-    if (result.fiveBuy) presentFiveBuyFx(result);
-    if (result.monopolyBreak) presentMonopolyBreakFx(result);
-    if (result.monopoly) presentMonopolyFx(result);
-    if (result.scratched) {
-      await presentScratchOutcome(result);
-      await presentWarpFx(result.warps);
-    }
-    if (result.reveal) {
-      await presentMinigameResult(result);
-    } else if (result.minigame && result.messages) {
-      if (result.win) audio.sfx.levelUp();
-      else audio.sfx.buy();
-      enqueueBanner({
-        kicker: 'ミニゲーム',
-        title: result.win ? '当たり！' : '結果発表',
-        detail: result.messages.join(' / '),
-        kind: 'event',
-        color: currentPlayer(app.game)?.color || '#ffe08a',
-        mine: true,
-      });
-    }
-    if (result.potionReveal) {
-      await presentPotionReveal(result);
-    }
-    if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
-    syncState();
-    refreshGameUI();
 
-    // 銀行通過後：進行方向選択 or 移動再開
-    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
-      app.busy = true;
-      app.deferEventFlash = true;
-      await continueAdvancing();
-      resumeAfterMovement();
-    } else if (clearBusyUnlessEventUi()) {
-      refreshGameUI();
-      scheduleCpu();
+      // 銀行通過後：進行方向選択 or 移動再開
+      if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+        app.busy = true;
+        app.deferEventFlash = true;
+        await continueAdvancing();
+        resumeAfterMovement();
+      } else if (clearBusyUnlessEventUi()) {
+        refreshGameUI();
+        scheduleCpu();
+      }
+    } finally {
+      app.choiceResolving = false;
     }
     return;
   }
@@ -5340,61 +5351,71 @@ async function handleHostAction(from, data) {
       app.net.sendTo(from, { type: 'reject', reason: '今は選択できません' });
       return;
     }
-    const result = applyChoice(app.game, action.choice);
-    if (!result.ok) {
-      if (result.state) app.game = restoreState(result.state);
-      app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
-      syncState();
-      refreshGameUI();
+    // handleHostAction は await されないため、演出 await 中の二重 choice をここで弾く
+    if (app.choiceResolving) {
+      app.net.sendTo(from, { type: 'reject', reason: '選択の処理中です' });
       return;
     }
-    if (result.state) app.game = restoreState(result.state);
-    if (result.warps?.length) armWarpHolds(result.warps);
-    if (result.fiveBuy) presentFiveBuyFx(result);
-    if (result.monopolyBreak) presentMonopolyBreakFx(result);
-    if (result.monopoly) presentMonopolyFx(result);
-    if (result.scratched) {
-      await presentScratchOutcome(result);
-      await presentWarpFx(result.warps);
-    }
-    if (result.reveal) {
-      await presentMinigameResult(result);
-    } else if (result.minigame && result.messages) {
-      if (result.win) audio.sfx.levelUp();
-      else audio.sfx.buy();
-      enqueueBanner({
-        kicker: 'ミニゲーム',
-        title: result.win ? '当たり！' : '結果発表',
-        detail: result.messages.join(' / '),
-        kind: 'event',
-        color: app.game.players[seat]?.color || '#ffe08a',
-        actorId: seat,
-      });
-      broadcastFx({
-        kind: 'banner',
-        payload: {
+    app.choiceResolving = true;
+    try {
+      const result = applyChoice(app.game, action.choice);
+      if (!result.ok) {
+        if (result.state) app.game = restoreState(result.state);
+        app.net.sendTo(from, { type: 'reject', reason: choiceErrorMessage(result.error) });
+        syncState();
+        refreshGameUI();
+        return;
+      }
+      if (result.state) app.game = restoreState(result.state);
+      if (result.warps?.length) armWarpHolds(result.warps);
+      if (result.fiveBuy) presentFiveBuyFx(result);
+      if (result.monopolyBreak) presentMonopolyBreakFx(result);
+      if (result.monopoly) presentMonopolyFx(result);
+      if (result.scratched) {
+        await presentScratchOutcome(result);
+        await presentWarpFx(result.warps);
+      }
+      if (result.reveal) {
+        await presentMinigameResult(result);
+      } else if (result.minigame && result.messages) {
+        if (result.win) audio.sfx.levelUp();
+        else audio.sfx.buy();
+        enqueueBanner({
           kicker: 'ミニゲーム',
           title: result.win ? '当たり！' : '結果発表',
           detail: result.messages.join(' / '),
           kind: 'event',
           color: app.game.players[seat]?.color || '#ffe08a',
           actorId: seat,
-        },
-      });
-    }
-    if (result.potionReveal) {
-      await presentPotionReveal(result);
-    }
-    syncState();
-    refreshGameUI();
-    if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
-      app.busy = true;
-      app.deferEventFlash = true;
-      await continueAdvancing();
-      resumeAfterMovement();
-    } else if (clearBusyUnlessEventUi()) {
+        });
+        broadcastFx({
+          kind: 'banner',
+          payload: {
+            kicker: 'ミニゲーム',
+            title: result.win ? '当たり！' : '結果発表',
+            detail: result.messages.join(' / '),
+            kind: 'event',
+            color: app.game.players[seat]?.color || '#ffe08a',
+            actorId: seat,
+          },
+        });
+      }
+      if (result.potionReveal) {
+        await presentPotionReveal(result);
+      }
+      syncState();
       refreshGameUI();
-      scheduleCpu();
+      if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
+        app.busy = true;
+        app.deferEventFlash = true;
+        await continueAdvancing();
+        resumeAfterMovement();
+      } else if (clearBusyUnlessEventUi()) {
+        refreshGameUI();
+        scheduleCpu();
+      }
+    } finally {
+      app.choiceResolving = false;
     }
     return;
   }
@@ -5810,7 +5831,9 @@ function refreshGameUI() {
       }
       $('#wait-hint').hidden = true;
       setStatusBanner(true, 'あなたの番 — 選択してください', actor?.color || cur?.color);
-    } else if (!app.busy) {
+    } else {
+      // busy（告知演出中）でも、相手／CPU待ちの古い選択UIは必ず閉じる。
+      // 逆交渉連打で CPU 側の pending に対し古い「逆交渉」ボタンが残ると進行が止まる。
       app.modalActive = false;
       hideModal();
       $('#wait-hint').hidden = false;
@@ -6025,7 +6048,9 @@ function bannerFromLog(g, l) {
         ? '増資！'
         : (/([0-9]+)倍買い|奪取/.test(l.text)
           ? `${(l.text.match(/([0-9]+)倍/) || [, '5'])[1]}倍買い！`
-          : 'お店'));
+          : (/物件取引を持ちかけ|逆交渉を申し込んだ/.test(l.text)
+            ? '物件取引'
+            : 'お店')));
     // 専用 fiveBuy FX と二重になるログ告知は抑止
     if (/[0-9]+倍買いで/.test(l.text) && /奪取/.test(l.text)) return null;
     detail = l.text;
@@ -6106,7 +6131,9 @@ function bannerFromLog(g, l) {
 
   // マーク系はフィードのみ。中央確認はスクラッチ等の選択UIと衝突して通信停止の原因になる
   // （航路スイッチ告知と同じクラス: busy のまま guest reader 待ちで choice/roll 拒否）
-  const stampOnly = kind === 'mark';
+  // 物件の提案／逆交渉も確認ダイアログにしない（busy で CPU 応答や連打後の進行が止まる）
+  const stampOnly = kind === 'mark'
+    || (kind === 'shop' && /物件取引を持ちかけ|逆交渉を申し込んだ/.test(l.text));
 
   return {
     kicker,
@@ -7263,16 +7290,25 @@ function showChoiceModal(g) {
       };
       counterInput.addEventListener('change', commitCounterCash);
     }
+    const sendTradeOfferChoice = (choice) => {
+      if (app.choiceResolving) return;
+      for (const id of ['m-trade-accept', 'm-trade-counter', 'm-trade-reject']) {
+        const btn = $(`#${id}`);
+        if (btn) btn.disabled = true;
+      }
+      hideModal();
+      sendAction({ type: 'choice', choice });
+    };
     $('#m-trade-accept').onclick = () => {
-      sendAction({ type: 'choice', choice: { action: 'accept' } });
+      sendTradeOfferChoice({ action: 'accept' });
     };
     $('#m-trade-counter').onclick = () => {
       const draft = Number($('#trade-counter-cash')?.value || 0);
-      sendAction({ type: 'choice', choice: { action: 'counter', cashDelta: draft } });
+      sendTradeOfferChoice({ action: 'counter', cashDelta: draft });
     };
     $('#m-trade-reject').onclick = () => {
       audio.sfx.cancel();
-      sendAction({ type: 'choice', choice: { action: 'reject' } });
+      sendTradeOfferChoice({ action: 'reject' });
     };
     return;
   }
