@@ -191,6 +191,52 @@ export function describeEventDef(def) {
       }
       return 'イベントNPCをマップに召喚する';
     }
+    case 'pick_dice':
+      return '次に振るサイコロの出目を宣言して固定できる';
+    case 'steal_mark':
+      return '他プレイヤーからマークを1つ奪う';
+    case 'grant_wildcard':
+      return 'ワイルドカードを1枚入手';
+    case 'warp_best_shop':
+      return '自分の最高価格の店（なければ空き店）へワープ';
+    case 'warp_behind_leader':
+      return '資産トップのプレイヤー位置へワープ';
+    case 'shop_protect':
+      return '自分の店1軒を一定周守り、買収を防ぐ';
+    case 'co_own':
+      return '相手の店1軒の共同オーナーになり、買い物料の一部を受取';
+    case 'toll_hijack':
+      return '次に発生する買い物料を自分へ横流し';
+    case 'time_capsule':
+      return `次の銀行訪問で現金ボーナス（目安 ${amount || 80}G）`;
+    case 'bank_interest':
+      return `所持金の一部を利息として受取（目安 ${amount || 8}%）`;
+    case 'mono_hearing':
+      return `独占主に店譲渡か罰金（目安 ${amount || 180}G）を迫る`;
+    case 'area_block':
+      return 'エリアを封鎖し、しばらく買い物料を0にする';
+    case 'strip_status':
+      return '他プレイヤーのステータスやクーポンを1つ没収';
+    case 'retreat':
+      return `マスを後退する（目安 ${amount || 4}マス）`;
+    case 'force_stop':
+      return '次の移動は1マスで強制停止';
+    case 'swap_two_others':
+      return '自分以外の2人の位置を入れ替え';
+    case 'insider_stocks':
+      return `株を入手するが、次の銀行で罰金（目安 ${amount || 60}G）`;
+    case 'fortune_triple':
+      return '3つの運命から1つを選ぶ';
+    case 'lend_shop':
+      return '自分の店を一時的に他プレイヤー名義へ貸す';
+    case 'compare_ad':
+      return `同エリアの相手店を値下げし、自分の店をみがく（目安 ${amount || 40}）`;
+    case 'insurance_refund':
+      return '直近に払った買い物料の半分を保険金として受取';
+    case 'mark_gamble':
+      return '所持マークを賭けて増やすか没収される';
+    case 'short_stock':
+      return '株を空売りして現金を得つつ、次の銀行で買い戻し';
     default:
       return def.label || String(effect);
   }

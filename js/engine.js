@@ -29,6 +29,12 @@ import {
   maxExtraInvest as maxExtraInvestOf,
   remainingInvest as remainingInvestOf,
 } from './investLimits.js';
+import {
+  NEW_PARTY_MINIGAMES,
+  normalizeNewMinigamePick,
+  setupNewMinigameShared,
+  scoreNewMinigamePlayer,
+} from './scratchExpand.js';
 
 /** 移動ダイス面数の既定値（マップ未指定時） */
 export const MOVE_DICE_MAX_DEFAULT = 6;
@@ -2175,6 +2181,12 @@ function applyStep(g, p, nextId) {
   g.move.stepsLeft--;
   g.move.path.push(nextId);
   if (nextId === g.startId) g.move.passedBank = true;
+  // 強制停止：次に踏んだマスで残手数を切る
+  if (p.flags?.forceStopNext && g.move.stepsLeft > 0) {
+    p.flags.forceStopNext = false;
+    g.move.stepsLeft = 0;
+    addLog(g, `${p.name} は強制停止で着地`, 'event');
+  }
   onPassThrough(g, p, nextId);
   return from;
 }
@@ -2388,6 +2400,38 @@ export function rollDice(g) {
     addLog(g, `${p.name} のお店が営業再開した`, 'system');
   }
 
+  // 店守り・エリア封鎖・名義貸しのターン経過
+  for (const sq of g.map) {
+    if (sq.type !== 'shop') continue;
+    if (sq.owner === p.id && Number(sq.protectTurns) > 0) {
+      sq.protectTurns = Math.max(0, Number(sq.protectTurns) - 1);
+      if (!sq.protectTurns) addLog(g, `「${sq.label}」の店守りが切れた`, 'system');
+    }
+    if (Number(sq.areaBlockTurns) > 0 && Number(sq.owner) === p.id) {
+      // area block is tracked on area meta below
+    }
+  }
+  if (p.flags?.lentShop && Number(p.flags.lentShop.returnTurn) <= g.turn) {
+    const info = p.flags.lentShop;
+    const sq = getNode(g, info.shopId);
+    if (sq && sq.type === 'shop' && Number(sq.owner) === Number(info.toId)) {
+      sq.owner = info.fromId;
+      addLog(g, `「${sq.label}」の名義貸しが戻り ${g.players[info.fromId]?.name || ''} へ`, 'shop');
+    }
+    p.flags.lentShop = null;
+  }
+  for (const a of Object.keys(g.areas || {}).map(Number)) {
+    const meta = g.areas[a];
+    if (meta && Number(meta.blockTurns) > 0 && meta.blockOwnerId === p.id) {
+      meta.blockTurns -= 1;
+      if (meta.blockTurns <= 0) {
+        meta.blockTurns = 0;
+        meta.blockOwnerId = null;
+        addLog(g, `${getAreaCode(g, a)} のエリア封鎖が解けた`, 'system');
+      }
+    }
+  }
+
   // ラッキーは「次の自分の番まで」。自分のターン開始で期限切れ
   if (p.flags?.luckyExpireOnTurn) {
     p.flags.luckyExpireOnTurn = false;
@@ -2401,7 +2445,14 @@ export function rollDice(g) {
   if (p.pos === g.startId) p.prevPos = null;
 
   const diceMax = getMoveDiceMax(g);
-  const d = Math.floor(rngNext(g) * diceMax) + 1;
+  let d;
+  if (p.flags?.fixedDice != null) {
+    d = Math.max(1, Math.min(diceMax, Math.floor(Number(p.flags.fixedDice) || 1)));
+    p.flags.fixedDice = null;
+    addLog(g, `${p.name} の出目固定 → ${d}`, 'dice');
+  } else {
+    d = Math.floor(rngNext(g) * diceMax) + 1;
+  }
   g.dice = d;
   g.phase = 'moving';
   g.move = { stepsLeft: d, path: [], passedBank: false, startPos: p.pos };
@@ -2657,6 +2708,31 @@ function beginBankVisit(g, p, { landed, resumeMove }) {
   if (p.flags.bankVisitDone) return false;
   p.flags.bankVisitDone = true;
 
+  if (p.flags?.timeCapsule != null) {
+    const amt = Math.max(0, Math.floor(Number(p.flags.timeCapsule) || 0));
+    p.flags.timeCapsule = null;
+    if (amt > 0) {
+      p.cash += amt;
+      addLog(g, `${p.name} のタイムカプセルが開封 +${amt}G`, 'event');
+    }
+  }
+  if (p.flags?.insiderTax != null) {
+    const tax = Math.min(p.cash, Math.max(0, Math.floor(Number(p.flags.insiderTax) || 0)));
+    p.flags.insiderTax = null;
+    if (tax > 0) {
+      p.cash -= tax;
+      addLog(g, `${p.name} のインサイダー嫌疑で追徴 −${tax}G`, 'event');
+    }
+  }
+  if (p.flags?.shortCover != null) {
+    const pay = Math.min(p.cash, Math.max(0, Math.floor(Number(p.flags.shortCover) || 0)));
+    p.flags.shortCover = null;
+    if (pay > 0) {
+      p.cash -= pay;
+      addLog(g, `${p.name} が空売りを買い戻し −${pay}G`, 'stock');
+    }
+  }
+
   handleBank(g, p, landed);
   if (g.phase === 'gameover') return true;
 
@@ -2851,6 +2927,14 @@ function payToll(g, payer, sq) {
   const owner = g.players[sq.owner];
   let toll = calcToll(g, sq);
 
+  // エリア封鎖中は買い物料0
+  const areaMeta = g.areas?.[sq.area];
+  if (areaMeta && Number(areaMeta.blockTurns) > 0) {
+    addLog(g, `${getAreaCode(g, sq.area)} は封鎖中（買い物料0）`, 'system');
+    endTurn(g);
+    return;
+  }
+
   // スクラッチ等の通行守り
   if (payer.flags?.tollShield) {
     payer.flags.tollShield = false;
@@ -2876,18 +2960,39 @@ function payToll(g, payer, sq) {
     }
   }
 
+  // 買い物料横流し：次の発生分をハイジャッカーへ
+  let receiver = owner;
+  const hijackId = Number(g.tollHijackId);
+  if (Number.isFinite(hijackId) && g.players[hijackId] && !g.players[hijackId].bankrupt) {
+    receiver = g.players[hijackId];
+    g.tollHijackId = null;
+    addLog(g, `${receiver.name} が買い物料を横流し！`, 'event');
+  }
+
   // 料金は全額支払い（所持金はマイナスになり得る）。自動売却はしない
   payer.cash -= toll;
-  owner.cash += toll;
+  // 共同オーナーがいれば折半
+  const coId = Number(sq.coOwnerId);
+  if (Number.isFinite(coId) && coId >= 0 && g.players[coId] && !g.players[coId].bankrupt && coId !== receiver.id) {
+    const half = Math.floor(toll / 2);
+    const rest = toll - half;
+    receiver.cash += rest;
+    g.players[coId].cash += half;
+    addLog(g, `共同オーナー ${g.players[coId].name} が買い物料の半額 +${half}G`, 'toll');
+  } else {
+    receiver.cash += toll;
+  }
+  if (!payer.flags) payer.flags = {};
+  payer.flags.lastTollPaid = toll;
   bumpStat(payer, 'tollPaid', toll);
   bumpStat(payer, 'tollPayCount', 1);
   const payerStats = ensureStats(payer);
   if (toll > (payerStats.tollPayMax || 0)) payerStats.tollPayMax = toll;
-  bumpStat(owner, 'tollEarned', toll);
-  bumpStat(owner, 'tollSaleCount', 1);
-  const ownerStats = ensureStats(owner);
-  if (toll > (ownerStats.tollSaleMax || 0)) ownerStats.tollSaleMax = toll;
-  addLog(g, `${payer.name} → ${owner.name}「${sq.label}」買い物料 ${toll.toLocaleString()}G`, 'toll');
+  bumpStat(receiver, 'tollEarned', toll);
+  bumpStat(receiver, 'tollSaleCount', 1);
+  const recvStats = ensureStats(receiver);
+  if (toll > (recvStats.tollSaleMax || 0)) recvStats.tollSaleMax = toll;
+  addLog(g, `${payer.name} → ${receiver.name}「${sq.label}」買い物料 ${toll.toLocaleString()}G`, 'toll');
 
   // 同エリアの株保有者へ、収益の一部をわけ前（銀行から）
   payAreaStockDividend(g, sq.area, toll);
@@ -2919,6 +3024,12 @@ function clearTakeoverCoupon(p) {
 
 function offerFiveBuyOrEnd(g, payer, sq, toll) {
   if (payer.bankrupt || g.phase === 'gameover') {
+    endTurn(g);
+    return;
+  }
+  // 店守り中は5倍買いを出さない
+  if (Number(sq.protectTurns) > 0) {
+    addLog(g, `「${sq.label}」は店守り中（買収不可）`, 'system');
     endTurn(g);
     return;
   }
@@ -3775,6 +3886,21 @@ export function applyChoice(g, choice) {
     if (maybeOpenPickInvest(g, p)) {
       return { ok: true, ...matchPayload, pickInvest: true, state: serializeState(g) };
     }
+    if (maybeOpenPickDice(g, p)) {
+      return { ok: true, ...matchPayload, pickDice: true, state: serializeState(g) };
+    }
+    if (maybeOpenShopProtect(g, p)) {
+      return { ok: true, ...matchPayload, shopProtect: true, state: serializeState(g) };
+    }
+    if (maybeOpenCoOwn(g, p)) {
+      return { ok: true, ...matchPayload, coOwn: true, state: serializeState(g) };
+    }
+    if (maybeOpenFortuneTriple(g, p)) {
+      return { ok: true, ...matchPayload, fortuneTriple: true, state: serializeState(g) };
+    }
+    if (maybeOpenMonoHearing(g, p)) {
+      return { ok: true, ...matchPayload, monoHearing: true, state: serializeState(g) };
+    }
     if (maybeOpenMinigame(g, p)) {
       return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
     }
@@ -4197,11 +4323,127 @@ export function applyChoice(g, choice) {
     return { ok: false, error: 'bad_choice' };
   }
 
+  if (pending.type === 'pick_dice') {
+    const face = Math.max(1, Math.min(getMoveDiceMax(g), Math.floor(Number(choice?.value) || 1)));
+    p.flags.fixedDice = face;
+    addLog(g, `${p.name} が次の出目を ${face} に固定`, 'event');
+    g.pending = null;
+    endTurn(g);
+    return { ok: true, state: serializeState(g) };
+  }
+
+  if (pending.type === 'shop_protect') {
+    const shopId = Number(choice?.shopId);
+    const allowed = new Set(pending.shopIds || []);
+    if (!allowed.has(shopId)) return { ok: false, error: 'bad_shop' };
+    const sq = getNode(g, shopId);
+    if (!sq || sq.owner !== p.id) return { ok: false, error: 'bad_shop' };
+    sq.protectTurns = Math.max(1, Number(pending.turns) || 1);
+    addLog(g, `${p.name} が「${sq.label}」に店守り（${sq.protectTurns}周）`, 'shop');
+    g.pending = null;
+    endTurn(g);
+    return { ok: true, state: serializeState(g) };
+  }
+
+  if (pending.type === 'co_own') {
+    const shopId = Number(choice?.shopId);
+    const allowed = new Set(pending.shopIds || []);
+    if (!allowed.has(shopId)) return { ok: false, error: 'bad_shop' };
+    const sq = getNode(g, shopId);
+    if (!sq || sq.owner < 0 || sq.owner === p.id) return { ok: false, error: 'bad_shop' };
+    sq.coOwnerId = p.id;
+    addLog(g, `${p.name} が「${sq.label}」の共同オーナーに`, 'shop');
+    g.pending = null;
+    endTurn(g);
+    return { ok: true, state: serializeState(g) };
+  }
+
+  if (pending.type === 'fortune_triple') {
+    const idx = Math.max(0, Math.min((pending.options || []).length - 1, Math.floor(Number(choice?.value) || 0)));
+    const opt = pending.options?.[idx];
+    g.pending = null;
+    if (!opt) {
+      endTurn(g);
+      return { ok: true, state: serializeState(g) };
+    }
+    // 選択した簡易効果を即時適用
+    const messages = [];
+    applyFortuneOption(g, p, opt, messages);
+    for (const m of messages) addLog(g, `${p.name}：${m}`, 'event');
+    if (p.flags?.extraRoll) {
+      p.flags.extraRoll = false;
+      g.phase = 'await_roll';
+    } else {
+      endTurn(g);
+    }
+    return { ok: true, messages, state: serializeState(g) };
+  }
+
+  if (pending.type === 'mono_hearing') {
+    const action = choice?.action === 'give_shop' ? 'give_shop' : 'pay_fine';
+    const starter = g.players[pending.starterId];
+    const sq = getNode(g, pending.shopId);
+    if (action === 'give_shop' && sq && Number(sq.owner) === p.id && starter) {
+      const area = sq.area;
+      sq.owner = starter.id;
+      sq.extraInvest = 0;
+      sq.price = sq.basePrice;
+      applyMonopolyBreak(g, p.id, area);
+      addLog(g, `${p.name} は独禁ヒアリングで「${sq.label}」を ${starter.name} へ渡した`, 'shop');
+    } else {
+      const fine = Math.min(p.cash, Math.max(80, Number(pending.fine) || 180));
+      p.cash -= fine;
+      if (starter) starter.cash += fine;
+      addLog(g, `${p.name} は独禁罰金 ${fine}G を支払った`, 'event');
+    }
+    g.pending = null;
+    // ヒアリング後は開催者の手番へ戻して終了
+    if (pending.starterId != null) g.currentPlayerIdx = pending.starterId;
+    endTurn(g);
+    return { ok: true, state: serializeState(g) };
+  }
+
   if (pending.type === 'minigame') {
     return resolveMinigame(g, p, pending, choice);
   }
 
   return { ok: false, error: 'unknown_pending' };
+}
+
+function applyFortuneOption(g, p, opt, messages) {
+  if (!opt) return;
+  if (opt.effect === 'cash') {
+    const amt = Math.floor(Number(opt.cash) || 50);
+    if (amt >= 0) {
+      p.cash += amt;
+      messages.push(`+${amt}G`);
+    } else {
+      const n = Math.min(p.cash, -amt);
+      p.cash -= n;
+      messages.push(`-${n}G`);
+    }
+  } else if (opt.effect === 'stocks') {
+    const areas = Object.keys(g.areas || {}).map(Number);
+    if (areas.length) {
+      const a = areas[Math.floor(rngNext(g) * areas.length)];
+      const n = Math.max(1, Number(opt.stocks) || 5);
+      p.stocks[a] = (p.stocks[a] || 0) + n;
+      messages.push(`${getAreaCode(g, a)}株 +${n}`);
+    }
+  } else if (opt.effect === 'extra_roll') {
+    p.flags.extraRoll = true;
+    messages.push('もう一度サイコロ');
+  } else if (opt.effect === 'lucky') {
+    p.lucky = true;
+    if (p.flags) p.flags.luckyExpireOnTurn = false;
+    messages.push('ラッキー付与');
+  } else if (opt.effect === 'invest_coupon') {
+    p.flags.investCoupon = true;
+    messages.push('増資半額券');
+  } else {
+    p.cash += 40;
+    messages.push('+40G');
+  }
 }
 
 /** スクラッチ等のあとに「好きな店へ増資」選択を開く */
@@ -4295,6 +4537,93 @@ function maybeOpenForceRivalSell(g, p) {
   return true;
 }
 
+function maybeOpenPickDice(g, p) {
+  if (!p.flags?.pendingPickDice) return false;
+  p.flags.pendingPickDice = false;
+  g.phase = 'await_choice';
+  g.pending = { type: 'pick_dice', playerId: p.id };
+  addLog(g, `${p.name} は次の出目を宣言できる`, 'event');
+  return true;
+}
+
+function maybeOpenShopProtect(g, p) {
+  if (!p.flags?.pendingShopProtect) return false;
+  p.flags.pendingShopProtect = false;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner === p.id);
+  if (!shops.length) {
+    applyCashQuick(p, 40);
+    addLog(g, `${p.name} は守る店がなく手当 +40G`, 'event');
+    return false;
+  }
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'shop_protect',
+    playerId: p.id,
+    shopIds: shops.map((s) => s.id),
+    turns: 1,
+  };
+  addLog(g, `${p.name} は守るお店を選ぶ`, 'event');
+  return true;
+}
+
+function maybeOpenCoOwn(g, p) {
+  if (!p.flags?.pendingCoOwn) return false;
+  p.flags.pendingCoOwn = false;
+  const shops = g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id);
+  if (!shops.length) {
+    applyCashQuick(p, 40);
+    addLog(g, `${p.name} は共同オーナー対象がなく手当 +40G`, 'event');
+    return false;
+  }
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'co_own',
+    playerId: p.id,
+    shopIds: shops.map((s) => s.id),
+  };
+  addLog(g, `${p.name} は共同オーナーになる店を選ぶ`, 'event');
+  return true;
+}
+
+function maybeOpenFortuneTriple(g, p) {
+  const opts = p.flags?.pendingFortuneTriple;
+  if (!opts?.length) return false;
+  p.flags.pendingFortuneTriple = null;
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'fortune_triple',
+    playerId: p.id,
+    options: opts,
+  };
+  addLog(g, `${p.name} は運命の三択！`, 'event');
+  return true;
+}
+
+function maybeOpenMonoHearing(g, p) {
+  const info = p.flags?.pendingMonoHearing;
+  if (!info) return false;
+  p.flags.pendingMonoHearing = null;
+  const owner = g.players[info.ownerId];
+  if (!owner || owner.bankrupt) return false;
+  g.phase = 'await_choice';
+  g.pending = {
+    type: 'mono_hearing',
+    playerId: owner.id,
+    starterId: p.id,
+    area: info.area,
+    shopId: info.shopId,
+    fine: info.fine || 180,
+  };
+  addLog(g, `${owner.name} は独禁ヒアリング！（店を渡すか罰金か）`, 'event');
+  return true;
+}
+
+function applyCashQuick(p, amount) {
+  const n = Math.floor(Number(amount) || 0);
+  if (n > 0) p.cash += n;
+  else if (n < 0) p.cash -= Math.min(p.cash, -n);
+}
+
 /** 共通の結果にみんなで賭けるタイプ（スロット等の個人挑戦は含めない） */
 export const PARTY_MINIGAME_GAMES = new Set([
   'guess_dice',
@@ -4302,6 +4631,7 @@ export const PARTY_MINIGAME_GAMES = new Set([
   'high_low',
   'horse_race',
   'roulette',
+  ...NEW_PARTY_MINIGAMES,
 ]);
 
 export function isPartyMinigame(game) {
@@ -4382,6 +4712,8 @@ function normalizeMinigamePick(game, choice) {
   if (game === 'balloon_dash') {
     return [3, 5, 7].includes(Number(choice?.value)) ? Number(choice.value) : 5;
   }
+  const expanded = normalizeNewMinigamePick(game, choice);
+  if (expanded != null) return expanded;
   if (game === 'slot') return 'spin';
   return choice?.value ?? null;
 }
@@ -4473,6 +4805,13 @@ function finalizeMinigame(g, pending) {
     const reels = [];
     for (let i = 0; i < 5; i++) reels.push(syms[Math.floor(rngNext(g) * syms.length)]);
     shared.symbols = reels;
+  } else {
+    Object.assign(shared, setupNewMinigameShared(game, {
+      rng: () => rngNext(g),
+      participants,
+    }));
+    if (game === 'silent_bid') shared.allBids = { ...pending.picks };
+    if (game === 'hot_potato') shared.allPicks = { ...pending.picks };
   }
 
   for (const player of participants) {
@@ -4752,6 +5091,13 @@ function scoreMinigamePlayer(g, p, game, pick, shared) {
     }
     detail = `${pumps}ポンプ / 限界 ${popAt} → ${popped ? '破裂' : '成功'}`;
   } else {
+    const expanded = scoreNewMinigamePlayer(g, p, game, pick, shared, {
+      grantMinigamePrize,
+      minigameConsolation,
+      lvPrize,
+      flatPrize,
+    });
+    if (expanded) return expanded;
     title = '参加賞';
     prizeWon = minigameConsolation(p, 30, messages, '参加賞 +30G');
     detail = '参加賞';
@@ -6160,6 +6506,68 @@ export function cpuAct(g) {
       if (!best) return applyChoice(g, { action: 'skip' });
       return applyChoice(g, { action: 'sell', shopId: best.id });
     }
+    if (pend.type === 'pick_dice') {
+      const diceMax = getMoveDiceMax(g);
+      const face = traits.key === 'gambler'
+        ? Math.max(1, diceMax - Math.floor(cpuNoise(g, p, 530) * 2))
+        : 1 + Math.floor(cpuNoise(g, p, 531) * diceMax);
+      return applyChoice(g, { value: Math.max(1, Math.min(diceMax, face)) });
+    }
+    if (pend.type === 'shop_protect') {
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner === p.id).map((s) => s.id);
+      const best = cpuPickInvestShop(g, p, ids, traits, { preferId: null, requireRem: false });
+      if (best == null) return null;
+      return applyChoice(g, { shopId: best });
+    }
+    if (pend.type === 'co_own') {
+      const ids = pend.shopIds?.length
+        ? pend.shopIds
+        : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== p.id).map((s) => s.id);
+      let best = null;
+      let bestScore = -Infinity;
+      for (const id of ids) {
+        const sq = getNode(g, id);
+        if (!sq || sq.owner < 0 || sq.owner === p.id) continue;
+        const toll = calcToll(g, sq) || sq.price || 0;
+        let score = toll / 50 + cpuNoise(g, p, id + 540) * 0.4;
+        if (hasAreaMonopoly(g, sq.owner, sq.area)) score += 4;
+        if (score > bestScore) {
+          bestScore = score;
+          best = sq;
+        }
+      }
+      if (!best) return null;
+      return applyChoice(g, { shopId: best.id });
+    }
+    if (pend.type === 'fortune_triple') {
+      const opts = pend.options || [];
+      if (!opts.length) return applyChoice(g, { value: 0 });
+      let bestIdx = 0;
+      let bestScore = -Infinity;
+      opts.forEach((opt, i) => {
+        let score = cpuNoise(g, p, 550 + i);
+        if (opt.effect === 'cash') score += Number(opt.cash) || 0;
+        else if (opt.effect === 'stocks') score += (Number(opt.stocks) || 0) * 8;
+        else if (opt.effect === 'extra_roll') score += 40;
+        else if (opt.effect === 'lucky') score += 35;
+        else if (opt.effect === 'invest_coupon') score += 30;
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      });
+      return applyChoice(g, { value: bestIdx });
+    }
+    if (pend.type === 'mono_hearing') {
+      const fine = Math.max(80, Number(pend.fine) || 180);
+      const sq = getNode(g, pend.shopId);
+      const give = sq && hasAreaMonopoly(g, p.id, sq.area) && p.cash < fine * 1.2
+        ? false
+        : p.cash >= fine && cpuNoise(g, p, 560) < 0.7;
+      return applyChoice(g, { action: give ? 'pay_fine' : 'give_shop' });
+    }
     if (pend.type === 'five_buy') {
       const buy = cpuShouldFiveBuy(g, p, pend, traits);
       return applyChoice(g, { action: buy ? 'buy' : 'skip' });
@@ -6291,6 +6699,34 @@ export function cpuAct(g) {
       if (pend.game === 'balloon_dash') {
         const pumps = traits.key === 'gambler' ? [5, 7, 7] : traits.key === 'tycoon' ? [3, 3, 5] : [3, 5, 7];
         return applyChoice(g, { action: 'pick', value: pumps[Math.floor(n(511) * 3)] });
+      }
+      if (pend.game === 'memory_match') {
+        const a = Math.floor(n(520) * 6);
+        let b = Math.floor(n(521) * 6);
+        if (b === a) b = (a + 1) % 6;
+        return applyChoice(g, { action: 'pick', value: `${a},${b}` });
+      }
+      if (pend.game === 'silent_bid') {
+        const bids = traits.key === 'gambler' ? [100, 150, 150] : traits.key === 'tycoon' ? [30, 60, 60] : [60, 100, 100];
+        return applyChoice(g, { action: 'pick', value: bids[Math.floor(n(522) * 3)] });
+      }
+      if (pend.game === 'push_pull') {
+        const stops = traits.key === 'gambler' ? [4, 5, 5] : traits.key === 'tycoon' ? [1, 2, 3] : [2, 3, 4];
+        return applyChoice(g, { action: 'pick', value: stops[Math.floor(n(523) * 3)] });
+      }
+      if (pend.game === 'divide_pool') {
+        const keeps = traits.key === 'gambler' ? [60, 70, 70] : traits.key === 'tycoon' ? [40, 40, 50] : [40, 50, 60];
+        return applyChoice(g, { action: 'pick', value: keeps[Math.floor(n(524) * 3)] });
+      }
+      if (pend.game === 'target_roulette') {
+        const others = (pend.participantIds || []).map((id) => g.players[id]).filter((pl) => pl && !pl.bankrupt && pl.id !== pend.playerId);
+        if (n(525) < 0.55 || !others.length) {
+          return applyChoice(g, { action: 'pick', value: 'prize' });
+        }
+        return applyChoice(g, { action: 'pick', value: others[Math.floor(n(526) * others.length)].id });
+      }
+      if (pend.game === 'hot_potato') {
+        return applyChoice(g, { action: 'pick', value: n(527) < (traits.key === 'gambler' ? 0.55 : 0.35) ? 'stop' : 'pass' });
       }
       return applyChoice(g, { action: 'spin' });
     }

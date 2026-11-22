@@ -48,6 +48,12 @@ const MINIGAME_ICON = {
   roulette: '輪',
   heist: '金庫',
   balloon_dash: '球',
+  memory_match: '記',
+  silent_bid: '札',
+  push_pull: '押',
+  divide_pool: '配',
+  target_roulette: '的',
+  hot_potato: '禁',
 };
 
 /**
@@ -1287,6 +1293,12 @@ export function shopTooltip(g, sq) {
       high_low: 'ハイ＆ロー',
       coin: 'コイントス',
       slot: 'ファイブスロット',
+      memory_match: '神経衰弱',
+      silent_bid: 'サイレント入札',
+      push_pull: '押し引き',
+      divide_pool: '配分ゲーム',
+      target_roulette: 'ターゲットルーレット',
+      hot_potato: 'パス禁止',
     };
     return `${sq.label} — 止まるとミニゲーム「${names[sq.game] || sq.game}」（外れても全員に参加賞）`;
   }

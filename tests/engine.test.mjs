@@ -1549,6 +1549,10 @@ describe('MkMk Street engine', () => {
     assert.ok(miniGames.has('roulette'));
     assert.ok(miniGames.has('heist'));
     assert.ok(miniGames.has('balloon_dash'));
+    assert.ok(miniGames.has('memory_match'));
+    assert.ok(miniGames.has('silent_bid'));
+    assert.ok(kinds.has('pick_dice'), 'expected fixed-dice scratch events');
+    assert.ok(kinds.has('steal_mark'), 'expected mark-steal scratch events');
   });
 
   it('keeps lucky status until the start of the next own turn', () => {

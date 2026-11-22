@@ -76,179 +76,112 @@ function buildCatalog() {
     list.push({ id: list.length + 1, kind, label, ...data });
   };
 
-  // ── 金運（少数・レベル連動）────────────────────────────────
+  // ── 金運（圧縮）──────────────────────────────────────────
   [
-    ['treasure_map', '宝の地図', 50, 30], ['street_fair', '縁日の儲け', 60, 25],
-    ['lost_wallet', '落とし物発見', 70, 35], ['secret_stash', '隠し金庫', 80, 40],
-    ['rank_allowance', '階級手当', 100, 60], ['level_salary_day', '階級給料日', 80, 70],
+    ['treasure_map', '宝の地図', 50, 30], ['lost_wallet', '落とし物発見', 70, 35],
+    ['rank_allowance', '階級手当', 100, 60],
+  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
+  [
+    ['flat_tire', 'パンク修理', -40, -20], ['rank_dues', '階級維持費', -40, -30],
   ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
 
+  // ── 株・店みがき（圧縮）──────────────────────────────────
   [
-    ['flat_tire', 'パンク修理', -40, -20], ['broken_sign', '看板修繕', -50, -25],
-    ['rank_dues', '階級維持費', -40, -30], ['title_tax', '肩書き税', -35, -28],
-    ['parking_fee', '駐車料金', -30, -15],
-  ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'cash' }));
-
-  // ── 株・店みがき（類似を圧縮）──────────────────────────────
-  [
-    ['broker_tip', '証券屋の耳打ち', 8], ['dividend_day', '配当日', 10],
-    ['share_gift', '株の贈り物', 15], ['ipo_invite', 'IPOのお誘い', 12],
-    ['quiet_buy', '静かな買い', 5],
+    ['broker_tip', '証券屋の耳打ち', 8], ['share_gift', '株の贈り物', 15],
   ].forEach(([k, l, stocks]) => push(k, l, { stocks, effect: 'stocks' }));
-
   [
-    ['remodel_aid', '改装助成', 50], ['grand_reopen', 'リニューアル祝', 70],
-    ['rank_shop_polish', '階級店みがき', 25, 20],
-  ].forEach(([k, l, shopBoost, levelScale]) => push(k, l, {
-    shopBoost,
-    levelScale: levelScale || 0,
-    effect: 'shop_boost',
-  }));
-
+    ['remodel_aid', '改装助成', 50],
+  ].forEach(([k, l, shopBoost]) => push(k, l, { shopBoost, effect: 'shop_boost' }));
   [
     ['free_remodel', '好きなお店を改装', 50, 20],
     ['selective_invest', '一点集中投資', 60, 25],
-    ['rank_remodel', '階級改装権', 40, 30],
-    ['spotlight_shop', 'スポットライト改装', 45, 18],
   ].forEach(([k, l, amount, levelScale]) => push(k, l, { effect: 'pick_invest', amount, levelScale }));
 
-  // ── ライバル店の値崩れ（独占以外も対象）────────────────────
+  // ── 店価操作（圧縮）──────────────────────────────────────
   [
-    ['price_war', '価格競争', 45],
-    ['rival_markdown', 'ライバル値下げ', 55],
-    ['dumping_wave', '安売り攻勢', 40],
-    ['competitor_sale', '競合セール', 60],
-    ['undercut_blitz', '値下げ競争', 50],
+    ['price_war', '価格競争', 45], ['competitor_sale', '競合セール', 60],
   ].forEach(([k, l, amount]) => push(k, l, { effect: 'slash_rival_shops', amount }));
-
-  // ── 自分の店の値崩れ（デバフ）──────────────────────────────
   [
-    ['own_fire_sale', '自店の見切り', 40],
-    ['inventory_loss', '在庫ロス', 50],
-    ['bad_review', '酷評レビュー', 35],
-    ['repair_bill_shop', '店舗修繕費', 55],
-    ['shelf_clearance', '棚卸し処分', 45],
+    ['inventory_loss', '在庫ロス', 50], ['bad_review', '酷評レビュー', 35],
   ].forEach(([k, l, amount]) => push(k, l, { effect: 'slash_own_shops', amount }));
 
-  // ── 3倍／4倍買い権利（通常5倍より安い奪取）────────────────
+  // ── 買収権利（圧縮）──────────────────────────────────────
   [
     ['three_times_pass', '3倍買いクーポン', 3],
-    ['cheap_takeover', 'お買い得買収券', 3],
-    ['bargain_raid', 'バーゲン奪取券', 3],
     ['four_times_deal', '4倍買い権利', 4],
-    ['smart_buy_pass', 'スマート買収パス', 4],
-    ['mid_takeover', '中割買収クーポン', 4],
   ].forEach(([k, l, multi]) => push(k, l, { effect: 'takeover_coupon', multi }));
-
-  // ── 好きな相手店を6倍で買える権利──────────────────────────
   [
     ['six_buy_license', '6倍買いライセンス', 6],
-    ['any_shop_raid', '好きな店を6倍買い', 6],
-    ['golden_takeover', '金の買収令状', 6],
-    ['pick_seize_pass', '指名買収パス', 6],
   ].forEach(([k, l, multi]) => push(k, l, { effect: 'any_shop_buy', multi }));
-
-  // ── 好きな空き店を2倍価格で購入──────────────────────────
   [
     ['vacant_double_deed', '空地2倍購入権'],
-    ['plot_premium_pass', '更地プレミアパス'],
   ].forEach(([k, l]) => push(k, l, { effect: 'vacant_shop_buy', multi: 2 }));
-
-  // ── 相手店を3倍額で銀行支払いの強制売却──────────────────
   [
     ['bank_buyout_order', '銀行買取命令'],
-    ['forced_rival_sale', '相手店の強制換金'],
   ].forEach(([k, l]) => push(k, l, { effect: 'force_rival_sell', multi: 3 }));
-
-  // ── 全員のマークをシャッフル──────────────────────────────
   [
     ['suit_shuffle', 'マーク大シャッフル'],
-    ['mark_mixup', 'スート大混乱'],
   ].forEach(([k, l]) => push(k, l, { effect: 'shuffle_marks' }));
-
-  // ── 店を1店舗売る義務────────────────────────────────────
   [
     ['forced_liquidation', '強制売却命令'],
-    ['tax_audit_sell', '税務調査の処分'],
-    ['downsize_order', '店舗整理命令'],
-    ['creditor_call', '債権者からの要求'],
   ].forEach(([k, l]) => push(k, l, { effect: 'force_sell_shop' }));
 
-  // ── サイコロ・移動 ───────────────────────────────────────
+  // ── サイコロ・移動（圧縮）────────────────────────────────
   [
-    ['roll_again', 'もう一振り'], ['express_lane', '急行レーン'],
-    ['dice_charm', '賽の加護'], ['sprint_shoes', 'ダッシュシューズ'],
+    ['roll_again', 'もう一振り'], ['sprint_shoes', 'ダッシュシューズ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'extra_roll', extraRoll: true }));
-
   [
-    ['bank_warp', '銀行ワープ'], ['taxi_voucher', 'タクシー券'],
+    ['bank_warp', '銀行ワープ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'warp_bank' }));
-
   [
-    ['warp_mark', 'マーク地点へ'], ['suit_beacon', 'スートの灯台'],
+    ['warp_mark', 'マーク地点へ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'warp_mark' }));
-
   [
     ['warp_shop', '空き店へワープ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'warp_vacant_shop' }));
-
   [
-    ['warp_random', '迷子ワープ'], ['teleport_glitch', '転移の不調'],
+    ['warp_random', '迷子ワープ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'warp_random' }));
 
-  // ── マーク・ステータス ───────────────────────────────────
+  // ── マーク・ステータス（圧縮）────────────────────────────
   [
-    ['suit_finder', 'マーク探知機'], ['mark_radar', 'スートレーダー'],
-    ['corner_map', '四隅の地図'],
+    ['suit_finder', 'マーク探知機'],
   ].forEach(([k, l]) => push(k, l, { effect: 'grant_mark', grantMark: true }));
-
   [
-    ['lucky_charm', '幸運のお守り'], ['four_leaf', '四つ葉'],
-    ['lucky_aura', '強運のオーラ'],
+    ['lucky_charm', '幸運のお守り'],
   ].forEach(([k, l]) => push(k, l, { effect: 'lucky', lucky: true }));
-
   [
-    ['invest_half', '増資半額券'], ['vip_card', 'VIPカード'],
+    ['invest_half', '増資半額券'],
   ].forEach(([k, l]) => push(k, l, { effect: 'invest_coupon' }));
-
   [
-    ['toll_shield', '通行守り'], ['free_pass', 'フリーパス'],
+    ['toll_shield', '通行守り'],
   ].forEach(([k, l]) => push(k, l, { effect: 'toll_shield' }));
-
   [
     ['toll_boost', '買い物料アップ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'toll_boost' }));
-
   [
     ['shop_nap', 'お店お昼寝'],
   ].forEach(([k, l]) => push(k, l, { effect: 'own_shop_holiday' }));
-
   [
-    ['rival_closed', 'ライバル店休'], ['city_inspection', '抜き打ち検査'],
+    ['rival_closed', 'ライバル店休'],
   ].forEach(([k, l]) => push(k, l, { effect: 'rival_shop_holiday' }));
-
   [
     ['park_bench', '公園のベンチ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'rest' }));
 
-  // ── 独占打開 ─────────────────────────────────────────────
+  // ── 独占打開（圧縮）──────────────────────────────────────
   [
-    ['antitrust_raid', '独占摘発'], ['break_chain', 'チェーン崩し'],
-    ['hostile_takeover', '敵対的買収くじ'],
+    ['antitrust_raid', '独占摘発'],
   ].forEach(([k, l]) => push(k, l, { effect: 'seize_mono_shop' }));
-
   [
-    ['mono_nap', '独占店の昼寝'], ['regulator_holiday', '規制当局の休業令'],
+    ['mono_nap', '独占店の昼寝'],
   ].forEach(([k, l]) => push(k, l, { effect: 'mono_area_holiday' }));
-
   [
-    ['mono_tax', '独占税'], ['fair_trade_fine', '独禁法の罰金'],
+    ['mono_tax', '独占税'],
   ].forEach(([k, l]) => push(k, l, { effect: 'mono_tax', amount: 180 }));
-
   [
-    ['value_slash', '独占店の値崩れ'], ['price_cut_wave', '価格破壊の波'],
+    ['value_slash', '独占店の値崩れ'],
   ].forEach(([k, l]) => push(k, l, { effect: 'slash_mono_value', amount: 50 }));
-
   [
     ['mono_stock_siphon', '独占エリア株の横取り'],
   ].forEach(([k, l]) => push(k, l, { effect: 'steal_mono_stock', amount: 8 }));
@@ -256,12 +189,10 @@ function buildCatalog() {
   // ── 全員ボーナス（圧縮）──────────────────────────────────
   [
     ['payday_all', '給料日', 70, 20], ['bonus_wave', 'ボーナス支給', 80, 25],
-    ['festival_boom', 'お祭り景気', 60, 18], ['summer_bonus', '夏のボーナス', 85, 28],
-    ['prosperity_bell', '繁栄の鐘', 70, 22], ['all_hands_raise', 'みんなで乾杯', 90, 25],
-    ['rank_celebration', '階級のお祝い', 60, 30],
+    ['festival_boom', 'お祭り景気', 60, 18],
   ].forEach(([k, l, cash, levelScale]) => push(k, l, { cash, levelScale, effect: 'all_cash' }));
 
-  // ── ミニゲーム（それぞれ別ルール・別演出） ───────────────
+  // ── ミニゲーム（既存＋新規体験）──────────────────────────
   [
     ['mini_dice', 'サイコロ当て', 'guess_dice'],
     ['mini_highlow', 'ハイ＆ロー', 'high_low'],
@@ -273,59 +204,55 @@ function buildCatalog() {
     ['roulette', 'ルーレット', 'roulette'],
     ['heist', '金庫破り', 'heist'],
     ['balloon_dash', 'バルーンチャレンジ', 'balloon_dash'],
+    ['memory_match', '神経衰弱', 'memory_match'],
+    ['silent_bid', 'サイレント入札', 'silent_bid'],
+    ['push_pull', '押し引き', 'push_pull'],
+    ['divide_pool', '配分ゲーム', 'divide_pool'],
+    ['target_roulette', 'ターゲットルーレット', 'target_roulette'],
+    ['hot_potato', 'パス禁止', 'hot_potato'],
   ].forEach(([k, l, game]) => push(k, l, { effect: 'minigame', game }));
 
-  // ── 相手・分配・移動 ─────────────────────────────────────
+  // ── 相手・分配・移動（圧縮）──────────────────────────────
   [
     ['charity_box', '募金箱'],
   ].forEach(([k, l]) => push(k, l, { effect: 'donate_poorest', amount: 80 }));
-
   [
     ['rich_tax', '金持ち税'],
   ].forEach(([k, l]) => push(k, l, { effect: 'tax_richest', amount: 70 }));
-
   [
     ['stock_swap_hint', '株の交換話'],
   ].forEach(([k, l]) => push(k, l, { effect: 'steal_stock', amount: 5 }));
-
   [
     ['position_trade', '場所交換'],
   ].forEach(([k, l]) => push(k, l, { effect: 'swap_pos' }));
-
   [
-    ['all_shuffle', '全員席替え'], ['musical_chairs', 'イス取りゲーム'],
+    ['all_shuffle', '全員席替え'],
   ].forEach(([k, l]) => push(k, l, { effect: 'swap_all_pos' }));
-
   [
-    ['scatter_warp', '全員散開'], ['chaos_teleport', 'カオス転送'],
+    ['scatter_warp', '全員散開'],
   ].forEach(([k, l]) => push(k, l, { effect: 'scatter_all' }));
-
   [
-    ['all_gather', '全員集合'], ['meetup_warp', '集合ワープ'],
+    ['all_gather', '全員集合'],
   ].forEach(([k, l]) => push(k, l, { effect: 'gather_all' }));
 
   // ── 相場・エリア ─────────────────────────────────────────
   [
-    ['bull_run', '株価急騰'], ['hot_tip', 'アツい筋'],
+    ['bull_run', '株価急騰'],
   ].forEach(([k, l]) => push(k, l, { effect: 'bump_area_stock', amount: 1.12 }));
-
   [
     ['bear_dip', '株価調整'],
   ].forEach(([k, l]) => push(k, l, { effect: 'bump_area_stock', amount: 0.92 }));
-
   [
     ['area_cheer', 'エリア応援'],
   ].forEach(([k, l]) => push(k, l, { effect: 'boost_area_shops', amount: 25 }));
-
   [
     ['sell_pressure', '利確の波'],
   ].forEach(([k, l]) => push(k, l, { effect: 'trim_stocks', amount: 5 }));
-
   [
     ['all_shop_polish', '全店みがき'],
   ].forEach(([k, l]) => push(k, l, { effect: 'boost_all_shops', amount: 20 }));
 
-  // ── 複合・ユニーク ───────────────────────────────────────
+  // ── 複合・ユニーク＋新規独創 ─────────────────────────────
   [
     ['dice_and_coin', '賽と硬貨', { effect: 'extra_roll', extraRoll: true, cash: 25, levelScale: 15 }],
     ['shop_and_share', '店と株セット', { effect: 'shop_and_stock', shopBoost: 20, levelScale: 10, stocks: 5 }],
@@ -335,8 +262,31 @@ function buildCatalog() {
     ['mark_festival', 'マーク祭', { effect: 'grant_two_marks' }],
     ['stock_shower', '株のシャワー', { effect: 'multi_stocks', amount: 4 }],
     ['mystery_box', 'ミステリー箱', { effect: 'mystery' }],
-    ['fortune_wheel', '運命の輪', { effect: 'mystery' }],
     ['sale_raid_combo', 'セール＆買収', { effect: 'rival_slash_and_coupon', amount: 30, multi: 4 }],
+    // 新規
+    ['fixed_dice_pass', '出目固定券', { effect: 'pick_dice' }],
+    ['mark_steal', 'マーク奪取', { effect: 'steal_mark' }],
+    ['wildcard_shard', 'ワイルドの欠片', { effect: 'grant_wildcard' }],
+    ['home_return', '本拠地帰還', { effect: 'warp_best_shop' }],
+    ['hunt_beacon', '追跡ビーコン', { effect: 'warp_behind_leader' }],
+    ['shop_guard_pact', '店守り契約', { effect: 'shop_protect' }],
+    ['joint_owner', '共同オーナー', { effect: 'co_own' }],
+    ['toll_divert', '買い物料横流し', { effect: 'toll_hijack' }],
+    ['time_capsule', 'タイムカプセル', { effect: 'time_capsule', amount: 80, levelScale: 25 }],
+    ['bank_interest', '銀行利息', { effect: 'bank_interest', amount: 8 }],
+    ['mono_hearing', '独禁ヒアリング', { effect: 'mono_hearing', amount: 180 }],
+    ['area_lockdown', 'エリア封鎖', { effect: 'area_block' }],
+    ['status_strip', 'ステータス没収', { effect: 'strip_status' }],
+    ['backstep_order', '後退指令', { effect: 'retreat', amount: 4 }],
+    ['hard_brake', '強制停止', { effect: 'force_stop' }],
+    ['swap_two_seats', '二人席替', { effect: 'swap_two_others' }],
+    ['insider_tip', 'インサイダー嫌疑', { effect: 'insider_stocks', stocks: 10, amount: 60 }],
+    ['fortune_triple', '運命の三択', { effect: 'fortune_triple' }],
+    ['name_lend', '名義貸し', { effect: 'lend_shop' }],
+    ['compare_ad', '比較広告', { effect: 'compare_ad', amount: 40 }],
+    ['insurance_pay', '保険金', { effect: 'insurance_refund' }],
+    ['mark_wager', 'マーク賭博', { effect: 'mark_gamble' }],
+    ['short_sale', '株の空売り', { effect: 'short_stock', amount: 120 }],
   ].forEach(([k, l, data]) => push(k, l, data));
 
   // ── イベントNPC召喚（各1枠・同種は同時出現しない）────────
@@ -370,32 +320,32 @@ function buildCatalog() {
 
   const flavorEffects = [
     { effect: 'slash_rival_shops', amount: 35 },
-    { effect: 'slash_own_shops', amount: 30 },
-    { effect: 'takeover_coupon', multi: 3 },
-    { effect: 'takeover_coupon', multi: 4 },
-    { effect: 'any_shop_buy', multi: 6 },
+    { effect: 'steal_mark' },
+    { effect: 'pick_dice' },
+    { effect: 'shop_protect' },
+    { effect: 'co_own' },
     { effect: 'force_sell_shop' },
-    { effect: 'seize_mono_shop' },
-    { effect: 'slash_mono_value', amount: 40 },
+    { effect: 'warp_best_shop' },
+    { effect: 'retreat', amount: 4 },
     { effect: 'extra_roll', extraRoll: true },
-    { effect: 'lucky', lucky: true },
+    { effect: 'grant_wildcard' },
     { effect: 'grant_mark', grantMark: true },
-    { effect: 'stocks', stocks: 5 },
-    { effect: 'pick_invest', amount: 40, levelScale: 12 },
+    { effect: 'bank_interest', amount: 8 },
+    { effect: 'time_capsule', amount: 70, levelScale: 20 },
     { effect: 'invest_coupon' },
-    { effect: 'toll_shield' },
+    { effect: 'toll_hijack' },
     { effect: 'bump_area_stock', amount: 1.08 },
-    { effect: 'warp_random' },
-    { effect: 'mystery' },
+    { effect: 'force_stop' },
+    { effect: 'fortune_triple' },
     { effect: 'cash', cash: 30, levelScale: 18 },
     { effect: 'all_cash', cash: 35, levelScale: 10 },
-    { effect: 'minigame', game: 'coin' },
-    { effect: 'minigame', game: 'high_low' },
+    { effect: 'minigame', game: 'memory_match' },
+    { effect: 'minigame', game: 'push_pull' },
     { effect: 'trim_stocks', amount: 3 },
-    { effect: 'boost_area_shops', amount: 20 },
+    { effect: 'compare_ad', amount: 35 },
     { effect: 'multi_stocks', amount: 3 },
-    { effect: 'steal_mono_stock', amount: 6 },
-    { effect: 'mono_tax', amount: 150 },
+    { effect: 'strip_status' },
+    { effect: 'mark_gamble' },
   ];
 
   let fi = 0;
@@ -1319,6 +1269,341 @@ function applyEventDef(g, player, def, messages) {
       } else {
         applyCash(player, 70, messages);
       }
+      break;
+    }
+    case 'pick_dice':
+      player.flags.pendingPickDice = true;
+      messages.push('次の出目を宣言できる！');
+      break;
+    case 'steal_mark': {
+      const holders = otherPlayers(g, player).filter((o) => Array.isArray(o.marks) && o.marks.some(Boolean));
+      if (!holders.length) {
+        const missing = player.marks.findIndex((m) => !m);
+        if (missing >= 0) {
+          player.marks[missing] = true;
+          messages.push('奪えるマークなし → 不足マーク入手');
+        } else {
+          applyCash(player, 40, messages);
+          messages.push('奪えるマークなし → 手当');
+        }
+        break;
+      }
+      const victim = pickRandom(holders);
+      const suits = victim.marks.map((m, i) => (m ? i : -1)).filter((i) => i >= 0);
+      const suit = pickRandom(suits);
+      victim.marks[suit] = false;
+      if (!player.marks[suit]) {
+        player.marks[suit] = true;
+        messages.push(`${victim.name} からマークを奪取`);
+      } else {
+        applyCash(player, 50, messages);
+        messages.push(`${victim.name} のマークを破棄（自分は所持済）→ 手当`);
+      }
+      break;
+    }
+    case 'grant_wildcard': {
+      const have = Math.max(0, Math.min(WARP_WILDCARD_MAX, Math.floor(Number(player.wildcards) || 0)));
+      if (have >= WARP_WILDCARD_MAX) {
+        applyCash(player, 40, messages);
+        messages.push(`ワイルド上限 → 手当`);
+      } else {
+        player.wildcards = have + 1;
+        messages.push(`ワイルドカード入手（${player.wildcards}/${WARP_WILDCARD_MAX}）`);
+      }
+      break;
+    }
+    case 'warp_best_shop': {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
+      const dest = shops.sort((a, b) => b.price - a.price)[0]
+        || pickRandom(g.map.filter((s) => s.type === 'shop' && s.owner < 0));
+      if (dest) {
+        recordWarp(g, player.id, player.pos, dest.id);
+        player.prevPos = null;
+        player.pos = dest.id;
+        messages.push(`本拠地「${dest.label}」へ帰還`);
+        collectWarpSquareRewards(g, player, dest.id, messages);
+      } else {
+        player.flags.extraRoll = true;
+        messages.push('行き先なし → もう一振り');
+      }
+      break;
+    }
+    case 'warp_behind_leader': {
+      const alive = g.players.filter((pl) => !pl.bankrupt && pl.id !== player.id);
+      if (!alive.length) {
+        player.flags.extraRoll = true;
+        messages.push('もう一振り');
+        break;
+      }
+      const leader = alive.reduce((a, b) => {
+        const av = (a.cash || 0) + Object.values(a.stocks || {}).reduce((s, n) => s + n, 0);
+        const bv = (b.cash || 0) + Object.values(b.stocks || {}).reduce((s, n) => s + n, 0);
+        return bv >= av ? b : a;
+      });
+      recordWarp(g, player.id, player.pos, leader.pos);
+      player.prevPos = null;
+      player.pos = leader.pos;
+      messages.push(`${leader.name} の位置へ追跡`);
+      collectWarpSquareRewards(g, player, leader.pos, messages);
+      break;
+    }
+    case 'shop_protect':
+      player.flags.pendingShopProtect = true;
+      messages.push('守るお店を選ぼう');
+      break;
+    case 'co_own':
+      player.flags.pendingCoOwn = true;
+      messages.push('共同オーナーになる店を選ぼう');
+      break;
+    case 'toll_hijack':
+      g.tollHijackId = player.id;
+      messages.push('次に発生する買い物料を横流し！');
+      break;
+    case 'time_capsule': {
+      const amt = Math.max(40, scaledAmount(def, player, 'amount') || scaledAmount({ cash: def.amount || 80, levelScale: def.levelScale }, player, 'cash'));
+      player.flags.timeCapsule = amt;
+      messages.push(`タイムカプセルセット（次の銀行で +${amt}G）`);
+      break;
+    }
+    case 'bank_interest': {
+      const pct = Math.max(5, Math.min(15, Number(def.amount) || 8));
+      const got = Math.min(250, Math.floor(player.cash * pct / 100));
+      if (got > 0) {
+        player.cash += got;
+        messages.push(`銀行利息 +${got}G（${pct}%）`);
+      } else {
+        applyCash(player, 30, messages);
+        messages.push('利息なし → 手当');
+      }
+      break;
+    }
+    case 'mono_hearing': {
+      const monos = findRivalMonopolies(g, player.id);
+      if (!monos.length) {
+        applyCash(player, 80, messages);
+        messages.push('独占なし → 手当');
+        break;
+      }
+      const mono = pickRandom(monos);
+      const shop = pickRandom(mono.shops);
+      player.flags.pendingMonoHearing = {
+        ownerId: mono.ownerId,
+        area: mono.area,
+        shopId: shop.id,
+        fine: def.amount || 180,
+      };
+      messages.push(`${g.players[mono.ownerId]?.name || '独占主'} をヒアリングへ`);
+      break;
+    }
+    case 'area_block': {
+      const monos = findRivalMonopolies(g, player.id);
+      const area = monos.length
+        ? pickRandom(monos).area
+        : pickRandom(Object.keys(g.areas || {}).map(Number));
+      if (area == null || !g.areas[area]) {
+        player.flags.tollShield = true;
+        messages.push('封鎖先なし → 通行守り');
+        break;
+      }
+      g.areas[area].blockTurns = 2;
+      g.areas[area].blockOwnerId = player.id;
+      messages.push(`${getAreaCode(g, area)} を2ターン封鎖（買い物料0）`);
+      break;
+    }
+    case 'strip_status': {
+      const rivals = otherPlayers(g, player).filter((o) => o.lucky
+        || o.flags?.investCoupon
+        || o.flags?.tollShield
+        || o.flags?.tollBoost
+        || o.flags?.takeoverMulti
+        || o.flags?.fiveBuyCoupon);
+      if (!rivals.length) {
+        applyCash(player, 40, messages);
+        messages.push('没収対象なし → 手当');
+        break;
+      }
+      const victim = pickRandom(rivals);
+      if (victim.lucky) {
+        victim.lucky = false;
+        messages.push(`${victim.name} のラッキーを没収`);
+      } else if (victim.flags?.takeoverMulti || victim.flags?.fiveBuyCoupon) {
+        victim.flags.takeoverMulti = null;
+        victim.flags.fiveBuyCoupon = false;
+        messages.push(`${victim.name} の買収クーポンを没収`);
+      } else if (victim.flags?.investCoupon) {
+        victim.flags.investCoupon = false;
+        messages.push(`${victim.name} の増資半額券を没収`);
+      } else if (victim.flags?.tollShield) {
+        victim.flags.tollShield = false;
+        messages.push(`${victim.name} の通行守りを没収`);
+      } else {
+        victim.flags.tollBoost = false;
+        messages.push(`${victim.name} の家主印章を没収`);
+      }
+      break;
+    }
+    case 'retreat': {
+      const maxSteps = Math.max(1, Math.min(6, Number(def.amount) || 4));
+      const from = player.pos;
+      let moved = 0;
+      for (let i = 0; i < maxSteps; i++) {
+        const preds = g.map.filter((n) => (n.nexts || []).includes(player.pos) && n.type !== 'junction');
+        if (!preds.length) break;
+        const dest = pickRandom(preds);
+        player.prevPos = player.pos;
+        player.pos = dest.id;
+        moved++;
+      }
+      if (moved) {
+        recordWarp(g, player.id, from, player.pos);
+        messages.push(`${moved}マス後退`);
+        collectWarpSquareRewards(g, player, player.pos, messages);
+      } else {
+        player.flags.forceStopNext = true;
+        messages.push('後退路なし → 強制停止を付与');
+      }
+      break;
+    }
+    case 'force_stop':
+      player.flags.forceStopNext = true;
+      messages.push('次の移動は1マスで強制停止');
+      break;
+    case 'swap_two_others': {
+      const others = otherPlayers(g, player);
+      if (others.length < 2) {
+        player.flags.extraRoll = true;
+        messages.push('対象不足 → もう一振り');
+        break;
+      }
+      const a = pickRandom(others);
+      const b = pickRandom(others.filter((o) => o.id !== a.id));
+      const aFrom = a.pos;
+      const bFrom = b.pos;
+      recordWarp(g, a.id, aFrom, bFrom);
+      recordWarp(g, b.id, bFrom, aFrom);
+      a.pos = bFrom;
+      b.pos = aFrom;
+      a.prevPos = null;
+      b.prevPos = null;
+      messages.push(`${a.name} と ${b.name} の席を入れ替え`);
+      collectWarpSquareRewards(g, a, bFrom, messages);
+      collectWarpSquareRewards(g, b, aFrom, messages);
+      break;
+    }
+    case 'insider_stocks': {
+      applyStocks(g, player, def.stocks || 10, messages);
+      const tax = Math.max(40, Number(def.amount) || 60);
+      player.flags.insiderTax = tax;
+      messages.push(`インサイダー嫌疑（次の銀行で −${tax}G）`);
+      break;
+    }
+    case 'fortune_triple': {
+      const pool = [
+        { effect: 'cash', cash: 90, label: '現金+90G' },
+        { effect: 'stocks', stocks: 8, label: '株+8' },
+        { effect: 'extra_roll', label: 'もう一振り' },
+        { effect: 'lucky', label: 'ラッキー' },
+        { effect: 'invest_coupon', label: '増資半額券' },
+        { effect: 'cash', cash: -40, label: '罰金40G' },
+      ];
+      const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+      player.flags.pendingFortuneTriple = shuffled;
+      messages.push('運命の三択！');
+      break;
+    }
+    case 'lend_shop': {
+      const shops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
+      const poor = otherPlayers(g, player).sort((a, b) => a.cash - b.cash)[0];
+      if (!shops.length || !poor) {
+        applyCash(player, 40, messages);
+        messages.push('名義貸し不可 → 手当');
+        break;
+      }
+      const sq = pickRandom(shops);
+      sq.owner = poor.id;
+      player.flags.lentShop = {
+        shopId: sq.id,
+        fromId: player.id,
+        toId: poor.id,
+        returnTurn: (g.turn || 0) + 2,
+      };
+      messages.push(`「${sq.label}」を ${poor.name} へ名義貸し（2ターン）`);
+      break;
+    }
+    case 'compare_ad': {
+      const myShops = g.map.filter((s) => s.type === 'shop' && s.owner === player.id);
+      if (!myShops.length) {
+        applyCash(player, 40, messages);
+        messages.push('自店なし → 手当');
+        break;
+      }
+      const area = pickRandom(myShops).area;
+      const rivals = g.map.filter((s) => s.type === 'shop' && Number(s.area) === area && s.owner >= 0 && s.owner !== player.id);
+      const cut = Math.max(20, Number(def.amount) || 40);
+      let cutTotal = 0;
+      for (const sq of rivals) {
+        const n = Math.min(sq.extraInvest || 0, cut);
+        if (n <= 0) continue;
+        sq.extraInvest -= n;
+        sq.price -= n;
+        cutTotal += n;
+      }
+      let boost = 0;
+      for (const sq of myShops.filter((s) => Number(s.area) === area)) {
+        boost += boostShopCapped(g, sq, Math.floor(cut / 2));
+      }
+      refreshAreaStockPrice(g, area);
+      messages.push(cutTotal || boost
+        ? `${getAreaCode(g, area)} 比較広告（相手−${cutTotal} / 自分+${boost}）`
+        : '比較広告は効かず');
+      break;
+    }
+    case 'insurance_refund': {
+      const last = Math.max(0, Math.floor(Number(player.flags?.lastTollPaid) || 0));
+      const got = Math.floor(last / 2);
+      if (got > 0) {
+        player.cash += got;
+        messages.push(`保険金 +${got}G（直近買い物料の半分）`);
+      } else {
+        applyCash(player, 35, messages);
+        messages.push('直近支払いなし → 手当');
+      }
+      break;
+    }
+    case 'mark_gamble': {
+      const have = player.marks.map((m, i) => (m ? i : -1)).filter((i) => i >= 0);
+      if (!have.length) {
+        applyCash(player, -30, messages);
+        messages.push('賭けマークなし → 罰金');
+        break;
+      }
+      const suit = pickRandom(have);
+      player.marks[suit] = false;
+      if (Math.random() < 0.5) {
+        const missing = player.marks.findIndex((m) => !m);
+        if (missing >= 0) player.marks[missing] = true;
+        player.marks[suit] = true;
+        const extra = player.marks.findIndex((m) => !m);
+        if (extra >= 0) player.marks[extra] = true;
+        messages.push('マーク賭博あたり！（最大+1）');
+      } else {
+        messages.push('マーク賭博はずれ…1枚没収');
+      }
+      break;
+    }
+    case 'short_stock': {
+      const areas = Object.keys(g.areas || {}).map(Number);
+      if (!areas.length) {
+        applyCash(player, 40, messages);
+        break;
+      }
+      const a = pickRandom(areas);
+      const price = g.areas[a]?.stockPrice || 20;
+      const n = 5;
+      const got = price * n;
+      player.cash += got;
+      player.flags.shortCover = Math.floor(got * 1.2);
+      messages.push(`${getAreaCode(g, a)} を空売り +${got}G（次銀行で買い戻し ${player.flags.shortCover}G）`);
       break;
     }
     default: {
