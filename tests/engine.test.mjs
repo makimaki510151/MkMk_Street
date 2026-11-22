@@ -2443,6 +2443,29 @@ describe('MkMk Street engine', () => {
     assert.ok(g.players[1].cash >= beforeB);
   });
 
+  it('party coin reveal keeps each player pick (not only the winner highlight)', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 77,
+      cash: 3000,
+    });
+    openMinigamePending(g, 'coin', 'コイントス');
+    applyChoice(g, { action: 'pick', value: 'heads' }); // A
+    applyChoice(g, { action: 'pick', value: 'tails' }); // B
+    const r = applyChoice(g, { action: 'pick', value: 'heads' }); // C
+    assert.equal(r.ok, true);
+    assert.equal(r.reveal?.game, 'coin');
+    assert.equal(r.reveal.results.length, 3);
+    assert.equal(r.reveal.results[0].pick, 'heads');
+    assert.equal(r.reveal.results[1].pick, 'tails');
+    assert.equal(r.reveal.results[2].pick, 'heads');
+    // トップの reveal.pick はハイライト（当たり優先）で、全員分ではない
+    const highlightPick = r.reveal.pick;
+    assert.ok(highlightPick === 'heads' || highlightPick === 'tails');
+    const mismatch = r.reveal.results.some((row) => row.pick !== highlightPick);
+    assert.equal(mismatch, true, 'at least one player pick should differ from highlight when mixed');
+  });
+
   it('slot minigame is solo and reveals symbols/tier after one spin', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],

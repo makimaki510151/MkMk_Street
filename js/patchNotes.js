@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.12',
+    date: '2026-11-22',
+    items: [
+      'コイントス等の予想表示が、当たり側ではなく自分の回答を出すように修正',
+    ],
+  },
+  {
     version: '1.9.11',
     date: '2026-11-21',
     items: [
