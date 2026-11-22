@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.28',
+    date: '2026-11-22',
+    items: [
+      'イベントNPCにもダイス演出とマスごとの移動アニメを追加（瞬時移動に見えないように）',
+    ],
+  },
+  {
     version: '1.9.27',
     date: '2026-11-22',
     items: [

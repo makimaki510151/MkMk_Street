@@ -1068,28 +1068,27 @@ export function createRenderer(canvas) {
       drawFacingChevron(pos.x, pos.y, rad, facing, p.color, isCurrent || warping || !!anim.moves[p.id]);
     }
 
-    // イベントNPC（妖精・大商人・貧乏神）
+    // イベントNPC（妖精・大商人・貧乏神）— プレイヤー同様に moves/holds で補間
     for (const npc of g.eventNpcs || []) {
-      const node = g.map.find((n) => n.id === npc.pos);
-      if (!node || node.col == null || node.row == null) continue;
-      const x = layout.ox + (node.col + 0.5) * layout.size;
-      const y = layout.oy + (node.row + 0.5) * layout.size;
+      const pos = tokenDrawPos(g, { id: npc.id, pos: npc.pos }, 0, 1);
+      if (!pos) continue;
       const rad = layout.size * 0.18;
+      const moving = !!anim.moves[npc.id];
       ctx.beginPath();
-      ctx.arc(x, y - layout.size * 0.12, rad, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y - layout.size * 0.4, rad, 0, Math.PI * 2);
       ctx.fillStyle = npc.color || '#c5a3ff';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = moving ? 'rgba(255,224,120,0.95)' : 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = moving ? 2.5 : 2;
       ctx.stroke();
       ctx.fillStyle = '#1a1510';
       ctx.font = `700 ${Math.max(9, Math.floor(layout.size * 0.22))}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(npc.glyph || 'NPC', x, y - layout.size * 0.12);
+      ctx.fillText(npc.glyph || 'NPC', pos.x, pos.y - layout.size * 0.4);
       ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.font = `700 ${Math.max(8, Math.floor(layout.size * 0.16))}px sans-serif`;
-      ctx.fillText(npc.label || '', x, y + layout.size * 0.22);
+      ctx.fillText(npc.label || '', pos.x, pos.y - layout.size * 0.06);
     }
 
     // ブランド表記はトップバーに集約（盤面マスと被らない）
