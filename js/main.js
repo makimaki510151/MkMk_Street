@@ -850,6 +850,10 @@ function bindSideChrome() {
     wrap?.classList.toggle('feed-collapsed');
     // 一度隠したらイベント／所持金演出で勝手に開かない
     if (wrap?.classList.contains('feed-collapsed')) app.feedAutoExpand = false;
+    // フィード開閉でマップ余白が変わるので、全体表示なら位置を寄せ直す
+    if ((app.renderer?.getZoom?.() || 1) <= 1.001) {
+      app.renderer?.zoomFit?.();
+    }
     audio.sfx.click();
   });
 }
