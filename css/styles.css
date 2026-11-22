@@ -3717,7 +3717,7 @@ body.your-turn #btn-roll:not(:disabled) {
   padding-bottom: 1.1rem;
 }
 
-/* high-low number */
+/* high-low number — 予想の高／低は1文字で枠内に収める */
 .mg-hl-card {
   width: 110px;
   height: 110px;
@@ -3727,6 +3727,10 @@ body.your-turn #btn-roll:not(:disabled) {
   font-family: var(--display);
   font-size: 3rem;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
   background: linear-gradient(160deg, #e8f7ff, #7ec8ff);
   color: #0a2a3a;
   box-shadow: 0 14px 36px rgba(0,0,0,0.4);
@@ -3738,6 +3742,13 @@ body.your-turn #btn-roll:not(:disabled) {
   font-weight: 800;
   color: var(--accent);
   letter-spacing: 0.06em;
+}
+.mg-die.mg-hl-face {
+  font-size: 1.75rem;
+  line-height: 1;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
 }
 
 /* coin flip — 表／裏は1文字で円内に収める */

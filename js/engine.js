@@ -4618,7 +4618,7 @@ function scoreMinigamePlayer(g, p, game, pick, shared) {
       title = '残念…';
       prizeWon = minigameConsolation(p, 28, messages, `残念…数字は ${secret} → 参加賞 +28G`);
     }
-    detail = `予想 ${pick === 'high' ? 'ハイ' : 'ロー'} → ${secret}`;
+    detail = `予想 ${pick === 'high' ? '高' : '低'} → ${secret}`;
   } else if (game === 'rps_duel') {
     const foe = shared.foe;
     const beats = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
