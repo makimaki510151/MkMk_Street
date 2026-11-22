@@ -181,6 +181,8 @@ const app = {
   choiceResolving: false,
   /** 株パネル／プレイヤーカードでピン留めしたエリア（クリックで盤面ハイライト） */
   stockPeekArea: null,
+  /** プレイヤーカードのステータス説明ピン（{ pid, key }） */
+  statusPeek: null,
   /** スマホ詳細シート（手番/所持/記録）が開いているか */
   sideSheetOpen: false,
 };
@@ -5927,26 +5929,62 @@ function refreshGameUI() {
     const myTurnCard = active && me ? 'my-turn' : '';
     const persona = p.isCPU ? getCpuPersonality(p) : null;
     const atGoal = !p.bankrupt && a.total >= g.goal;
-    const status = [
-      p.offline ? '<span class="pc-flag offline">切断</span>' : '',
-      atGoal ? '<span class="pc-flag goal" title="総資産が目標以上 — 銀行停止／通過で勝利">目標到達</span>' : '',
-      p.lucky ? '<span class="pc-flag lucky" title="他者の買い物料の20%を銀行から受取（次の自分の番まで）">★ラッキー</span>' : '',
-      p.flags?.investCoupon ? '<span class="pc-flag invest-half" title="次の自分店への増資が半額">増資半額</span>' : '',
+    const statusPeekOn = app.statusPeek?.pid === p.id ? app.statusPeek.key : null;
+    const statusBtn = (key, label, detail, className = '', extra = {}) => {
+      const peek = statusPeekOn === key ? ' peek-on' : '';
+      const shopAttr = extra.shopId != null ? ` data-shop-id="${extra.shopId}"` : '';
+      const areaAttr = extra.area != null ? ` data-status-area="${extra.area}"` : '';
+      const ac = extra.color ? ` style="--ac:${extra.color}"` : '';
+      return `<button type="button" class="pc-flag${className ? ` ${className}` : ''}${peek}" data-status-key="${escapeHtml(key)}" data-status-detail="${escapeHtml(detail)}" title="${escapeHtml(detail)}（クリックで説明）"${shopAttr}${areaAttr}${ac}>${label}</button>`;
+    };
+    const statusBits = [
+      p.offline ? statusBtn(`offline-${p.id}`, '切断', '接続が切れています。再接続するか、ホストがCPU化／キックできます', 'offline') : '',
+      atGoal ? statusBtn(`goal-${p.id}`, '目標到達', '総資産が目標以上 — 銀行停止／通過で勝利', 'goal') : '',
+      p.lucky ? statusBtn(`lucky-${p.id}`, '★ラッキー', '他者の買い物料の20%を銀行から受取（次の自分の番まで）', 'lucky') : '',
+      p.flags?.investCoupon ? statusBtn(`invest-${p.id}`, '増資半額', '次の自分店への増資が半額', 'invest-half') : '',
       (() => {
         const m = Number(p.flags?.takeoverMulti);
         if (Number.isFinite(m) && m >= 2 && m <= 4) {
-          return `<span class="pc-flag coupon" title="次の店奪取が${m}倍買いになる">${m}倍クーポン</span>`;
+          return statusBtn(`takeover-${p.id}`, `${m}倍クーポン`, `次の店奪取が${m}倍買いになる`, 'coupon');
         }
         if (p.flags?.fiveBuyCoupon) {
-          return '<span class="pc-flag coupon" title="次の店奪取が3倍買いになる">3倍クーポン</span>';
+          return statusBtn(`fivebuy-${p.id}`, '3倍クーポン', '次の店奪取が3倍買いになる', 'coupon');
         }
         return '';
       })(),
-      p.flags?.tollShield ? '<span class="pc-flag" title="次の買い物料を無効化">通行守り</span>' : '',
-      p.resting ? '<span class="pc-flag">休み</span>' : '',
-      p.shopsClosed ? '<span class="pc-flag closed">店休</span>' : '',
-      persona ? `<span class="pc-flag cpu-style" title="CPU個性">${escapeHtml(persona.label)}</span>` : '',
-    ].join('');
+      p.flags?.tollShield ? statusBtn(`shield-${p.id}`, '通行守り', '次に払う買い物料を1回無効化する') : '',
+      p.flags?.fixedDice != null
+        ? statusBtn(
+          `dice-${p.id}`,
+          `出目${Math.floor(Number(p.flags.fixedDice) || 1)}固定`,
+          `次の移動サイコロが ${Math.floor(Number(p.flags.fixedDice) || 1)} になる`,
+          'fixed-dice',
+        )
+        : '',
+      p.flags?.extraRoll ? statusBtn(`extra-${p.id}`, 'もう一回', 'このターン終了後に、もう一度サイコロを振れる', 'extra-roll') : '',
+      p.resting ? statusBtn(`rest-${p.id}`, '休み', 'このターンはサイコロを振らずスキップする（休み明けで解除）') : '',
+      p.shopsClosed ? statusBtn(`closed-${p.id}`, '店休', '自分の店の買い物料が一時的に発生しない', 'closed') : '',
+      ...g.map
+        .filter((s) => s.type === 'shop' && s.owner === p.id && (Number(s.protectTurns) || 0) > 0)
+        .map((s) => statusBtn(
+          `protect-${p.id}-${s.id}`,
+          `店守り×${Math.floor(Number(s.protectTurns) || 1)}`,
+          `「${s.label || '店'}」が買収から守られている（残り${Math.floor(Number(s.protectTurns) || 1)}周）`,
+          'protect',
+          { shopId: s.id, area: s.area, color: AREA_META[s.area]?.color || g.areas[s.area]?.color },
+        )),
+      ...g.map
+        .filter((s) => s.type === 'shop' && s.coOwnerId === p.id)
+        .map((s) => statusBtn(
+          `coown-${p.id}-${s.id}`,
+          '共同オーナー',
+          `「${s.label || '店'}」の買い物料の一部を受け取れる`,
+          'co-own',
+          { shopId: s.id, area: s.area, color: AREA_META[s.area]?.color || g.areas[s.area]?.color },
+        )),
+      persona ? statusBtn(`cpu-${p.id}`, escapeHtml(persona.label), `CPU個性：${persona.label}`, 'cpu-style') : '',
+    ].filter(Boolean);
+    const status = statusBits.join('');
     const stockBits = Object.keys(g.areas).map(Number)
       .filter((area) => (p.stocks[area] || 0) > 0)
       .map((area) => {
@@ -5968,12 +6006,13 @@ function refreshGameUI() {
         <div class="pc-sub">店 ${shopCount}軒 · ${a.shopAsset.toLocaleString()}G / 株 ${a.stockAsset.toLocaleString()}G</div>
         ${stockLine}
         <div class="pc-marks">${marks}${wilds}</div>
-        ${status ? `<div class="pc-status">${status}</div>` : ''}
+        ${status ? `<div class="pc-status">${status}</div><div class="pc-status-detail" hidden></div>` : ''}
         ${p.bankrupt ? '<div class="pc-bust">破産</div>' : ''}
       </div>
     `;
   }).join('');
   bindStockAreaPeek(box, g);
+  bindStatusPeek(box, g);
   renderMobilePlayerStrip(g);
   renderDisconnectPanel(g);
   maybePresentMoneyFx(g);
@@ -9446,6 +9485,88 @@ function localHumanSeat(g) {
   }
   if (app.mode === 'host' || app.mode === 'guest') return app.localSeat;
   return null;
+}
+
+/** ステータス旗をクリックすると説明を表示（所持株のエリア覗き見と同じ操作感） */
+function bindStatusPeek(root, g) {
+  if (!root?.querySelectorAll) return;
+  const clearBoardHints = () => {
+    app.renderer?.clearInvestHighlight?.();
+    if (app.stockPeekArea == null) app.renderer?.clearStockHighlight?.();
+  };
+  const syncPeek = () => {
+    root.querySelectorAll('.player-card').forEach((card) => {
+      const pid = Number(card.dataset.pid);
+      const detailEl = card.querySelector('.pc-status-detail');
+      let openBtn = null;
+      card.querySelectorAll('[data-status-key]').forEach((btn) => {
+        const on = app.statusPeek?.pid === pid && app.statusPeek?.key === btn.dataset.statusKey;
+        btn.classList.toggle('peek-on', on);
+        if (on) openBtn = btn;
+      });
+      if (!detailEl) return;
+      if (openBtn) {
+        detailEl.hidden = false;
+        detailEl.textContent = openBtn.dataset.statusDetail || '';
+        const shopId = Number(openBtn.dataset.shopId);
+        const area = Number(openBtn.dataset.statusArea);
+        if (Number.isFinite(shopId)) app.renderer?.setInvestHighlight?.(shopId);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      } else if (app.statusPeek?.pid === pid) {
+        detailEl.hidden = true;
+        detailEl.textContent = '';
+      } else {
+        detailEl.hidden = true;
+        detailEl.textContent = '';
+      }
+    });
+  };
+  syncPeek();
+
+  root.querySelectorAll('[data-status-key]').forEach((btn) => {
+    const card = btn.closest('.player-card');
+    const pid = Number(card?.dataset.pid);
+    if (!Number.isFinite(pid)) return;
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const key = btn.dataset.statusKey;
+      if (app.statusPeek?.pid === pid && app.statusPeek?.key === key) {
+        app.statusPeek = null;
+        clearBoardHints();
+      } else {
+        app.statusPeek = { pid, key };
+        clearBoardHints();
+        const shopId = Number(btn.dataset.shopId);
+        const area = Number(btn.dataset.statusArea);
+        if (Number.isFinite(shopId)) app.renderer?.setInvestHighlight?.(shopId);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      }
+      // 他カードの説明も閉じる
+      syncPeek();
+      document.querySelectorAll('#players-panel [data-status-key]').forEach((el) => {
+        const c = el.closest('.player-card');
+        const id = Number(c?.dataset.pid);
+        el.classList.toggle(
+          'peek-on',
+          app.statusPeek?.pid === id && app.statusPeek?.key === el.dataset.statusKey,
+        );
+      });
+      document.querySelectorAll('#players-panel .player-card').forEach((c) => {
+        const detailEl = c.querySelector('.pc-status-detail');
+        if (!detailEl) return;
+        const id = Number(c.dataset.pid);
+        const open = c.querySelector(`[data-status-key].peek-on`);
+        if (app.statusPeek?.pid === id && open) {
+          detailEl.hidden = false;
+          detailEl.textContent = open.dataset.statusDetail || '';
+        } else {
+          detailEl.hidden = true;
+          detailEl.textContent = '';
+        }
+      });
+    });
+  });
 }
 
 /** 株チップ／所持表から盤面のエリアをハイライト（自分・他人どちらでも可） */
