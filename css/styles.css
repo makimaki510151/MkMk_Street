@@ -2655,6 +2655,58 @@ body.your-turn #btn-roll:not(:disabled) {
   background: linear-gradient(180deg, transparent, var(--surface) 28%);
   z-index: 2;
 }
+/* 店選びモーダル：カード自体はスクロールせず、リストだけが動く（二重スクロール防止） */
+#modal .modal-card.shop-pick-modal {
+  width: min(400px, calc(100vw - 300px));
+  max-height: min(72vh, 640px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem 0.95rem 0.75rem;
+}
+#modal .modal-card.shop-pick-modal .modal-toolbar {
+  flex: 0 0 auto;
+}
+#modal .modal-card.shop-pick-modal #modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+#modal .modal-card.shop-pick-modal .row-actions {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+#modal .modal-card.shop-pick-modal .shop-pick-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+#modal .modal-card.shop-pick-modal .shop-pick-intro,
+#modal .modal-card.shop-pick-modal .scratch-followup,
+#modal .modal-card.shop-pick-modal .invest-half-banner,
+#modal .modal-card.shop-pick-modal .shop-pick-tabs {
+  flex: 0 0 auto;
+}
+#modal .modal-card.shop-pick-modal .pick-invest-list,
+#modal .modal-card.shop-pick-modal .shop-pick-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  margin-top: 0;
+  overscroll-behavior: contain;
+}
+#modal .modal-card.shop-pick-modal .shop-pick-footer,
+#modal .modal-card.shop-pick-modal #invest-amount-panel {
+  flex: 0 0 auto;
+  padding-top: 0.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
 .modal-card {
   pointer-events: auto;
   width: min(460px, 100%);
@@ -2689,10 +2741,90 @@ body.your-turn #btn-roll:not(:disabled) {
 .modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .pick-invest-list {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.55rem;
   margin-top: 0.45rem;
   max-height: min(42vh, 320px);
   overflow: auto;
+}
+.shop-pick-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+.shop-pick-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.22rem 0.45rem;
+  border-radius: var(--radius-sm, 2px);
+  border: 1px solid color-mix(in srgb, var(--ac, #888) 45%, var(--line));
+  background: color-mix(in srgb, var(--ac, #888) 14%, var(--surface));
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1.1;
+}
+.shop-pick-tab small {
+  opacity: 0.7;
+  font-weight: 600;
+}
+.shop-pick-tab-swatch,
+.shop-pick-area-swatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: var(--ac, #888);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  flex: 0 0 auto;
+}
+.shop-pick-tab.is-active,
+.shop-pick-tab:hover {
+  outline: 1.5px solid color-mix(in srgb, var(--ac, var(--accent)) 70%, transparent);
+}
+.shop-pick-area {
+  display: grid;
+  gap: 0.28rem;
+}
+.shop-pick-area-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.35rem;
+  border-radius: var(--radius-sm, 2px);
+  background: color-mix(in srgb, var(--ac, #888) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ac, #888) 35%, var(--line));
+  cursor: default;
+  user-select: none;
+}
+.shop-pick-area-code {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+.shop-pick-area-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shop-pick-area-count {
+  font-size: 0.66rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.shop-pick-area-shops {
+  display: grid;
+  gap: 0.32rem;
 }
 .pick-invest-shop {
   display: flex;
@@ -4286,6 +4418,10 @@ body.your-turn #btn-roll:not(:disabled) {
   #modal .modal-card.stock-modal {
     width: min(360px, 96vw);
     max-height: min(48vh, 420px);
+  }
+  #modal .modal-card.shop-pick-modal {
+    width: min(360px, 96vw);
+    max-height: min(58vh, 520px);
   }
   #modal.centered .modal-card.scratch-modal {
     width: min(96vw, 520px);
