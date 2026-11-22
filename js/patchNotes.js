@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.17',
+    date: '2026-11-22',
+    items: [
+      '表記を MkMk Street に統一（外部タイトル名の言及を削除）',
+    ],
+  },
+  {
     version: '1.9.16',
     date: '2026-11-22',
     items: [
