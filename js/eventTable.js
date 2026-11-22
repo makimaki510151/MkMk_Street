@@ -339,6 +339,11 @@ function buildCatalog() {
     ['sale_raid_combo', 'セール＆買収', { effect: 'rival_slash_and_coupon', amount: 30, multi: 4 }],
   ].forEach(([k, l, data]) => push(k, l, data));
 
+  // ── イベントNPC召喚（各1枠・同種は同時出現しない）────────
+  push('spawn_mark_fairy', 'マークの妖精', { effect: 'spawn_event_npc', npcKind: 'mark_fairy' });
+  push('spawn_merchant', '大商人あらわる', { effect: 'spawn_event_npc', npcKind: 'merchant' });
+  push('spawn_poverty', '貧乏神あらわる', { effect: 'spawn_event_npc', npcKind: 'poverty' });
+
   // ── フレーバー埋め：ユニーク効果中心のローテ ──────────────
   const flavor = [
     '星空観測会', 'ねこカフェ訪問', '風船リリース', '花火のあと', '朝霧の散歩',
@@ -1014,6 +1019,24 @@ function applyEventDef(g, player, def, messages) {
           : `${rival.name} への値下げは効かず`);
       }
       grantTakeoverCoupon(player, def.multi || 4, messages);
+      break;
+    }
+    case 'spawn_event_npc': {
+      const kind = def.npcKind || 'mark_fairy';
+      const labels = {
+        mark_fairy: 'マークの妖精',
+        merchant: '大商人',
+        poverty: '貧乏神',
+      };
+      const label = labels[kind] || 'イベントNPC';
+      const exists = Array.isArray(g.eventNpcs) && g.eventNpcs.some((n) => n.kind === kind);
+      if (exists) {
+        applyCash(player, 40, messages);
+        messages.push(`${label}はすでに徘徊中 → 手当 +40G`);
+        break;
+      }
+      player.flags.pendingSpawnNpc = kind;
+      messages.push(`${label}を異界から呼び出した！`);
       break;
     }
     case 'steal_mono_stock': {

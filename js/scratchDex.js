@@ -21,6 +21,7 @@ export function eventDefSignature(def) {
     lucky: def.lucky ?? null,
     grantMark: def.grantMark ?? null,
     extraRoll: def.extraRoll ?? null,
+    npcKind: def.npcKind ?? null,
   });
 }
 
@@ -140,6 +141,19 @@ export function describeEventDef(def) {
       return 'ラッキー状態＋増資半額券';
     case 'rival_slash_and_coupon':
       return `ライバル店を値下げし、${multi || 4}倍買いクーポンを入手`;
+    case 'spawn_event_npc': {
+      const kind = def.npcKind || '';
+      if (kind === 'mark_fairy') {
+        return 'マークの妖精が登場。10面移動ですれ違いに未所持マーク／ワイルドをくれる';
+      }
+      if (kind === 'merchant') {
+        return '大商人が登場。高い店を狙って移動し、買い物料を支払う';
+      }
+      if (kind === 'poverty') {
+        return '貧乏神が登場。通過した店を一時店休にし、大きめの出目で移動する';
+      }
+      return 'イベントNPCをマップに召喚する';
+    }
     default:
       return def.label || String(effect);
   }

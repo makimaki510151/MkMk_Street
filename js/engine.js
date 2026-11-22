@@ -22,6 +22,7 @@ import {
   takeWarpFx,
   takeScratchSideEffects,
 } from './eventTable.js';
+import { EVENT_NPC_KINDS } from './eventNpc.js';
 import {
   monopolyRate as monopolyRateOf,
   investMultiByMonopolyRate,
@@ -588,6 +589,9 @@ export function createGame({
     switchGates: board.switchGates || [],
     switchMoves: board.switchMoves || [],
     worthHistory: [],
+    eventNpcs: [],
+    povertyHolidayClearTurn: null,
+    eventNpcFx: [],
     _seed: seed,
     _rngCount: 0,
     _rngState: seed,
@@ -690,6 +694,7 @@ export function applyCappedShopBoost(g, sq, amount) {
 
 export function calcToll(g, sq) {
   if (!sq || sq.owner < 0) return 0;
+  if (sq.eventHoliday) return 0;
   const owner = g.players[sq.owner];
   if (owner?.shopsClosed) return 0;
   const areaSize = getAreaShops(g, sq.area).length;
@@ -1604,6 +1609,8 @@ export function serializeState(g) {
     _rngCount: g._rngCount,
     sharedEventTable: g.sharedEventTable,
     potionSellQueue: Array.isArray(g.potionSellQueue) ? g.potionSellQueue : null,
+    eventNpcs: Array.isArray(g.eventNpcs) ? g.eventNpcs : [],
+    povertyHolidayClearTurn: g.povertyHolidayClearTurn ?? null,
   }));
 }
 
@@ -1643,6 +1650,12 @@ export function restoreState(data) {
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
   g.switchState = g.switchState ? 1 : 0;
+  if (!Array.isArray(g.eventNpcs)) g.eventNpcs = [];
+  if (!Array.isArray(g.eventNpcFx)) g.eventNpcFx = [];
+  if (g.povertyHolidayClearTurn === undefined) g.povertyHolidayClearTurn = null;
+  for (const sq of g.map || []) {
+    if (sq && sq.eventHoliday != null) sq.eventHoliday = !!sq.eventHoliday;
+  }
   {
     const raw = Number(g.diceMax);
     g.diceMax = Number.isFinite(raw) && raw >= 2 ? Math.floor(raw) : MOVE_DICE_MAX_DEFAULT;
@@ -3721,13 +3734,14 @@ export function applyChoice(g, choice) {
     if (maybeOpenMinigame(g, p)) {
       return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
     }
+    const spawnedNpc = maybeSpawnEventNpc(g, p);
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
-      return { ok: true, ...matchPayload, state: serializeState(g) };
+      return { ok: true, ...matchPayload, eventNpc: spawnedNpc, state: serializeState(g) };
     }
     endTurn(g);
-    return { ok: true, ...matchPayload, state: serializeState(g) };
+    return { ok: true, ...matchPayload, eventNpc: spawnedNpc, state: serializeState(g) };
   }
 
   if (pending.type === 'force_sell_shop') {
@@ -4744,9 +4758,326 @@ export function grantLucky(p) {
   p.flags.luckyExpireOnTurn = false;
 }
 
+/* ───────── イベントNPC（スクラッチ召喚） ───────── */
+
+let _eventNpcSeq = 0;
+
+function ensureEventNpcState(g) {
+  if (!Array.isArray(g.eventNpcs)) g.eventNpcs = [];
+  if (!Array.isArray(g.eventNpcFx)) g.eventNpcFx = [];
+  if (g.povertyHolidayClearTurn === undefined) g.povertyHolidayClearTurn = null;
+}
+
+export function takeEventNpcFx(g) {
+  ensureEventNpcState(g);
+  const fx = [...g.eventNpcFx];
+  g.eventNpcFx = [];
+  return fx;
+}
+
+function clearMapEventHolidays(g) {
+  for (const n of g.map || []) {
+    if (n?.eventHoliday) n.eventHoliday = false;
+  }
+}
+
+function maybeClearPovertyHolidays(g) {
+  ensureEventNpcState(g);
+  if (g.povertyHolidayClearTurn == null) return;
+  if ((g.turn || 1) > g.povertyHolidayClearTurn) {
+    clearMapEventHolidays(g);
+    g.povertyHolidayClearTurn = null;
+    addLog(g, '貧乏神の店休が解けた', 'system');
+  }
+}
+
+export function canSpawnEventNpc(g, kind) {
+  ensureEventNpcState(g);
+  return !g.eventNpcs.some((n) => n.kind === kind);
+}
+
+export function spawnEventNpc(g, kind, atPos) {
+  ensureEventNpcState(g);
+  const def = EVENT_NPC_KINDS[kind];
+  if (!def) return { ok: false, message: '不明なイベントNPC' };
+  if (!canSpawnEventNpc(g, kind)) {
+    return { ok: false, message: `${def.label}はすでに徘徊中` };
+  }
+  const pos = atPos != null && getNode(g, atPos) ? atPos : g.startId;
+  const actsLeft = 3 + Math.floor(rngNext(g) * 5); // 3..7
+  _eventNpcSeq += 1;
+  const npc = {
+    id: `enpc_${_eventNpcSeq}`,
+    kind: def.kind,
+    label: def.label,
+    color: def.color,
+    glyph: def.glyph,
+    diceMax: def.diceMax,
+    pos,
+    prevPos: null,
+    actsLeft,
+    spawnOrder: g.eventNpcs.length,
+  };
+  g.eventNpcs.push(npc);
+  g.eventNpcFx.push({ type: 'spawn', npcId: npc.id, kind: npc.kind, pos });
+  addLog(g, `${npc.label} が異界から現れた！（あと${actsLeft}回行動）`, 'event');
+  return { ok: true, npc, message: `${npc.label}がマップに登場（${actsLeft}ターン徘徊）` };
+}
+
+function maybeSpawnEventNpc(g, p) {
+  const kind = p?.flags?.pendingSpawnNpc;
+  if (!kind) return false;
+  p.flags.pendingSpawnNpc = null;
+  const result = spawnEventNpc(g, kind, p.pos);
+  if (!result.ok) addLog(g, result.message, 'event');
+  return result.ok;
+}
+
+function weightedDiceRoll(g, weights) {
+  let sum = 0;
+  for (const w of weights) sum += Math.max(0, w);
+  if (sum <= 0) return 1 + Math.floor(rngNext(g) * weights.length);
+  let r = rngNext(g) * sum;
+  for (let i = 0; i < weights.length; i++) {
+    r -= Math.max(0, weights[i]);
+    if (r <= 0) return i + 1;
+  }
+  return weights.length;
+}
+
+function shopPathValue(sq) {
+  return (Number(sq?.basePrice) || 0) + (Number(sq?.extraInvest) || 0);
+}
+
+/** maxSteps 以内で到達しうる最高値の有主店 */
+function findBestOwnedShopSteps(g, fromPos, prevPos, maxSteps) {
+  const bestAt = new Map();
+  const q = [{ id: fromPos, prev: prevPos, steps: 0 }];
+  bestAt.set(fromPos, 0);
+  let best = null;
+  while (q.length) {
+    const cur = q.shift();
+    if (cur.steps >= maxSteps) continue;
+    for (const nid of getForwardNexts(g, cur.id, cur.prev)) {
+      const steps = cur.steps + 1;
+      if (bestAt.has(nid) && bestAt.get(nid) <= steps) continue;
+      bestAt.set(nid, steps);
+      q.push({ id: nid, prev: cur.id, steps });
+      const node = getNode(g, nid);
+      if (node?.type === 'shop' && node.owner >= 0) {
+        const val = shopPathValue(node);
+        if (!best || val > best.val || (val === best.val && steps < best.steps)) {
+          best = { id: nid, steps, val };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function approxNodeDist(g, from, target, limit = 24) {
+  if (from === target) return 0;
+  const seen = new Set([from]);
+  const q = [{ id: from, d: 0, prev: null }];
+  while (q.length) {
+    const cur = q.shift();
+    if (cur.d >= limit) continue;
+    for (const nid of getForwardNexts(g, cur.id, cur.prev)) {
+      if (seen.has(nid)) continue;
+      if (nid === target) return cur.d + 1;
+      seen.add(nid);
+      q.push({ id: nid, d: cur.d + 1, prev: cur.id });
+    }
+  }
+  return limit + 1;
+}
+
+function pickNpcStep(g, npc, options, targetId) {
+  if (!options.length) return null;
+  if (options.length === 1) return options[0];
+  if (npc.kind === 'merchant' && targetId != null) {
+    let best = options[0];
+    let bestD = Infinity;
+    for (const opt of options) {
+      const d = approxNodeDist(g, opt, targetId);
+      if (d < bestD) {
+        bestD = d;
+        best = opt;
+      }
+    }
+    return best;
+  }
+  return options[Math.floor(rngNext(g) * options.length)];
+}
+
+function rollEventNpcDice(g, npc) {
+  const max = npc.diceMax || 6;
+  if (npc.kind === 'merchant') {
+    const best = findBestOwnedShopSteps(g, npc.pos, npc.prevPos, max);
+    const weights = Array.from({ length: max }, () => 1);
+    if (best?.steps >= 1 && best.steps <= max) weights[best.steps - 1] += 3;
+    return { roll: weightedDiceRoll(g, weights), targetId: best?.id ?? null };
+  }
+  if (npc.kind === 'poverty') {
+    const weights = Array.from({ length: max }, (_, i) => 1 + i * i);
+    return { roll: weightedDiceRoll(g, weights), targetId: null };
+  }
+  return { roll: 1 + Math.floor(rngNext(g) * max), targetId: null };
+}
+
+function fairyGiftToPlayer(g, player) {
+  const missing = [];
+  for (let i = 0; i < 4; i++) if (!player.marks?.[i]) missing.push(i);
+  if (missing.length) {
+    const idx = missing[Math.floor(rngNext(g) * missing.length)];
+    player.marks[idx] = true;
+    addLog(g, `マークの妖精が ${player.name} に ${SUIT_LABELS[idx]} を贈った！`, 'mark');
+    return;
+  }
+  if (hasFullMarks(player)) {
+    if (getWildcardCount(player) >= MAX_WILDCARDS) {
+      addLog(g, `マークの妖精は ${player.name} に贈るものがなかった`, 'event');
+      return;
+    }
+    grantWildcard(g, player);
+  }
+}
+
+export function departEventNpc(g, npc) {
+  ensureEventNpcState(g);
+  const idx = g.eventNpcs.findIndex((n) => n.id === npc.id);
+  if (idx >= 0) g.eventNpcs.splice(idx, 1);
+  addLog(g, `${npc.label} は異界へと帰っていった…`, 'event');
+  g.eventNpcFx.push({ type: 'depart', npcId: npc.id, kind: npc.kind, pos: npc.pos });
+  if (npc.kind === 'poverty') {
+    g.povertyHolidayClearTurn = (g.turn || 1) + 1;
+  }
+}
+
+function takeEventNpcTurn(g, npc) {
+  ensureEventNpcState(g);
+  if (npc.kind === 'poverty') {
+    clearMapEventHolidays(g);
+    g.povertyHolidayClearTurn = null;
+  }
+
+  const { roll, targetId } = rollEventNpcDice(g, npc);
+  const path = [npc.pos];
+  let pos = npc.pos;
+  let prev = npc.prevPos;
+  const gifted = new Set();
+
+  // 行動開始地点にいるプレイヤーともすれ違い扱い
+  if (npc.kind === 'mark_fairy') {
+    for (const pl of g.players) {
+      if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
+      gifted.add(pl.id);
+      fairyGiftToPlayer(g, pl);
+    }
+  }
+
+  for (let i = 0; i < roll; i++) {
+    const opts = getForwardNexts(g, pos, prev);
+    if (!opts.length) break;
+    const nextId = pickNpcStep(g, npc, opts, targetId);
+    prev = pos;
+    pos = nextId;
+    path.push(pos);
+
+    if (npc.kind === 'mark_fairy') {
+      for (const pl of g.players) {
+        if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
+        gifted.add(pl.id);
+        fairyGiftToPlayer(g, pl);
+      }
+    }
+    if (npc.kind === 'poverty') {
+      const node = getNode(g, pos);
+      if (node?.type === 'shop') {
+        node.eventHoliday = true;
+        const owner = node.owner >= 0 ? g.players[node.owner] : null;
+        addLog(
+          g,
+          `貧乏神が「${node.label || '店'}」を休ませた${owner ? `（${owner.name}）` : ''}`,
+          'event',
+        );
+      }
+    }
+  }
+
+  npc.prevPos = prev;
+  npc.pos = pos;
+
+  if (npc.kind === 'merchant') {
+    const sq = getNode(g, pos);
+    if (sq?.type === 'shop' && sq.owner >= 0) {
+      const owner = g.players[sq.owner];
+      const toll = calcToll(g, sq);
+      if (owner && !owner.bankrupt && toll > 0) {
+        owner.cash += toll;
+        bumpStat(owner, 'tollIncome', toll);
+        addLog(g, `大商人が ${owner.name} の店で買い物料 ${toll.toLocaleString()}G を支払った`, 'toll');
+      }
+    }
+  }
+
+  if (npc.kind === 'mark_fairy') {
+    for (const pl of g.players) {
+      if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
+      gifted.add(pl.id);
+      fairyGiftToPlayer(g, pl);
+    }
+  }
+
+  const left = Math.max(0, (npc.actsLeft || 1) - 1);
+  npc.actsLeft = left;
+  addLog(g, `${npc.label} が ${roll} 進んだ（残り行動 ${left}）`, 'event');
+  g.eventNpcFx.push({
+    type: 'move',
+    npcId: npc.id,
+    kind: npc.kind,
+    from: path[0],
+    to: pos,
+    path: path.slice(),
+    roll,
+  });
+
+  if (left <= 0) departEventNpc(g, npc);
+}
+
+/** 4番目プレイヤー後（または少人数なら最後の席）でイベントNPC行動 */
+export function runEventNpcRound(g) {
+  ensureEventNpcState(g);
+  if (!g.eventNpcs.length) {
+    maybeClearPovertyHolidays(g);
+    return;
+  }
+  const ordered = [...g.eventNpcs].sort((a, b) => a.spawnOrder - b.spawnOrder);
+  for (const npc of ordered) {
+    if (!g.eventNpcs.some((n) => n.id === npc.id)) continue;
+    takeEventNpcTurn(g, npc);
+  }
+  maybeClearPovertyHolidays(g);
+}
+
+function shouldRunEventNpcsAfter(g, endingIdx) {
+  ensureEventNpcState(g);
+  if (!g.eventNpcs.length && g.povertyHolidayClearTurn == null) return false;
+  const n = g.players?.length || 0;
+  if (n <= 0) return false;
+  // 4人なら4番目のあと＝周回直前。少人数／破産で席が飛ぶ場合も「ターンが進む直前」に合わせる
+  let next = endingIdx;
+  for (let i = 0; i < n; i++) {
+    next = (next + 1) % n;
+    if (!g.players[next].bankrupt) break;
+  }
+  return next <= endingIdx;
+}
+
 function endTurn(g) {
   if (g.phase === 'gameover') return;
 
+  const endingIdx = g.currentPlayerIdx;
   const p = currentPlayer(g);
   if (p) {
     // このターン中に得たラッキーは、他プレイヤーの番を経て次の自分の番開始で切れる
@@ -4765,6 +5096,11 @@ function endTurn(g) {
     if (alive[0]) addLog(g, `🏆 ${alive[0].name} の勝利（他プレイヤー破産）`, 'win');
     recordWorthSnapshot(g);
     return;
+  }
+
+  // 4番目（または最後）のプレイヤー行動後、ターン切替前にイベントNPC
+  if (shouldRunEventNpcsAfter(g, endingIdx)) {
+    runEventNpcRound(g);
   }
 
   let next = g.currentPlayerIdx;
