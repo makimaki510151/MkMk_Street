@@ -6110,7 +6110,7 @@ function bannerFromLog(g, l) {
         ? '増資！'
         : (/([0-9]+)倍買い|奪取/.test(l.text)
           ? `${(l.text.match(/([0-9]+)倍/) || [, '5'])[1]}倍買い！`
-          : (/物件取引を持ちかけ|逆交渉を申し込んだ/.test(l.text)
+          : (/物件取引|逆交渉を申し込んだ/.test(l.text)
             ? '物件取引'
             : 'お店')));
     // 専用 fiveBuy FX と二重になるログ告知は抑止
@@ -6193,9 +6193,10 @@ function bannerFromLog(g, l) {
 
   // マーク系はフィードのみ。中央確認はスクラッチ等の選択UIと衝突して通信停止の原因になる
   // （航路スイッチ告知と同じクラス: busy のまま guest reader 待ちで choice/roll 拒否）
-  // 物件の提案／逆交渉も確認ダイアログにしない（busy で CPU 応答や連打後の進行が止まる）
+  // 物件取引の提案／逆交渉／成立も確認ダイアログにしない
+  // （成立ログで busy を掴むと CPU 応答や次手番のサイコロが止まる）
   const stampOnly = kind === 'mark'
-    || (kind === 'shop' && /物件取引を持ちかけ|逆交渉を申し込んだ/.test(l.text));
+    || (kind === 'shop' && /物件取引|逆交渉を申し込んだ/.test(l.text));
 
   return {
     kicker,

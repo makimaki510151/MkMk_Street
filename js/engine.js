@@ -3254,6 +3254,8 @@ function cpuShopBundleWorth(g, pid, shopIds) {
 /** CPUが取引を受けるか（有利／ウィンウィンのみ。独占核は大幅上積み必須） */
 export function cpuShouldAcceptShopTrade(g, responder, pending) {
   if (!responder || !pending) return false;
+  const from = g.players[pending.fromId];
+  if (!from || from.bankrupt) return false;
   const giveValue = sumShopPrices(g, pending.giveShopIds);
   const takeValue = sumShopPrices(g, pending.takeShopIds);
   const delta = Math.floor(Number(pending.cashDelta) || 0);
@@ -3261,6 +3263,8 @@ export function cpuShouldAcceptShopTrade(g, responder, pending) {
   const receive = giveValue + Math.max(0, delta);
   const pay = takeValue + Math.max(0, -delta);
   if (responder.cash < Math.max(0, -delta)) return false;
+  // 提案者の支払い不能なら承認しても失敗するため受け取らない
+  if (from.cash < Math.max(0, delta)) return false;
   const traits = getCpuPersonality(responder);
   let threshold = 1.05;
   if (traits.key === 'tycoon') threshold = 1.12;
@@ -6365,14 +6369,21 @@ export function cpuAct(g) {
 
     if (pend.type === 'shop_trade_offer') {
       const ok = cpuShouldAcceptShopTrade(g, p, pend);
-      return applyChoice(g, { action: ok ? 'accept' : 'reject' });
+      const result = applyChoice(g, { action: ok ? 'accept' : 'reject' });
+      // 承認が資金不足などで失敗したままリトライすると CPU が永久ループする
+      if (ok && result && !result.ok) {
+        return applyChoice(g, { action: 'reject' });
+      }
+      return result;
     }
     if (pend.type === 'shop_trade_compose') {
       if (!p.flags) p.flags = {};
       const deal = cpuFindMonopolySwap(g, p);
       if (!deal) return applyChoice(g, { action: 'cancel' });
       if (pend.targetId == null) {
-        return applyChoice(g, { action: 'set_target', targetId: deal.targetId });
+        const set = applyChoice(g, { action: 'set_target', targetId: deal.targetId });
+        if (!set?.ok) return applyChoice(g, { action: 'cancel' });
+        return set;
       }
       if (pend.targetId !== deal.targetId) {
         return applyChoice(g, { action: 'cancel' });
@@ -6380,16 +6391,22 @@ export function cpuAct(g) {
       const give = pend.giveShopIds || [];
       const take = pend.takeShopIds || [];
       if (!give.includes(deal.giveShopId)) {
-        return applyChoice(g, { action: 'toggle_give', shopId: deal.giveShopId });
+        const tog = applyChoice(g, { action: 'toggle_give', shopId: deal.giveShopId });
+        if (!tog?.ok) return applyChoice(g, { action: 'cancel' });
+        return tog;
       }
       if (!take.includes(deal.takeShopId)) {
-        return applyChoice(g, { action: 'toggle_take', shopId: deal.takeShopId });
+        const tog = applyChoice(g, { action: 'toggle_take', shopId: deal.takeShopId });
+        if (!tog?.ok) return applyChoice(g, { action: 'cancel' });
+        return tog;
       }
       // 余計な店が選ばれていたら一旦キャンセル
       if (give.length !== 1 || take.length !== 1) {
         return applyChoice(g, { action: 'cancel' });
       }
-      return applyChoice(g, { action: 'propose' });
+      const proposed = applyChoice(g, { action: 'propose' });
+      if (!proposed?.ok) return applyChoice(g, { action: 'cancel' });
+      return proposed;
     }
     if (pend.type === 'level_up') {
       return applyChoice(g, { action: 'celebrate' });
