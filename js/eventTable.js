@@ -1443,21 +1443,35 @@ function applyEventDef(g, player, def, messages) {
       break;
     }
     case 'retreat': {
+      // 双方向グラフで隣をランダムに選ぶと往復して実質動かないことがある。
+      // 到着元（prevPos）へ戻り、以降は「今来たマス」を除外して後退を続ける。
       const maxSteps = Math.max(1, Math.min(6, Number(def.amount) || 4));
       const from = player.pos;
+      let cur = player.pos;
+      let prefer = player.prevPos; // 最初の1歩は来た道へ
+      let exclude = null; // 直後に来たマスへ戻らない
       let moved = 0;
+      let last = from;
       for (let i = 0; i < maxSteps; i++) {
-        const preds = g.map.filter((n) => (n.nexts || []).includes(player.pos) && n.type !== 'junction');
+        const linked = g.map.filter((n) => (n.nexts || []).includes(cur) && n.id !== exclude);
+        let preds = linked.filter((n) => n.type !== 'junction');
+        if (!preds.length) preds = linked;
         if (!preds.length) break;
-        const dest = pickRandom(preds);
-        player.prevPos = player.pos;
-        player.pos = dest.id;
+        let dest = prefer != null ? preds.find((n) => n.id === prefer) : null;
+        if (!dest) dest = pickRandom(preds);
+        if (!dest || dest.id === cur) break;
+        exclude = cur;
+        prefer = null;
+        last = cur;
+        cur = dest.id;
         moved++;
       }
       if (moved) {
-        recordWarp(g, player.id, from, player.pos);
+        player.prevPos = last;
+        player.pos = cur;
+        recordWarp(g, player.id, from, cur);
         messages.push(`${moved}マス後退`);
-        collectWarpSquareRewards(g, player, player.pos, messages);
+        collectWarpSquareRewards(g, player, cur, messages);
       } else {
         player.flags.forceStopNext = true;
         messages.push('後退路なし → 強制停止を付与');
