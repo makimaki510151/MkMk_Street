@@ -3569,7 +3569,7 @@ function bindBoardZoomControls(canvas) {
     if (
       app.game.phase === 'await_choice'
       && hit.type === 'shop'
-      && ['any_shop_buy', 'vacant_shop_buy', 'force_rival_sell', 'force_sell_shop', 'pick_invest', 'invest'].includes(app.game.pending?.type)
+      && ['any_shop_buy', 'vacant_shop_buy', 'force_rival_sell', 'force_sell_shop', 'pick_invest', 'invest', 'shop_protect', 'co_own'].includes(app.game.pending?.type)
     ) {
       const btn = document.querySelector(`#modal .pick-invest-shop[data-shop="${hit.id}"]:not([disabled])`);
       if (btn) {
@@ -4571,6 +4571,25 @@ function formatMinigameSharedLine(reveal) {
     const horses = s.horses || [];
     return s.order.slice(0, 3).map((idx, i) => `${i + 1}着 ${horses[idx] || '?'}`).join(' · ');
   }
+  if (game === 'memory_match' && Array.isArray(s.board)) {
+    return `盤面 ${s.board.join(' ')}`;
+  }
+  if (game === 'silent_bid' && s.pot != null) {
+    return `賞金 ${s.pot}G / 最高入札 ${s.maxBid ?? '—'}G`;
+  }
+  if (game === 'push_pull' && s.popAt != null) {
+    return `限界 ${s.popAt} 段階`;
+  }
+  if (game === 'divide_pool' && s.pool != null) {
+    return `池 ${s.pool}G / 閾値 ${s.threshold}%`;
+  }
+  if (game === 'target_roulette' && s.land != null) {
+    const land = s.land === 'prize' ? '賞金' : (app.game?.players?.[s.land]?.name || `P${s.land}`);
+    return `着地 ${land}`;
+  }
+  if (game === 'hot_potato' && s.safeStops != null) {
+    return `止め上限 ${s.safeStops}人`;
+  }
   return '';
 }
 
@@ -4589,7 +4608,9 @@ function renderPartyMinigameResults(reveal, { includeShared = false } = {}) {
   });
   const shared = includeShared ? formatMinigameSharedLine(reveal) : '';
   const game = reveal.game || '';
-  const showPick = game === 'guess_dice' || game === 'coin' || game === 'high_low' || game === 'roulette';
+  const showPick = game === 'guess_dice' || game === 'coin' || game === 'high_low' || game === 'roulette'
+    || game === 'silent_bid' || game === 'hot_potato' || game === 'target_roulette'
+    || game === 'push_pull' || game === 'divide_pool' || game === 'memory_match';
   const board = rows.map((r, i) => {
     const win = !!r.win;
     const prize = formatMinigamePrize(r.prizeWon);
@@ -4600,6 +4621,18 @@ function renderPartyMinigameResults(reveal, { includeShared = false } = {}) {
       else if (game === 'high_low') pickText = formatHighLowPickLabel(r.pick);
       else if (game === 'roulette') {
         pickText = ({ red: '赤', black: '黒', green: '緑' })[r.pick] || String(r.pick);
+      } else if (game === 'hot_potato') {
+        pickText = r.pick === 'stop' ? '止める' : '回す';
+      } else if (game === 'target_roulette') {
+        pickText = r.pick === 'prize' ? '賞金' : (app.game?.players?.[r.pick]?.name || String(r.pick));
+      } else if (game === 'silent_bid') {
+        pickText = `${r.pick}G`;
+      } else if (game === 'push_pull') {
+        pickText = `${r.pick}段階`;
+      } else if (game === 'divide_pool') {
+        pickText = `${r.pick}%`;
+      } else if (game === 'memory_match') {
+        pickText = String(r.pick).replace(',', '・');
       } else {
         pickText = String(r.pick);
       }
@@ -5896,6 +5929,11 @@ function pendingStatusLabel(pend) {
     case 'any_shop_buy': return `${pend.multi || 6}倍の指名買収を検討中`;
     case 'vacant_shop_buy': return `空き店の${pend.multi || 2}倍購入を検討中`;
     case 'force_rival_sell': return `相手店の${pend.multi || 3}倍銀行買取を検討中`;
+    case 'pick_dice': return '次の出目を宣言中';
+    case 'shop_protect': return '店守りする店を選択中';
+    case 'co_own': return '共同オーナーになる店を選択中';
+    case 'fortune_triple': return '運命の三択を選択中';
+    case 'mono_hearing': return '独禁ヒアリングの回答中';
     case 'potion_pick': {
       const left = (pend.participantIds || []).filter((id) => (pend.picks || {})[id] == null).length;
       return left > 1
@@ -7715,6 +7753,182 @@ function showChoiceModal(g) {
     return;
   }
 
+  if (pend.type === 'pick_dice') {
+    const diceMax = Math.max(2, Number(getMoveDiceMax(g)) || 6);
+    title.textContent = '出目固定券';
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">次に振る出目を今すぐ宣言！</p>
+        <p class="hint">選んだ目がそのまま次の移動に使われます（1〜${diceMax}）。</p>
+      </div>
+      <div class="mini-pick-grid">
+        ${Array.from({ length: diceMax }, (_, i) => i + 1).map((n) =>
+          `<button type="button" class="btn primary mini-pick" data-face="${n}">${n}</button>`).join('')}
+      </div>`;
+    body.querySelectorAll('[data-face]').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { value: Number(btn.dataset.face) } });
+      };
+    });
+    return;
+  }
+
+  if (pend.type === 'shop_protect') {
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner === pend.playerId).map((s) => s.id);
+    const turns = Math.max(1, Number(pend.turns) || 1);
+    title.textContent = '店守り契約';
+    enableShopPickModalCard();
+    $('#btn-skip-choice').hidden = true;
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop shop-protect-pick" data-shop="${sq.id}" data-area="${sq.area}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">守り ${turns}周</span>
+          <small>${escapeHtml(code)} · 価格 ${sq.price.toLocaleString()}G</small>
+        </button>`;
+      })
+      : '<p class="hint">所持店がありません</p>';
+    body.innerHTML = `
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">守るお店を <strong>1軒</strong> 選ぼう</p>
+          <p class="hint">守られている間は5倍買いなどの買収を防げます。</p>
+        </div>
+        ${listHtml}
+      </div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
+    $$('.shop-protect-pick').forEach((btn) => {
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    bindShopPickAreaChrome(g, body);
+    return;
+  }
+
+  if (pend.type === 'co_own') {
+    const ids = pend.shopIds?.length
+      ? pend.shopIds
+      : g.map.filter((s) => s.type === 'shop' && s.owner >= 0 && s.owner !== pend.playerId).map((s) => s.id);
+    title.textContent = '共同オーナー';
+    enableShopPickModalCard();
+    $('#btn-skip-choice').hidden = true;
+    const listHtml = ids.length
+      ? renderGroupedShopPickList(g, ids, (id) => {
+        const sq = getNode(g, id);
+        if (!sq) return '';
+        const owner = g.players[sq.owner];
+        const code = getAreaCode(g, sq.area);
+        return `<button type="button" class="btn pick-invest-shop co-own-pick" data-shop="${sq.id}" data-area="${sq.area}" style="--ac:${AREA_META[sq.area]?.color || '#888'}">
+          <strong>${escapeHtml(sq.label)}</strong>
+          <span class="pick-invest-gain">共同</span>
+          <small>${escapeHtml(owner?.name || '')} · ${escapeHtml(code)} · ${sq.price.toLocaleString()}G</small>
+        </button>`;
+      })
+      : '<p class="hint">相手の店がありません</p>';
+    body.innerHTML = `
+      <div class="shop-pick-layout">
+        <div class="scratch-followup">
+          <p class="scratch-followup-kicker">スクラッチで発動</p>
+          <p class="modal-lead">共同オーナーになる店を選ぼう</p>
+          <p class="hint">以降その店の買い物料の一部を受け取れます。</p>
+        </div>
+        ${listHtml}
+      </div>`;
+    app.renderer?.setShopPickHighlight?.(ids);
+    $$('.co-own-pick').forEach((btn) => {
+      btn.onmouseenter = () => {
+        app.renderer?.setInvestHighlight(Number(btn.dataset.shop));
+        const area = Number(btn.dataset.area);
+        if (Number.isFinite(area)) app.renderer?.setStockHighlight?.(area, true);
+      };
+      btn.onmouseleave = () => {
+        app.renderer?.clearInvestHighlight();
+        app.renderer?.clearStockHighlight?.();
+      };
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { shopId: Number(btn.dataset.shop) } });
+      };
+    });
+    bindShopPickAreaChrome(g, body);
+    return;
+  }
+
+  if (pend.type === 'fortune_triple') {
+    const opts = pend.options || [];
+    title.textContent = '運命の三択';
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">スクラッチで発動</p>
+        <p class="modal-lead">3つのうち1つを選べ！</p>
+        <p class="hint">中身はラベルどおり。選んだ効果がすぐに発動します。</p>
+      </div>
+      <div class="modal-actions fortune-triple-actions">
+        ${opts.map((opt, i) => `
+          <button type="button" class="btn primary" data-fortune="${i}">
+            ${escapeHtml(opt.label || `選択肢${i + 1}`)}
+          </button>`).join('')}
+      </div>`;
+    body.querySelectorAll('[data-fortune]').forEach((btn) => {
+      btn.onclick = () => {
+        hideModal();
+        sendAction({ type: 'choice', choice: { value: Number(btn.dataset.fortune) } });
+      };
+    });
+    return;
+  }
+
+  if (pend.type === 'mono_hearing') {
+    const sq = getNode(g, pend.shopId);
+    const starter = g.players[pend.starterId];
+    const fine = Math.max(80, Number(pend.fine) || 180);
+    title.textContent = '独禁ヒアリング';
+    $('#btn-skip-choice').hidden = true;
+    $('#btn-end-choice').hidden = true;
+    body.innerHTML = `
+      <div class="scratch-followup">
+        <p class="scratch-followup-kicker">独占への監査</p>
+        <p class="modal-lead">店を渡すか、罰金を払うか</p>
+        <p class="hint">${escapeHtml(starter?.name || '相手')} からのヒアリング。「${escapeHtml(sq?.label || '対象店')}」を渡すと独占が崩れます。罰金は ${fine.toLocaleString()}G。</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="m-hearing-shop">店を渡す</button>
+        <button class="btn primary" id="m-hearing-fine">罰金 ${fine.toLocaleString()}G</button>
+      </div>`;
+    $('#m-hearing-shop').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'give_shop' } });
+    };
+    $('#m-hearing-fine').onclick = () => {
+      hideModal();
+      sendAction({ type: 'choice', choice: { action: 'pay_fine' } });
+    };
+    return;
+  }
+
   if (pend.type === 'five_buy') {
     const sq = getNode(g, pend.shopId);
     const owner = g.players[sq.owner];
@@ -8305,6 +8519,108 @@ function showChoiceModal(g) {
       $('#m-p3').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 3 } }); };
       $('#m-p5').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 5 } }); };
       $('#m-p7').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 7 } }); };
+    } else if (game === 'memory_match') {
+      let first = null;
+      body.innerHTML = `
+        <p class="modal-lead">神経衰弱！2枚めくってペアを当てよう</p>
+        <p class="hint">伏せカード6枚から2枚を選ぶ。同じ記号なら成功。</p>
+        <div class="mini-pick-grid memory-match-grid">
+          ${[0, 1, 2, 3, 4, 5].map((i) =>
+            `<button type="button" class="btn primary mini-pick" data-card="${i}">${i + 1}</button>`).join('')}
+        </div>
+        <p class="hint" id="mm-hint">1枚目を選んでください</p>`;
+      const hint = body.querySelector('#mm-hint');
+      body.querySelectorAll('[data-card]').forEach((btn) => {
+        btn.onclick = () => {
+          const idx = Number(btn.dataset.card);
+          if (first == null) {
+            first = idx;
+            btn.disabled = true;
+            btn.classList.add('selected');
+            if (hint) hint.textContent = '2枚目を選んでください';
+            return;
+          }
+          if (idx === first) return;
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: `${first},${idx}` } });
+        };
+      });
+    } else if (game === 'silent_bid') {
+      body.innerHTML = `
+        <p class="modal-lead">サイレント入札！${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}一番高い入札が賞金を落札。入札額は先に支払います。</p>
+        ${statusHtml}
+        <div class="mini-pick-grid">
+          ${[30, 60, 100, 150].map((n) =>
+            `<button type="button" class="btn primary mini-pick" data-bid="${n}">${n}G</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-bid]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.bid) } });
+        };
+      });
+    } else if (game === 'push_pull') {
+      body.innerHTML = `
+        <p class="modal-lead">押し引き！どこで止める？</p>
+        <p class="hint">段階が高いほど高配当。限界を超えると失敗（参加賞）。</p>
+        <div class="mini-pick-grid">
+          ${[1, 2, 3, 4, 5].map((n) =>
+            `<button type="button" class="btn primary mini-pick" data-stop="${n}">${n}</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-stop]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.stop) } });
+        };
+      });
+    } else if (game === 'divide_pool') {
+      body.innerHTML = `
+        <p class="modal-lead">配分ゲーム！自分の取り分は？</p>
+        <p class="hint">要求％が閾値以下なら成立。欲張りすぎると拒否されます。</p>
+        <div class="mini-pick-grid">
+          ${[40, 50, 60, 70].map((n) =>
+            `<button type="button" class="btn primary mini-pick" data-keep="${n}">${n}%</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-keep]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.keep) } });
+        };
+      });
+    } else if (game === 'target_roulette') {
+      const others = participants.filter((pl) => pl.id !== pend.playerId);
+      const opts = [
+        { value: 'prize', label: '賞金' },
+        ...others.map((pl) => ({ value: String(pl.id), label: pl.name })),
+      ];
+      body.innerHTML = `
+        <p class="modal-lead">ターゲットルーレット！着地を予想${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}ルーレットが止まった先を当てよう。プレイヤー的中なら徴収。</p>
+        ${statusHtml}
+        <div class="mini-pick-grid">
+          ${opts.map((o) =>
+            `<button type="button" class="btn primary mini-pick" data-land="${escapeHtml(o.value)}">${escapeHtml(o.label)}</button>`).join('')}
+        </div>`;
+      body.querySelectorAll('[data-land]').forEach((btn) => {
+        btn.onclick = () => {
+          const raw = btn.dataset.land;
+          const value = raw === 'prize' ? 'prize' : Number(raw);
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value } });
+        };
+      });
+    } else if (game === 'hot_potato') {
+      body.innerHTML = `
+        <p class="modal-lead">パス禁止！止める？回す？${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}止め人が少なすぎず多すぎずなら成功。多すぎると罰金。</p>
+        ${statusHtml}
+        <div class="modal-actions">
+          <button class="btn primary" id="m-potato-stop">止める</button>
+          <button class="btn" id="m-potato-pass">回す</button>
+        </div>`;
+      $('#m-potato-stop').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'stop' } }); };
+      $('#m-potato-pass').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'pass' } }); };
     } else {
       body.innerHTML = `
         <p class="modal-lead">スロットを回そう！</p>
