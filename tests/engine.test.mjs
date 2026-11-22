@@ -4247,6 +4247,81 @@ describe('MkMk Street engine', () => {
     assert.equal(bShop.owner, 0);
   });
 
+  it('CPU rejects shop trade when proposer cannot fund the cash delta', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B', isCPU: true }],
+      seed: 19,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    const aShop = shops[0];
+    const bShop = shops[1];
+    aShop.owner = 0;
+    bShop.owner = 1;
+    aShop.price = 500;
+    bShop.price = 100;
+    g.players[0].cash = 10; // 提案者は差額を払えない
+    g.players[1].cash = 3000;
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    g.pending = {
+      type: 'shop_trade_offer',
+      playerId: 1,
+      fromId: 0,
+      giveShopIds: [aShop.id],
+      takeShopIds: [bShop.id],
+      cashDelta: 200,
+    };
+    assert.equal(cpuShouldAcceptShopTrade(g, g.players[1], g.pending), false);
+    const result = cpuAct(g);
+    assert.equal(result?.ok, true);
+    assert.equal(result?.tradeRejected, true);
+    assert.equal(g.pending, null);
+    assert.equal(g.phase, 'await_roll');
+    assert.equal(aShop.owner, 0);
+    assert.equal(bShop.owner, 1);
+  });
+
+  it('CPU cancels compose when propose cannot proceed', () => {
+    const g = createGame({
+      players: [{ name: 'A', isCPU: true }, { name: 'B' }],
+      seed: 23,
+    });
+    const shops = g.map.filter((s) => s.type === 'shop');
+    // 互いのリーチ独占を作って cpuFindMonopolySwap が案を返すようにする
+    const areas = Object.keys(g.areas).map(Number);
+    assert.ok(areas.length >= 2);
+    const areaA = areas[0];
+    const areaB = areas[1];
+    const shopsA = getAreaShops(g, areaA);
+    const shopsB = getAreaShops(g, areaB);
+    assert.ok(shopsA.length >= 2 && shopsB.length >= 2);
+    for (const sq of shopsA) sq.owner = 0;
+    shopsA[shopsA.length - 1].owner = 1; // A がリーチ
+    for (const sq of shopsB) sq.owner = 1;
+    shopsB[shopsB.length - 1].owner = 0; // B がリーチ、交換可能
+    g.players[0].cash = 5000;
+    g.players[1].cash = 5000;
+    g.phase = 'await_choice';
+    g.currentPlayerIdx = 0;
+    const deal = cpuFindMonopolySwap(g, g.players[0]);
+    assert.ok(deal, 'expected a monopoly swap deal');
+    g.pending = {
+      type: 'shop_trade_compose',
+      playerId: 0,
+      targetId: deal.targetId,
+      giveShopIds: [deal.giveShopId],
+      takeShopIds: [deal.takeShopId],
+      cashDelta: 0,
+    };
+    // 相手の現金を枯らして propose の target_cash を失敗させる
+    g.players[deal.targetId].cash = 0;
+    g.pending.cashDelta = -99999; // 相手が支払う額
+    const result = cpuAct(g);
+    assert.equal(result?.ok, true);
+    assert.equal(g.pending, null);
+    assert.equal(g.phase, 'await_roll');
+  });
+
   it('allows counter-offer with edited cash on shop trade', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],

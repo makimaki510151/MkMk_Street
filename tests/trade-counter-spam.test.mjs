@@ -38,7 +38,7 @@ function refreshChoiceModalVisibility(app, g) {
 
 /** bannerFromLog の物件交渉ログ抑制ミラー */
 function tradeNegotiationStampOnly(kind, text) {
-  return kind === 'shop' && /物件取引を持ちかけ|逆交渉を申し込んだ/.test(text);
+  return kind === 'shop' && /物件取引|逆交渉を申し込んだ/.test(text);
 }
 
 function enqueueBanner(state, payload) {
@@ -96,6 +96,11 @@ describe('trade counter spam stall guards', () => {
     assert.equal(
       tradeNegotiationStampOnly('shop', '太郎 が 花子 に物件取引を持ちかけた'),
       true,
+    );
+    assert.equal(
+      tradeNegotiationStampOnly('shop', '太郎 ⇔ 花子 物件取引（出: パン屋 → 受: 花屋／ 太郎 が 30G 支払い）'),
+      true,
+      '成立ログも busy を掴んではいけない',
     );
     assert.equal(
       tradeNegotiationStampOnly('shop', '太郎 が「パン屋」を購入（200G）'),
