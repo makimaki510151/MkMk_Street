@@ -345,29 +345,65 @@ export function createRenderer(canvas) {
   }
 
   /**
-   * コマの進行向き。移動／ワープ中は行き先、停止中は直前マス→現在マス。
-   * @returns {number|null}
+   * コマが進める方向の角度一覧。
+   * 移動／ワープ中は行き先のみ、停止中は後退を除く全前進先。
+   * @returns {number[]}
    */
-  function tokenFacingAngle(g, p) {
+  function tokenFacingAngles(g, p) {
     const mv = anim.moves[p.id];
-    if (mv) return angleBetweenIds(g, mv.fromId, mv.toId);
-    const wv = anim.warps[p.id];
-    if (wv && warpProgress(wv) < 0.92) return angleBetweenIds(g, wv.fromId, wv.toId);
-    if (p.prevPos != null && p.prevPos !== p.pos) {
-      return angleBetweenIds(g, p.prevPos, p.pos);
+    if (mv) {
+      const a = angleBetweenIds(g, mv.fromId, mv.toId);
+      return a == null ? [] : [a];
     }
-    return null;
+    const wv = anim.warps[p.id];
+    if (wv && warpProgress(wv) < 0.92) {
+      const a = angleBetweenIds(g, wv.fromId, wv.toId);
+      return a == null ? [] : [a];
+    }
+    // 分岐待ちは選択肢すべて
+    if (
+      g.phase === 'await_fork'
+      && g.pending?.type === 'fork'
+      && g.currentPlayerIdx === p.id
+      && Array.isArray(g.pending.options)
+    ) {
+      const angles = [];
+      for (const opt of g.pending.options) {
+        const a = angleBetweenIds(g, p.pos, opt.id);
+        if (a != null) angles.push(a);
+      }
+      return uniqueAngles(angles);
+    }
+    const nextIds = getForwardNexts(g, p.pos, p.prevPos);
+    const angles = [];
+    for (const nid of nextIds) {
+      const a = angleBetweenIds(g, p.pos, nid);
+      if (a != null) angles.push(a);
+    }
+    return uniqueAngles(angles);
   }
 
-  /** コマ先端の向き矢印（白＋プレイヤー色） */
-  function drawFacingChevron(x, y, rad, angle, color, emphasize) {
+  /** ほぼ同じ向きを1本にまとめる */
+  function uniqueAngles(angles) {
+    const out = [];
+    for (const a of angles) {
+      if (!Number.isFinite(a)) continue;
+      if (out.some((b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 0.18)) continue;
+      out.push(a);
+    }
+    return out;
+  }
+
+  /** コマ先端の向き矢印（白＋プレイヤー色）。scale で複数本時に少し小さくする */
+  function drawFacingChevron(x, y, rad, angle, color, emphasize, scale = 1) {
     if (angle == null || !Number.isFinite(angle)) return;
+    const s = Math.max(0.55, Math.min(1, scale));
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-    const tip = rad * (emphasize ? 1.85 : 1.65);
-    const base = rad * 0.25;
-    const half = rad * (emphasize ? 0.62 : 0.52);
+    const tip = rad * (emphasize ? 1.85 : 1.65) * s;
+    const base = rad * 0.25 * s;
+    const half = rad * (emphasize ? 0.62 : 0.52) * s;
     ctx.beginPath();
     ctx.moveTo(tip, 0);
     ctx.lineTo(base, -half);
@@ -378,13 +414,13 @@ export function createRenderer(canvas) {
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = color || '#ffe08a';
-    ctx.lineWidth = emphasize ? 2.2 : 1.6;
+    ctx.lineWidth = (emphasize ? 2.2 : 1.6) * s;
     ctx.stroke();
     // 内側の色チップで自分の向きと分かりやすく
     ctx.beginPath();
-    ctx.moveTo(tip - rad * 0.22, 0);
-    ctx.lineTo(base + rad * 0.12, -half * 0.45);
-    ctx.lineTo(base + rad * 0.12, half * 0.45);
+    ctx.moveTo(tip - rad * 0.22 * s, 0);
+    ctx.lineTo(base + rad * 0.12 * s, -half * 0.45);
+    ctx.lineTo(base + rad * 0.12 * s, half * 0.45);
     ctx.closePath();
     ctx.fillStyle = color || '#ffe08a';
     ctx.globalAlpha = 0.85;
@@ -1063,9 +1099,13 @@ export function createRenderer(canvas) {
           ctx.stroke();
         }
       }
-      // 進行方向（自分・他プレイヤーとも）
-      const facing = tokenFacingAngle(g, p);
-      drawFacingChevron(pos.x, pos.y, rad, facing, p.color, isCurrent || warping || !!anim.moves[p.id]);
+      // 進める方向すべてに矢印（移動中は行き先のみ）
+      const facings = tokenFacingAngles(g, p);
+      const emph = isCurrent || warping || !!anim.moves[p.id];
+      const scale = facings.length >= 3 ? 0.72 : facings.length === 2 ? 0.85 : 1;
+      for (const facing of facings) {
+        drawFacingChevron(pos.x, pos.y, rad, facing, p.color, emph, scale);
+      }
     }
 
     // イベントNPC（妖精・大商人・貧乏神）— プレイヤー同様に moves/holds で補間
