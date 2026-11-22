@@ -2,6 +2,8 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   eventDefSignature,
+  eventSignaturesMatch,
+  normalizeEventSignature,
   describeEventDef,
   syncScratchDexWithCatalog,
   markScratchEventSeen,
@@ -81,5 +83,58 @@ describe('scratch dex', () => {
     const a = eventDefSignature({ kind: 'x', label: 'L', effect: 'any_shop_buy', multi: 5 });
     const b = eventDefSignature({ kind: 'x', label: 'L', effect: 'any_shop_buy', multi: 6 });
     assert.notEqual(a, b);
+  });
+
+  it('keeps witness when only signature schema gains null fields', () => {
+    // 旧実装は全キーを null 埋めしていた。npcKind 追加などで全番号が消えるのを防ぐ
+    const legacySig = JSON.stringify({
+      kind: 'treasure_map',
+      label: '宝の地図',
+      effect: 'cash',
+      multi: null,
+      amount: null,
+      cash: 50,
+      levelScale: 30,
+      stocks: null,
+      shopBoost: null,
+      game: null,
+      lucky: null,
+      grantMark: null,
+      extraRoll: null,
+    });
+    const id = 1;
+    localStorage.setItem('mkmk_scratch_dex_v1', JSON.stringify({
+      seen: { [id]: true, 40: true },
+      sigs: {
+        [id]: legacySig,
+        40: eventDefSignature(EVENT_CATALOG[39]),
+      },
+    }));
+    const result = syncScratchDexWithCatalog();
+    assert.equal(result.cleared.includes(id), false, 'unchanged No.1 must stay');
+    assert.equal(isScratchEventSeen(id), true);
+    assert.equal(isScratchEventSeen(40), true);
+  });
+
+  it('clears only the mutated id when sibling signatures stay equal', () => {
+    syncScratchDexWithCatalog();
+    markScratchEventSeen(5);
+    markScratchEventSeen(6);
+    const mutated = EVENT_CATALOG.map((e) => (
+      e.id === 5 ? { ...e, label: `${e.label}・改` } : { ...e }
+    ));
+    const result = syncScratchDexWithCatalog(mutated);
+    assert.deepEqual(result.cleared, [5]);
+    assert.equal(isScratchEventSeen(5), false);
+    assert.equal(isScratchEventSeen(6), true);
+  });
+
+  it('normalizeEventSignature strips null keys for stable compare', () => {
+    const withNulls = JSON.stringify({
+      kind: 'x', label: 'L', effect: 'cash', multi: null, npcKind: null, cash: 10,
+    });
+    const compact = eventDefSignature({ kind: 'x', label: 'L', effect: 'cash', cash: 10 });
+    assert.equal(normalizeEventSignature(withNulls), compact);
+    assert.equal(eventSignaturesMatch(withNulls, compact), true);
   });
 });

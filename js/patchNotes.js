@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.18',
+    date: '2026-11-22',
+    items: [
+      'スクラッチ図鑑で、内容が変わっていない番号の目撃記録が消えないように修正',
+    ],
+  },
+  {
     version: '1.9.17',
     date: '2026-11-22',
     items: [

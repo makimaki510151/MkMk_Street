@@ -4,25 +4,62 @@ import { EVENT_CATALOG, EVENT_COUNT } from './eventTable.js';
 
 const STORAGE_KEY = 'mkmk_scratch_dex_v1';
 
+/** 指紋に使う内容フィールド（順序固定） */
+const SIGNATURE_FIELDS = [
+  'kind',
+  'label',
+  'effect',
+  'multi',
+  'amount',
+  'cash',
+  'levelScale',
+  'stocks',
+  'shopBoost',
+  'game',
+  'lucky',
+  'grantMark',
+  'extraRoll',
+  'npcKind',
+];
+
+/**
+ * 保存済み／現行の指紋を比較用に正規化する。
+ * null/undefined キーを落とし、フィールド追加だけでは未変更扱いになるようにする。
+ */
+export function normalizeEventSignature(sig) {
+  if (sig == null || sig === '') return '';
+  if (typeof sig !== 'string') return '';
+  try {
+    const obj = JSON.parse(sig);
+    if (!obj || typeof obj !== 'object') return sig;
+    const cleaned = {};
+    for (const key of SIGNATURE_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const v = obj[key];
+      if (v === null || v === undefined) continue;
+      cleaned[key] = v;
+    }
+    return JSON.stringify(cleaned);
+  } catch {
+    return sig;
+  }
+}
+
 /** イベント定義の指紋（内容が変わったら目撃を消す判定用） */
 export function eventDefSignature(def) {
   if (!def) return '';
-  return JSON.stringify({
-    kind: def.kind ?? null,
-    label: def.label ?? null,
-    effect: def.effect ?? null,
-    multi: def.multi ?? null,
-    amount: def.amount ?? null,
-    cash: def.cash ?? null,
-    levelScale: def.levelScale ?? null,
-    stocks: def.stocks ?? null,
-    shopBoost: def.shopBoost ?? null,
-    game: def.game ?? null,
-    lucky: def.lucky ?? null,
-    grantMark: def.grantMark ?? null,
-    extraRoll: def.extraRoll ?? null,
-    npcKind: def.npcKind ?? null,
-  });
+  const cleaned = {};
+  for (const key of SIGNATURE_FIELDS) {
+    const v = def[key];
+    if (v === null || v === undefined) continue;
+    cleaned[key] = v;
+  }
+  return JSON.stringify(cleaned);
+}
+
+/** 指紋が同じ内容を指すか（スキーマ拡張による null 追加だけでは不一致にしない） */
+export function eventSignaturesMatch(a, b) {
+  return normalizeEventSignature(a) === normalizeEventSignature(b);
 }
 
 /** 図鑑用の効果説明（番号リストの本文） */
@@ -189,7 +226,8 @@ function writeStore(store) {
 }
 
 /**
- * カタログと照合し、内容が変わった番号の目撃記録を削除する。
+ * カタログと照合し、内容が変わった番号の目撃記録だけ削除する。
+ * 指紋スキーマにフィールドが増えても、実内容が同じなら残す。
  * @returns {{ cleared: number[], seenCount: number }}
  */
 export function syncScratchDexWithCatalog(catalog = EVENT_CATALOG) {
@@ -204,7 +242,9 @@ export function syncScratchDexWithCatalog(catalog = EVENT_CATALOG) {
     const sig = eventDefSignature(def);
     nextSigs[id] = sig;
     const prev = store.sigs[id] ?? store.sigs[String(id)];
-    if (prev != null && prev !== sig && (nextSeen[id] || nextSeen[String(id)])) {
+    const seenHere = !!(nextSeen[id] || nextSeen[String(id)]);
+    // 指紋未登録の番号は消さない（初回同期・旧データ補完）
+    if (prev != null && seenHere && !eventSignaturesMatch(prev, sig)) {
       delete nextSeen[id];
       delete nextSeen[String(id)];
       cleared.push(id);
