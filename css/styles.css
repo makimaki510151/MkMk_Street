@@ -2918,6 +2918,86 @@ body.your-turn #btn-roll:not(:disabled) {
   color: var(--muted);
   font-size: 0.72rem;
 }
+
+/* 薬品マス：全員分の結果一覧 */
+.potion-result-board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  width: min(100%, 28rem);
+  max-height: min(52vh, 22rem);
+  overflow: auto;
+}
+.potion-result-row {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 0.9fr) auto;
+  grid-template-areas:
+    "name card"
+    "effect effect"
+    "outcome outcome";
+  gap: 0.15rem 0.55rem;
+  align-items: baseline;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border-left: 4px solid var(--pc, #9fa8da);
+  background: color-mix(in srgb, #1a1f2c 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc, #9fa8da) 28%, transparent);
+  border-left-width: 4px;
+  text-align: left;
+}
+.potion-result-name {
+  grid-area: name;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 1rem;
+  color: var(--pc, #c5cae9);
+}
+.potion-result-card {
+  grid-area: card;
+  justify-self: end;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #c5cae9;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+.potion-result-effect {
+  grid-area: effect;
+  font-size: 0.78rem;
+  color: #b8c0d8;
+  opacity: 0.88;
+  line-height: 1.35;
+}
+.potion-result-outcome {
+  grid-area: outcome;
+  font-family: var(--display);
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: #e8eefc;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+#minigame-overlay.potion-reveal .mg-title {
+  color: #c5cae9;
+}
+#minigame-overlay.potion-reveal .mg-detail {
+  color: #9aa3b8;
+  font-size: 0.82rem;
+}
+@media (max-width: 520px) {
+  .potion-result-board {
+    width: 100%;
+    max-height: min(48vh, 20rem);
+  }
+  .potion-result-row {
+    padding: 0.45rem 0.55rem;
+  }
+  .potion-result-outcome {
+    font-size: 0.9rem;
+  }
+}
 .mg-roster {
   list-style: none;
   display: flex;

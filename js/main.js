@@ -4369,32 +4369,99 @@ async function playScratchMatchReveal(matches, messages = [], { banner = true } 
 
 const SLOT_SYMS = ['★', '♪', 'G', '♦', '♣'];
 
-/** 薬品マス：伏せカード公開の告知 */
+/** 薬品結果1行：実際に起きた内容を優先 */
+function potionResultLine(row) {
+  const concrete = String(row?.detail || '').replace(/^薬品[：:]/, '').trim();
+  if (concrete) return concrete;
+  return POTION_EFFECT_LABELS[row?.effectId] || '効果なし';
+}
+
+function potionEffectTitle(effectId) {
+  return POTION_EFFECT_LABELS[effectId] || '不明な効果';
+}
+
+/** 薬品マス：全員分の結果を一覧で見せる */
+function renderPotionRevealBoard(rows) {
+  const list = (rows || []).map((r, i) => {
+    const pl = app.game?.players?.[r.playerId];
+    const color = pl?.color || '#9fa8da';
+    const name = r.name || pl?.name || `P${(r.playerId ?? i) + 1}`;
+    const cardNo = Number.isFinite(Number(r.slot)) ? Number(r.slot) + 1 : '?';
+    const effect = potionEffectTitle(r.effectId);
+    const outcome = potionResultLine(r);
+    return `<li class="potion-result-row" style="--pc:${escapeHtml(color)}">
+      <span class="potion-result-name">${escapeHtml(name)}</span>
+      <span class="potion-result-card">カード${escapeHtml(String(cardNo))}</span>
+      <span class="potion-result-effect">${escapeHtml(effect)}</span>
+      <span class="potion-result-outcome">${escapeHtml(outcome)}</span>
+    </li>`;
+  }).join('');
+  return `<ol class="potion-result-board">${list}</ol>`;
+}
+
+/** 薬品マス：伏せカード公開の告知（各自の結果が一目で分かる一覧） */
 async function presentPotionReveal(result = {}) {
   const rows = result.results || app.game?.potionReveal || [];
   if (!rows.length) return;
   app.busy = true;
   audio.sfx.levelUp();
-  const detail = rows
-    .map((r) => {
-      const label = POTION_EFFECT_LABELS[r.effectId] || r.detail || '';
-      return `${r.name || '？'}：カード${(r.slot ?? 0) + 1}（${label}）`;
-    })
-    .join(' / ');
+
+  const overlay = $('#minigame-overlay');
+  const stage = overlay?.querySelector('.mg-stage');
+  const body = $('#mg-body');
+  const answer = $('#mg-answer');
+  const title = $('#mg-title');
+  const detail = $('#mg-detail');
+  const kicker = $('#mg-kicker');
+  if (overlay && body) {
+    overlay.hidden = false;
+    overlay.classList.remove('show-result', 'tier-jackpot', 'tier-exact', 'tier-pair', 'tier-near', 'tier-win', 'tier-miss');
+    overlay.classList.add('party', 'potion-reveal');
+    stage?.classList.add('party');
+    if (kicker) kicker.textContent = '薬品マス・カード公開';
+    if (title) title.textContent = 'みんなの結果';
+    if (answer) {
+      answer.hidden = true;
+      answer.textContent = '';
+    }
+    body.innerHTML = renderPotionRevealBoard(rows);
+    if (detail) {
+      detail.innerHTML = '';
+      detail.textContent = '各プレイヤーが引いた効果と実際の結果';
+    }
+    overlay.classList.add('show-result');
+    await wait(Math.max(2200, 900 + rows.length * 450));
+    overlay.hidden = true;
+    overlay.classList.remove('show-result', 'party', 'potion-reveal');
+    stage?.classList.remove('party');
+    body.innerHTML = '';
+    if (detail) detail.textContent = '';
+  } else {
+    await wait(900);
+  }
+
+  const summary = rows
+    .map((r) => `${r.name || '？'}：${potionResultLine(r)}`)
+    .join(' · ');
+  const chips = rows.map((r) => {
+    const name = r.name || '？';
+    const short = potionResultLine(r);
+    return `${name} ${short}`.slice(0, 28);
+  }).slice(0, 6);
   const payload = {
     kicker: '薬品マス',
-    title: 'カード公開',
-    detail,
+    title: rows.length > 1 ? 'みんなの結果' : 'カード公開',
+    detail: summary,
     kind: 'event',
     color: '#9fa8da',
-    visual: { glyph: '薬', chips: ['伏せカード', '一斉公開'] },
+    visual: { glyph: '薬', chips: chips.length ? chips : ['カード公開'] },
   };
   if (!result.remote) {
     broadcastFx({ kind: 'banner', payload });
     broadcastFx({ kind: 'potionReveal', results: rows });
+    enqueueBanner(payload);
   }
-  enqueueBanner(payload);
-  await wait(900);
+  // remote はホストから banner FX が届くので二重表示しない
   clearBusyUnlessEventUi();
 }
 
