@@ -2569,6 +2569,7 @@ function maybeDemoLanding() {
     const from = shops[2] || shops[0] || app.game.map[0];
     const to = app.game.map.find((n) => n.type === 'bank') || shops[5] || app.game.map[1];
     p.pos = to.id;
+    armWarpHolds([{ pid: p.id, from: from.id, to: to.id }]);
     refreshGameUI();
     setTimeout(() => {
       presentWarpFx([{ pid: p.id, from: from.id, to: to.id }]);
@@ -3803,6 +3804,7 @@ async function applyLocalAction(action) {
       return;
     }
     if (result.state) app.game = restoreState(result.state);
+    if (result.warps?.length) armWarpHolds(result.warps);
     if (action.choice.action === 'buy' && pend.type === 'buy_shop') audio.sfx.buy();
     if (result.fiveBuy) presentFiveBuyFx(result);
     if (result.monopolyBreak) presentMonopolyBreakFx(result);
@@ -3965,15 +3967,20 @@ async function continueAdvancing() {
     }
 
     if (result.stepped) {
-      app.renderer?.animateToken(pid, result.from ?? from, result.to, 400);
+      // ワープがある最終歩は「出発マス」まで歩かせ、目的地への瞬間移動を防ぐ
+      const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
+        ?? result.warps?.[0]?.from;
+      const stepTo = (result.done && warpFrom != null) ? warpFrom : result.to;
+      app.renderer?.animateToken(pid, result.from ?? from, stepTo, 400);
       audio.sfx.step();
-      // 最終歩でスイッチ切替がある場合、新座標の state 同期を演出後に回す
-      // （ゲストが一瞬新位置→スライド開始の巻き戻りフラッシュを見ないように）
-      if (!(result.done && result.switchMoves?.length)) {
-        syncState({ anim: { pid, from: result.from ?? from, to: result.to } });
+      // 最終歩でスイッチ／ワープがある場合、新座標の state 同期を演出後に回す
+      // （ゲストが一瞬新位置→スライド／ワープ開始の巻き戻りフラッシュを見ないように）
+      if (!(result.done && (result.switchMoves?.length || result.warps?.length))) {
+        syncState({ anim: { pid, from: result.from ?? from, to: stepTo } });
       }
       refreshGameUI();
-      await wait(420);
+      // ワープへ繋ぐときはステップ完了と同時に演出開始（ホールド隙間を作らない）
+      await wait(result.done && result.warps?.length ? 400 : 420);
     }
 
     // 銀行通過割込み（昇進→株→方向）
@@ -4171,10 +4178,21 @@ function TYPE_LABEL(n) {
   return n.type;
 }
 
+/** 論理座標が先にワープ先へ進んでも、見た目は出発マスに留める */
+function armWarpHolds(warps) {
+  if (!warps?.length || !app.renderer?.holdToken) return;
+  for (const w of warps) {
+    if (!w || w.pid == null || w.from == null || w.from === w.to) continue;
+    app.renderer.holdToken(w.pid, w.from);
+  }
+}
+
 async function presentWarpFx(warps, { remote = false } = {}) {
   if (!warps?.length || !app.game) return;
   const wasBusy = app.busy;
   app.busy = true;
+  // 演出開始前に出発マスへ固定（スクラッチ結果表示中の瞬間移動を防ぐ）
+  armWarpHolds(warps);
   for (const w of warps) {
     if (w.from === w.to) continue;
     const who = app.game.players[w.pid];
@@ -5264,6 +5282,7 @@ async function handleHostAction(from, data) {
       return;
     }
     if (result.state) app.game = restoreState(result.state);
+    if (result.warps?.length) armWarpHolds(result.warps);
     if (result.fiveBuy) presentFiveBuyFx(result);
     if (result.monopolyBreak) presentMonopolyBreakFx(result);
     if (result.monopoly) presentMonopolyFx(result);
@@ -5431,6 +5450,7 @@ function scheduleCpu() {
     if (phase === 'await_choice') {
       const result = cpuAct(app.game);
       if (result?.state) app.game = restoreState(result.state);
+      if (result?.warps?.length) armWarpHolds(result.warps);
       if (result?.fiveBuy) presentFiveBuyFx(result);
       if (result?.monopolyBreak) presentMonopolyBreakFx(result);
       if (result?.monopoly) presentMonopolyFx(result);

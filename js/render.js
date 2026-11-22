@@ -81,6 +81,11 @@ export function createRenderer(canvas) {
     moves: {},
     /** @type {Record<number, {fromId:number,toId:number,start:number,dur:number,color?:string}>} */
     warps: {},
+    /**
+     * 論理座標が先に更新されても、見た目をこのマスに留める（ワープ前の瞬間移動防止）。
+     * @type {Record<number, number>}
+     */
+    holds: {},
     /** @type {Record<number, {fromCol:number,fromRow:number,toCol:number,toRow:number,start:number,dur:number}>} */
     tileSlides: {},
     diceSpin: 0,
@@ -486,14 +491,32 @@ export function createRenderer(canvas) {
     }
   }
 
-  /** コマ移動アニメを予約 */
+  /** コマ移動アニメを予約。完了後は to にホールド（論理座標が先に進んでも瞬間移動しない） */
   function animateToken(playerId, fromId, toId, dur = 380) {
+    delete anim.warps[playerId];
     anim.moves[playerId] = {
       fromId,
       toId,
       start: performance.now(),
       dur,
     };
+    if (toId != null) anim.holds[playerId] = toId;
+  }
+
+  /** 見た目だけ指定マスに固定（スクラッチ結果中など、ワープ演出前） */
+  function holdToken(playerId, nodeId) {
+    if (playerId == null || nodeId == null) return;
+    delete anim.moves[playerId];
+    delete anim.warps[playerId];
+    anim.holds[playerId] = nodeId;
+  }
+
+  function clearTokenHold(playerId) {
+    if (playerId == null) {
+      anim.holds = {};
+      return;
+    }
+    delete anim.holds[playerId];
   }
 
   /** スイッチで動くマスのスライド（from/to はグリッド座標） */
@@ -512,6 +535,7 @@ export function createRenderer(canvas) {
   /** ワープ移動（高い弧＋ビーム）。どこへ飛んだかを見せる */
   function animateWarp(playerId, fromId, toId, dur = 1200, color) {
     delete anim.moves[playerId];
+    delete anim.holds[playerId];
     anim.warps[playerId] = {
       fromId,
       toId,
@@ -570,6 +594,12 @@ export function createRenderer(canvas) {
         if (t >= 1) delete anim.moves[p.id];
         return { x: a.x + (b.x - a.x) * ease + oxf, y: a.y + (b.y - a.y) * ease + layout.size * 0.28 - hop };
       }
+    }
+    // 論理 pos が先にワープ先へ進んでいても、演出完了までは出発側に留める
+    const holdId = anim.holds[p.id];
+    if (holdId != null) {
+      const hc = nodeCenter(g, holdId);
+      if (hc) return { x: hc.x + oxf, y: hc.y + layout.size * 0.28 };
     }
     const c = nodeCenter(g, p.pos);
     if (!c) return null;
@@ -984,14 +1014,18 @@ export function createRenderer(canvas) {
     const byPos = {};
     g.players.forEach((p) => {
       if (p.bankrupt) return;
-      const key = anim.warps[p.id] ? anim.warps[p.id].fromId : p.pos;
+      const key = anim.warps[p.id]
+        ? anim.warps[p.id].fromId
+        : (anim.holds[p.id] != null ? anim.holds[p.id] : p.pos);
       if (!byPos[key]) byPos[key] = [];
       byPos[key].push(p);
     });
 
     for (const p of g.players) {
       if (p.bankrupt) continue;
-      const key = anim.warps[p.id] ? anim.warps[p.id].fromId : p.pos;
+      const key = anim.warps[p.id]
+        ? anim.warps[p.id].fromId
+        : (anim.holds[p.id] != null ? anim.holds[p.id] : p.pos);
       const list = byPos[key] || [p];
       const idx = list.indexOf(p);
       const pos = tokenDrawPos(g, p, Math.max(0, idx), list.length);
@@ -1134,6 +1168,8 @@ export function createRenderer(canvas) {
     hitTest,
     animateToken,
     animateWarp,
+    holdToken,
+    clearTokenHold,
     animateTileSlide,
     setStockHighlight,
     clearStockHighlight,

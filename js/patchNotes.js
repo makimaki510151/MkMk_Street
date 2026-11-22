@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.20',
+    date: '2026-11-22',
+    items: [
+      'イベントなどのワープで、先に瞬間移動してから飛んで見える不具合を修正',
+    ],
+  },
+  {
     version: '1.9.19',
     date: '2026-11-22',
     items: [
