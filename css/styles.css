@@ -520,8 +520,8 @@ button:disabled { opacity: .42; cursor: default; }
 }
 .scratch-dex-row {
   display: grid;
-  grid-template-columns: 4.2rem minmax(6rem, 0.9fr) minmax(0, 1.4fr);
-  gap: 0.45rem 0.65rem;
+  grid-template-columns: 5.6rem minmax(6rem, 0.9fr) minmax(0, 1.4fr);
+  gap: 0.45rem 0.85rem;
   align-items: baseline;
   padding: 0.45rem 0.55rem;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
@@ -534,11 +534,19 @@ button:disabled { opacity: .42; cursor: default; }
   font-family: var(--display);
   font-weight: 800;
   color: var(--gold);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  padding-right: 0.55rem;
+  margin-right: 0.1rem;
+  border-right: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  box-sizing: border-box;
+  min-width: 0;
 }
 .scratch-dex-label {
   font-weight: 700;
   color: var(--ink);
+  min-width: 0;
+  padding-left: 0.1rem;
 }
 .scratch-dex-row.is-unseen .scratch-dex-label {
   color: var(--muted);
@@ -550,7 +558,11 @@ button:disabled { opacity: .42; cursor: default; }
 }
 @media (max-width: 640px) {
   .scratch-dex-row {
-    grid-template-columns: 3.6rem 1fr;
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: 0.35rem 0.7rem;
+  }
+  .scratch-dex-num {
+    padding-right: 0.45rem;
   }
   .scratch-dex-desc {
     grid-column: 1 / -1;
