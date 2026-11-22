@@ -1650,6 +1650,12 @@ export function restoreState(data) {
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
   g.switchState = g.switchState ? 1 : 0;
+  if (!Array.isArray(g.eventNpcs)) g.eventNpcs = [];
+  if (!Array.isArray(g.eventNpcFx)) g.eventNpcFx = [];
+  if (g.povertyHolidayClearTurn === undefined) g.povertyHolidayClearTurn = null;
+  for (const sq of g.map || []) {
+    if (sq && sq.eventHoliday != null) sq.eventHoliday = !!sq.eventHoliday;
+  }
   {
     const raw = Number(g.diceMax);
     g.diceMax = Number.isFinite(raw) && raw >= 2 ? Math.floor(raw) : MOVE_DICE_MAX_DEFAULT;
