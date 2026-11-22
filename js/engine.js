@@ -375,8 +375,8 @@ const CHANCE_EVENTS = [
   { id: 'promotion_fund', label: '昇進準備金', apply: (g, p) => { const n = 80 + p.level * 60; p.cash += n; return `準備金 +${n}G` } },
   { id: 'payday_all', label: '給料日！', apply: (g, p) => giveAllCash(g, 80 + p.level * 20) },
   { id: 'bonus_wave', label: 'ボーナス支給', apply: (g, p) => giveAllCash(g, 100 + p.level * 25) },
-  { id: 'tax', label: '税金', apply: (g, p) => { const n = Math.min(p.cash, 150 + p.level * 30); p.cash -= n; return `Lv税 -${n}G` } },
-  { id: 'rank_dues', label: '階級維持費', apply: (g, p) => { const n = Math.min(p.cash, 60 + p.level * 40); p.cash -= n; return `維持費 -${n}G` } },
+  { id: 'tax', label: '税金', apply: (g, p) => { const n = 150 + p.level * 30; p.cash -= n; return `Lv税 -${n}G` } },
+  { id: 'rank_dues', label: '階級維持費', apply: (g, p) => { const n = 60 + p.level * 40; p.cash -= n; return `維持費 -${n}G` } },
   { id: 'warp_bank', label: '銀行へワープ', apply: (g, p) => {
     recordWarp(g, p.id, p.pos, g.startId);
     p.pos = g.startId;
@@ -415,8 +415,8 @@ const BOARD_EVENTS = [
   { id: 'senior_gift', label: '先輩からの祝儀', apply: (g, p) => { const n = 150 + p.level * 70; p.cash += n; return `祝儀 +${n}G` } },
   { id: 'festival', label: 'お祭り景気', apply: (g, p) => giveAllCash(g, 70 + p.level * 15) },
   { id: 'stimulus', label: '景気刺激策', apply: (g, p) => giveAllCash(g, 60 + p.level * 12) },
-  { id: 'tax', label: '出費', apply: (g, p) => { const n = Math.min(p.cash, 120 + p.level * 25); p.cash -= n; return `出費 -${n}G` } },
-  { id: 'rank_fee', label: '肩書きコスト', apply: (g, p) => { const n = Math.min(p.cash, 50 + p.level * 35); p.cash -= n; return `コスト -${n}G` } },
+  { id: 'tax', label: '出費', apply: (g, p) => { const n = 120 + p.level * 25; p.cash -= n; return `出費 -${n}G` } },
+  { id: 'rank_fee', label: '肩書きコスト', apply: (g, p) => { const n = 50 + p.level * 35; p.cash -= n; return `コスト -${n}G` } },
   { id: 'stock', label: '株プレゼント', apply: (g, p) => {
     const areas = Object.keys(g.areas).map(Number);
     const a = areas[Math.floor(Math.random() * areas.length)];
@@ -2638,6 +2638,7 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
     const ev = BOARD_EVENTS[Math.floor(rngNext(g) * BOARD_EVENTS.length)];
     const detail = ev.apply(g, p);
     addLog(g, `イベント！ ${ev.label}（${detail}）`, 'event');
+    if (openEventDebtIfNeeded(g, p, { type: 'after_event', mode: 'landing' })) return;
     if (maybeOpenMinigame(g, p)) return;
     if (p.flags.extraRoll) {
       p.flags.extraRoll = false;
@@ -2672,6 +2673,11 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
     const ev = CHANCE_EVENTS[Math.floor(rngNext(g) * CHANCE_EVENTS.length)];
     const detail = ev.apply(g, p);
     addLog(g, `チャンス！ ${ev.label}（${detail}）`, 'event');
+    if (openEventDebtIfNeeded(g, p, {
+      type: 'after_event',
+      mode: 'landing',
+      chanceWarpBank: ev.id === 'warp_bank',
+    })) return;
     if (maybeOpenMinigame(g, p)) return;
     if (ev.id === 'warp_bank' && !p.flags.bankVisitDone) {
       beginBankVisit(g, p, { landed: true, resumeMove: false });
@@ -2724,7 +2730,7 @@ function beginBankVisit(g, p, { landed, resumeMove }) {
     }
   }
   if (p.flags?.insiderTax != null) {
-    const tax = Math.min(p.cash, Math.max(0, Math.floor(Number(p.flags.insiderTax) || 0)));
+    const tax = Math.max(0, Math.floor(Number(p.flags.insiderTax) || 0));
     p.flags.insiderTax = null;
     if (tax > 0) {
       p.cash -= tax;
@@ -2732,7 +2738,7 @@ function beginBankVisit(g, p, { landed, resumeMove }) {
     }
   }
   if (p.flags?.shortCover != null) {
-    const pay = Math.min(p.cash, Math.max(0, Math.floor(Number(p.flags.shortCover) || 0)));
+    const pay = Math.max(0, Math.floor(Number(p.flags.shortCover) || 0));
     p.flags.shortCover = null;
     if (pay > 0) {
       p.cash -= pay;
@@ -2748,6 +2754,11 @@ function beginBankVisit(g, p, { landed, resumeMove }) {
     atBank: !!landed,
     resumeMove: !!resumeMove,
   };
+
+  // 追徴・買い戻しで負債 → 先に資金調達（解消後に level_up / 株購入へ）
+  if (openEventDebtIfNeeded(g, p, { type: 'after_event', mode: 'bank', next })) {
+    return true;
+  }
 
   if (p.flags.pendingLevelUp) {
     openLevelUp(g, p, next);
@@ -3429,9 +3440,81 @@ export function kickDisconnectedPlayer(g, pid) {
   return { ok: true, state: serializeState(g) };
 }
 
+/**
+ * イベント罰金などで現金がマイナスなら資金調達を開く。
+ * @returns {boolean} 調達 UI を開いたら true
+ */
+function openEventDebtIfNeeded(g, p, resume = { type: 'after_event' }) {
+  if (!p || p.bankrupt || p.cash >= 0) return false;
+  openRaiseFunds(g, p, {
+    targetCash: 0,
+    reason: 'event',
+    resume,
+  });
+  return true;
+}
+
+/** スクラッチ後の続行（負債解消後もここへ戻る） */
+function continueAfterScratchEvent(g, p) {
+  if (maybeOpenForceSell(g, p)) return 'forceSell';
+  if (maybeOpenAnyShopBuy(g, p)) return 'anyShopBuy';
+  if (maybeOpenVacantShopBuy(g, p)) return 'vacantShopBuy';
+  if (maybeOpenForceRivalSell(g, p)) return 'forceRivalSell';
+  if (maybeOpenPickInvest(g, p)) return 'pickInvest';
+  if (maybeOpenPickDice(g, p)) return 'pickDice';
+  if (maybeOpenShopProtect(g, p)) return 'shopProtect';
+  if (maybeOpenCoOwn(g, p)) return 'coOwn';
+  if (maybeOpenFortuneTriple(g, p)) return 'fortuneTriple';
+  if (maybeOpenMonoHearing(g, p)) return 'monoHearing';
+  if (maybeOpenMinigame(g, p)) return 'minigame';
+  const spawnedNpc = maybeSpawnEventNpc(g, p);
+  if (p.flags.extraRoll) {
+    p.flags.extraRoll = false;
+    g.phase = 'await_roll';
+    return spawnedNpc ? 'eventNpc' : 'extraRoll';
+  }
+  endTurn(g);
+  return spawnedNpc ? 'eventNpc' : 'end';
+}
+
 function resumeAfterRaiseFunds(g, p, resume) {
   if (!resume) {
     endTurn(g);
+    return;
+  }
+  if (resume.type === 'after_event') {
+    if (resume.mode === 'landing') {
+      if (maybeOpenMinigame(g, p)) return;
+      if (p.flags.extraRoll) {
+        p.flags.extraRoll = false;
+        g.phase = 'await_roll';
+        return;
+      }
+      if (resume.chanceWarpBank && !p.flags.bankVisitDone) {
+        beginBankVisit(g, p, { landed: true, resumeMove: false });
+        if (g.phase === 'gameover' || g.phase === 'await_choice') return;
+      }
+      finishLanding(g, p);
+      return;
+    }
+    if (resume.mode === 'bank') {
+      const next = resume.next || { thenBankStock: true };
+      if (p.flags.pendingLevelUp) {
+        openLevelUp(g, p, next);
+        return;
+      }
+      if (next.thenBankStock) {
+        openBankStock(g, p, next);
+        return;
+      }
+      if (next.resumeMove) {
+        resumeMoveAfterBank(g, p);
+        return;
+      }
+      endTurn(g);
+      return;
+    }
+    continueAfterScratchEvent(g, p);
     return;
   }
   if (resume.type === 'after_toll') {
@@ -3696,13 +3779,14 @@ export function applyChoice(g, choice) {
     }
     if (choice.action === 'cancel') {
       // 売却済みの現金は残し、元の購入/5倍買いは取りやめてターン終了
-      // 料金不足（after_toll）は負債解消まで閉じられない（pending を消さない）
+      // 料金／イベント罰金の負債は解消まで閉じられない（pending を消さない）
       const resume = pending.resume;
-      if (resume?.type === 'after_toll' && p.cash < target) {
+      const debtResume = resume?.type === 'after_toll' || resume?.type === 'after_event';
+      if (debtResume && p.cash < target) {
         return { ok: false, error: 'still_short', state: serializeState(g) };
       }
       g.pending = null;
-      if (resume?.type === 'after_toll' && p.cash >= target) {
+      if (debtResume && p.cash >= target) {
         resumeAfterRaiseFunds(g, p, resume);
         return { ok: true, state: serializeState(g) };
       }
@@ -3887,47 +3971,12 @@ export function applyChoice(g, choice) {
       warps: result.warps || [],
       monopolyBreak,
     };
-    if (maybeOpenForceSell(g, p)) {
-      return { ok: true, ...matchPayload, forceSell: true, state: serializeState(g) };
+    // 罰金で所持金がマイナス → 買い物料と同様に資金調達
+    if (openEventDebtIfNeeded(g, p, { type: 'after_event' })) {
+      return { ok: true, ...matchPayload, raiseFunds: true, state: serializeState(g) };
     }
-    if (maybeOpenAnyShopBuy(g, p)) {
-      return { ok: true, ...matchPayload, anyShopBuy: true, state: serializeState(g) };
-    }
-    if (maybeOpenVacantShopBuy(g, p)) {
-      return { ok: true, ...matchPayload, vacantShopBuy: true, state: serializeState(g) };
-    }
-    if (maybeOpenForceRivalSell(g, p)) {
-      return { ok: true, ...matchPayload, forceRivalSell: true, state: serializeState(g) };
-    }
-    if (maybeOpenPickInvest(g, p)) {
-      return { ok: true, ...matchPayload, pickInvest: true, state: serializeState(g) };
-    }
-    if (maybeOpenPickDice(g, p)) {
-      return { ok: true, ...matchPayload, pickDice: true, state: serializeState(g) };
-    }
-    if (maybeOpenShopProtect(g, p)) {
-      return { ok: true, ...matchPayload, shopProtect: true, state: serializeState(g) };
-    }
-    if (maybeOpenCoOwn(g, p)) {
-      return { ok: true, ...matchPayload, coOwn: true, state: serializeState(g) };
-    }
-    if (maybeOpenFortuneTriple(g, p)) {
-      return { ok: true, ...matchPayload, fortuneTriple: true, state: serializeState(g) };
-    }
-    if (maybeOpenMonoHearing(g, p)) {
-      return { ok: true, ...matchPayload, monoHearing: true, state: serializeState(g) };
-    }
-    if (maybeOpenMinigame(g, p)) {
-      return { ok: true, ...matchPayload, minigame: true, state: serializeState(g) };
-    }
-    const spawnedNpc = maybeSpawnEventNpc(g, p);
-    if (p.flags.extraRoll) {
-      p.flags.extraRoll = false;
-      g.phase = 'await_roll';
-      return { ok: true, ...matchPayload, eventNpc: spawnedNpc, state: serializeState(g) };
-    }
-    endTurn(g);
-    return { ok: true, ...matchPayload, eventNpc: spawnedNpc, state: serializeState(g) };
+    const cont = continueAfterScratchEvent(g, p);
+    return { ok: true, ...matchPayload, [cont]: true, state: serializeState(g) };
   }
 
   if (pending.type === 'force_sell_shop') {
@@ -4411,6 +4460,9 @@ export function applyChoice(g, choice) {
     const messages = [];
     applyFortuneOption(g, p, opt, messages);
     for (const m of messages) addLog(g, `${p.name}：${m}`, 'event');
+    if (openEventDebtIfNeeded(g, p, { type: 'after_event' })) {
+      return { ok: true, messages, raiseFunds: true, state: serializeState(g) };
+    }
     if (p.flags?.extraRoll) {
       p.flags.extraRoll = false;
       g.phase = 'await_roll';
@@ -4432,7 +4484,7 @@ export function applyChoice(g, choice) {
       applyMonopolyBreak(g, p.id, area);
       addLog(g, `${p.name} は独禁ヒアリングで「${sq.label}」を ${starter.name} へ渡した`, 'shop');
     } else {
-      const fine = Math.min(p.cash, Math.max(80, Number(pending.fine) || 180));
+      const fine = Math.max(80, Number(pending.fine) || 180);
       p.cash -= fine;
       if (starter) starter.cash += fine;
       addLog(g, `${p.name} は独禁罰金 ${fine}G を支払った`, 'event');
@@ -4440,6 +4492,9 @@ export function applyChoice(g, choice) {
     g.pending = null;
     // ヒアリング後は開催者の手番へ戻して終了
     if (pending.starterId != null) g.currentPlayerIdx = pending.starterId;
+    if (openEventDebtIfNeeded(g, p, { type: 'after_event' })) {
+      return { ok: true, raiseFunds: true, state: serializeState(g) };
+    }
     endTurn(g);
     return { ok: true, state: serializeState(g) };
   }
@@ -4455,14 +4510,9 @@ function applyFortuneOption(g, p, opt, messages) {
   if (!opt) return;
   if (opt.effect === 'cash') {
     const amt = Math.floor(Number(opt.cash) || 50);
-    if (amt >= 0) {
-      p.cash += amt;
-      messages.push(`+${amt}G`);
-    } else {
-      const n = Math.min(p.cash, -amt);
-      p.cash -= n;
-      messages.push(`-${n}G`);
-    }
+    if (!amt) return;
+    p.cash += amt;
+    messages.push(amt > 0 ? `+${amt}G` : `${amt}G`);
   } else if (opt.effect === 'stocks') {
     const areas = Object.keys(g.areas || {}).map(Number);
     if (areas.length) {
@@ -4659,10 +4709,11 @@ function maybeOpenMonoHearing(g, p) {
   return true;
 }
 
+/** 現金増減。罰金は所持金を下回ってマイナスになり得る */
 function applyCashQuick(p, amount) {
   const n = Math.floor(Number(amount) || 0);
-  if (n > 0) p.cash += n;
-  else if (n < 0) p.cash -= Math.min(p.cash, -n);
+  if (!n) return;
+  p.cash += n;
 }
 
 /** 共通の結果にみんなで賭けるタイプ（スロット等の個人挑戦は含めない） */

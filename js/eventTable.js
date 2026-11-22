@@ -514,16 +514,15 @@ function scaledAmount(def, player, field = 'cash') {
   return Math.floor(base + lv * scale);
 }
 
+/**
+ * 現金の増減。罰金・出費は所持金を下回ってマイナスになり得る（買い物料と同様）。
+ * 不足時の資金調達は呼び出し側（engine）が openRaiseFunds する。
+ */
 function applyCash(player, amount, messages) {
-  if (!amount) return;
-  if (amount > 0) {
-    player.cash += amount;
-    messages.push(`+${amount}G`);
-  } else {
-    const n = Math.min(player.cash, -amount);
-    player.cash -= n;
-    messages.push(`-${n}G`);
-  }
+  const n = Math.floor(Number(amount) || 0);
+  if (!n) return;
+  player.cash += n;
+  messages.push(n > 0 ? `+${n}G` : `${n}G`);
 }
 
 /** 生存プレイヤー全員に同額支給（原作の景気・給料イベント） */
@@ -1050,7 +1049,7 @@ function applyEventDef(g, player, def, messages) {
         break;
       }
       const poorest = others.reduce((a, b) => (a.cash <= b.cash ? a : b));
-      const amt = Math.min(player.cash, def.amount || 60);
+      const amt = Math.max(0, Number(def.amount) || 60);
       player.cash -= amt;
       poorest.cash += amt;
       messages.push(`${poorest.name} に ${amt}G プレゼント`);
