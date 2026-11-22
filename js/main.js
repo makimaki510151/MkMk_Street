@@ -4323,6 +4323,35 @@ async function presentMinigameResult(result) {
   clearBusyUnlessEventUi();
 }
 
+/** ミニゲーム演出で「自分の予想」行を返す（当たりハイライト行ではない） */
+function minigameViewerRow(reveal) {
+  const rows = reveal?.results || [];
+  if (!rows.length) return null;
+  if (rows.length === 1) return rows[0];
+  const bySeat = rows.find((r) => r.playerId === app.localSeat);
+  if (bySeat) return bySeat;
+  if (app.mode === 'local') {
+    const human = rows.find((r) => {
+      const pl = app.game?.players?.[r.playerId];
+      return pl && !pl.isCPU;
+    });
+    if (human) return human;
+  }
+  if (reveal?.starterId != null) {
+    const starter = rows.find((r) => r.playerId === reveal.starterId);
+    if (starter) return starter;
+  }
+  return rows[0];
+}
+
+function formatCoinPickLabel(pick) {
+  return pick === 'tails' ? 'うら' : 'おもて';
+}
+
+function formatHighLowPickLabel(pick) {
+  return pick === 'high' ? 'ハイ' : 'ロー';
+}
+
 /** 全員参加ミニゲームの共通結果一行（出目・着順など） */
 function formatMinigameSharedLine(reveal) {
   const s = reveal?.shared || reveal?.outcome || {};
@@ -4331,7 +4360,7 @@ function formatMinigameSharedLine(reveal) {
   if (game === 'high_low' && s.secret != null) {
     return `数字 ${s.secret}（${s.band === 'high' ? 'ハイ' : 'ロー'}）`;
   }
-  if (game === 'coin' && s.face) return s.face === 'heads' ? '表' : '裏';
+  if (game === 'coin' && s.face) return s.face === 'heads' ? 'おもて' : 'うら';
   if (game === 'roulette' && s.spin != null) {
     const colorLabel = { red: '赤', black: '黒', green: '緑' };
     return `${colorLabel[s.color] || ''}${s.spin}`;
@@ -4357,13 +4386,24 @@ function renderPartyMinigameResults(reveal, { includeShared = false } = {}) {
     return Number(!!b.win) - Number(!!a.win);
   });
   const shared = includeShared ? formatMinigameSharedLine(reveal) : '';
-  const showPick = (reveal.game || '') === 'guess_dice';
+  const game = reveal.game || '';
+  const showPick = game === 'guess_dice' || game === 'coin' || game === 'high_low' || game === 'roulette';
   const board = rows.map((r, i) => {
     const win = !!r.win;
     const prize = formatMinigamePrize(r.prizeWon);
     const verdict = r.title || (win ? '当たり！' : '参加賞');
-    const pick = showPick && r.pick != null
-      ? `<span class="mg-result-pick" title="予想">予想${escapeHtml(String(r.pick))}</span>`
+    let pickText = '';
+    if (showPick && r.pick != null) {
+      if (game === 'coin') pickText = formatCoinPickLabel(r.pick);
+      else if (game === 'high_low') pickText = formatHighLowPickLabel(r.pick);
+      else if (game === 'roulette') {
+        pickText = ({ red: '赤', black: '黒', green: '緑' })[r.pick] || String(r.pick);
+      } else {
+        pickText = String(r.pick);
+      }
+    }
+    const pick = pickText
+      ? `<span class="mg-result-pick" title="予想">予想${escapeHtml(pickText)}</span>`
       : '';
     return `<li class="mg-result-row ${win ? 'is-win' : 'is-miss'}" style="--pc:${escapeHtml(r.playerColor || '#c4a574')}">
       <span class="mg-result-rank" aria-hidden="true">${i + 1}</span>
@@ -4767,9 +4807,10 @@ async function animateRpsDuelReveal(body, reveal) {
 }
 
 async function animateRouletteReveal(body, reveal) {
-  const spin = reveal.outcome?.spin ?? 0;
-  const color = reveal.outcome?.color || 'red';
-  const pick = reveal.outcome?.pick || 'red';
+  const spin = reveal.shared?.spin ?? reveal.outcome?.spin ?? 0;
+  const color = reveal.shared?.color ?? reveal.outcome?.color ?? 'red';
+  const viewer = minigameViewerRow(reveal);
+  const pick = viewer?.pick || reveal.outcome?.pick || reveal.pick || 'red';
   const colorLabel = { red: '赤', black: '黒', green: '緑' };
   body.innerHTML = `
     <div class="mg-roulette">
@@ -4867,14 +4908,46 @@ async function animateBalloonDashReveal(body, reveal) {
 }
 
 async function animateHighLowReveal(body, reveal) {
-  const secret = reveal.outcome?.secret ?? 1;
-  const band = reveal.outcome?.band === 'high' ? 'ハイ' : 'ロー';
-  const pickLabel = reveal.outcome?.pick === 'high' || reveal.pick === 'high' ? 'ハイ' : 'ロー';
-  body.innerHTML = `
-    <div>
-      <div class="mg-hl-card spinning" id="mg-hl-num">?</div>
-      <div class="mg-hl-band">予想：${pickLabel}</div>
-    </div>`;
+  const secret = reveal.shared?.secret ?? reveal.outcome?.secret ?? 1;
+  const bandRaw = reveal.shared?.band ?? reveal.outcome?.band;
+  const band = bandRaw === 'high' ? 'ハイ' : 'ロー';
+  const partyRows = (reveal.results || []).map((r) => ({
+    name: r.playerName || '',
+    color: r.playerColor || '#c4a574',
+    pick: r.pick === 'high' ? 'high' : 'low',
+    win: !!r.win,
+  }));
+  const party = partyRows.length > 1;
+  const viewer = minigameViewerRow(reveal);
+  const pickLabel = formatHighLowPickLabel(viewer?.pick ?? reveal.pick);
+
+  if (party) {
+    body.innerHTML = `
+      <div class="mg-dice-row mg-dice-party">
+        <div class="mg-dice-col mg-dice-picks">
+          <small>みんなの予想</small>
+          <div class="mg-dice-pick-grid">
+            ${partyRows.map((r) => `
+              <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
+                <div class="mg-die mg-die-sm">${formatHighLowPickLabel(r.pick)}</div>
+                <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="mg-vs">VS</div>
+        <div class="mg-dice-col">
+          <small>数字</small>
+          <div class="mg-hl-card spinning" id="mg-hl-num">?</div>
+        </div>
+      </div>`;
+  } else {
+    body.innerHTML = `
+      <div>
+        <div class="mg-hl-card spinning" id="mg-hl-num">?</div>
+        <div class="mg-hl-band">予想：${pickLabel}</div>
+      </div>`;
+  }
   const card = body.querySelector('#mg-hl-num');
   audio.sfx.minigameDrum();
   const start = performance.now();
@@ -4892,14 +4965,45 @@ async function animateHighLowReveal(body, reveal) {
 }
 
 async function animateCoinReveal(body, reveal) {
-  const face = reveal.outcome?.face === 'tails' ? 'tails' : 'heads';
+  const face = (reveal.shared?.face ?? reveal.outcome?.face) === 'tails' ? 'tails' : 'heads';
   const faceLabel = face === 'heads' ? 'おもて' : 'うら';
-  const pickLabel = (reveal.outcome?.pick || reveal.pick) === 'tails' ? 'うら' : 'おもて';
-  body.innerHTML = `
-    <div>
-      <div class="mg-coin flipping" id="mg-coin">？</div>
-      <div class="mg-hl-band">予想：${pickLabel}</div>
-    </div>`;
+  const partyRows = (reveal.results || []).map((r) => ({
+    name: r.playerName || '',
+    color: r.playerColor || '#c4a574',
+    pick: r.pick === 'tails' ? 'tails' : 'heads',
+    win: !!r.win,
+  }));
+  const party = partyRows.length > 1;
+  const viewer = minigameViewerRow(reveal);
+  const pickLabel = formatCoinPickLabel(viewer?.pick ?? reveal.pick);
+
+  if (party) {
+    body.innerHTML = `
+      <div class="mg-dice-row mg-dice-party">
+        <div class="mg-dice-col mg-dice-picks">
+          <small>みんなの予想</small>
+          <div class="mg-dice-pick-grid">
+            ${partyRows.map((r) => `
+              <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
+                <div class="mg-die mg-die-sm">${formatCoinPickLabel(r.pick)}</div>
+                <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="mg-vs">VS</div>
+        <div class="mg-dice-col">
+          <small>コイン</small>
+          <div class="mg-coin flipping" id="mg-coin">？</div>
+        </div>
+      </div>`;
+  } else {
+    body.innerHTML = `
+      <div>
+        <div class="mg-coin flipping" id="mg-coin">？</div>
+        <div class="mg-hl-band">予想：${pickLabel}</div>
+      </div>`;
+  }
   const coin = body.querySelector('#mg-coin');
   const labels = ['おもて', 'うら'];
   for (let i = 0; i < 12; i++) {
