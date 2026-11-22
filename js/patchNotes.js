@@ -4,7 +4,7 @@
  */
 export const PATCH_NOTES = [
   {
-    version: '1.9.19',
+    version: '1.9.20',
     date: '2026-11-22',
     items: [
       'ハイ＆ローの予想表示を「高／低」にし、枠内に1文字で収まるように修正',
