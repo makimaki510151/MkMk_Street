@@ -4321,8 +4321,7 @@ body.your-turn #btn-roll:not(:disabled) {
   .ra-table { min-width: 480px; }
 }
 
-/* Soft celebration bloom (jackpot / monopoly)
-   ミニゲーム結果オーバーレイ表示中は出さない（正解テキスト被り防止）。 */
+/* Celebration + confetti (jackpot / 上役 / monopoly) */
 #celebrate-fx {
   position: fixed;
   inset: 0;
@@ -4332,6 +4331,7 @@ body.your-turn #btn-roll:not(:disabled) {
   place-items: center;
   opacity: 0;
   transition: opacity 0.35s ease;
+  overflow: hidden;
 }
 #celebrate-fx[hidden] { display: none !important; }
 #celebrate-fx.show { opacity: 1; }
@@ -4341,12 +4341,21 @@ body.your-turn #btn-roll:not(:disabled) {
   background:
     radial-gradient(ellipse 55% 40% at 50% 42%, color-mix(in srgb, var(--cfx, #ffe08a) 38%, transparent), transparent 70%),
     radial-gradient(ellipse 70% 50% at 50% 55%, rgba(255, 248, 230, 0.16), transparent 72%);
-  animation: cfxBloom 2.1s ease-out forwards;
+  animation: cfxBloom 2.4s ease-out forwards;
 }
 #celebrate-fx[data-variant="jackpot"] .cfx-bloom {
   background:
-    radial-gradient(ellipse 60% 42% at 50% 40%, color-mix(in srgb, var(--cfx, #ffe08a) 42%, transparent), transparent 68%),
-    radial-gradient(ellipse 80% 55% at 50% 60%, rgba(255, 236, 190, 0.18), transparent 75%);
+    radial-gradient(ellipse 62% 44% at 50% 38%, color-mix(in srgb, var(--cfx, #ffe08a) 55%, transparent), transparent 66%),
+    radial-gradient(ellipse 85% 58% at 50% 62%, rgba(255, 200, 80, 0.22), transparent 74%),
+    radial-gradient(circle at 20% 30%, rgba(255, 80, 120, 0.18), transparent 42%),
+    radial-gradient(circle at 80% 25%, rgba(80, 200, 255, 0.16), transparent 40%);
+  animation-duration: 3.1s;
+}
+#celebrate-fx[data-variant="big"] .cfx-bloom {
+  background:
+    radial-gradient(ellipse 58% 42% at 50% 40%, color-mix(in srgb, var(--cfx, #9ef0c8) 46%, transparent), transparent 68%),
+    radial-gradient(ellipse 78% 52% at 50% 58%, rgba(255, 236, 190, 0.16), transparent 74%);
+  animation-duration: 2.7s;
 }
 #celebrate-fx[data-variant="monopoly"] .cfx-bloom {
   background:
@@ -4354,64 +4363,128 @@ body.your-turn #btn-roll:not(:disabled) {
     radial-gradient(ellipse 75% 50% at 50% 58%, rgba(255, 244, 220, 0.14), transparent 74%);
 }
 @keyframes cfxBloom {
-  0% { opacity: 0; transform: scale(0.92); }
-  18% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.06); }
+  0% { opacity: 0; transform: scale(0.9); }
+  14% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.08); }
 }
+
+#celebrate-fx .cfx-confetti,
+.mg-confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+#minigame-overlay .mg-confetti {
+  z-index: 4;
+}
+.cfx-bit {
+  position: absolute;
+  top: -12%;
+  left: var(--x, 50%);
+  width: var(--size, 8px);
+  height: calc(var(--size, 8px) * 0.55);
+  background: var(--c, #ffe08a);
+  opacity: 0;
+  animation: cfxConfettiFall var(--dur, 2s) cubic-bezier(0.22, 0.61, 0.36, 1) var(--delay, 0s) forwards;
+  will-change: transform, opacity;
+}
+.cfx-bit-square {
+  border-radius: 2px;
+  height: var(--size, 8px);
+}
+.cfx-bit-ribbon {
+  width: calc(var(--size, 8px) * 0.35);
+  height: calc(var(--size, 8px) * 1.6);
+  border-radius: 999px;
+}
+.cfx-bit-rect {
+  border-radius: 1px;
+}
+@keyframes cfxConfettiFall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -8vh, 0) rotate(0deg) scale(0.7);
+  }
+  8% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift, 40px), 110vh, 0) rotate(var(--spin, 540deg)) scale(1);
+  }
+}
+
 #celebrate-fx .cfx-sparkles {
   position: absolute;
-  inset: 18% 12%;
+  inset: 12% 8%;
   pointer-events: none;
+  z-index: 1;
 }
 #celebrate-fx .cfx-sparkles span {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--cfx, #ffe08a) 70%, #fff);
+  background: color-mix(in srgb, var(--cfx, #ffe08a) 75%, #fff);
   opacity: 0;
-  animation: cfxSpark 1.8s ease-out forwards;
-  box-shadow: 0 0 12px color-mix(in srgb, var(--cfx, #ffe08a) 45%, transparent);
+  animation: cfxSpark 2s ease-out forwards;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--cfx, #ffe08a) 50%, transparent);
 }
-#celebrate-fx .cfx-sparkles span:nth-child(1) { left: 12%; top: 28%; animation-delay: 0.05s; }
-#celebrate-fx .cfx-sparkles span:nth-child(2) { left: 78%; top: 22%; animation-delay: 0.12s; }
-#celebrate-fx .cfx-sparkles span:nth-child(3) { left: 22%; top: 68%; animation-delay: 0.18s; }
-#celebrate-fx .cfx-sparkles span:nth-child(4) { left: 70%; top: 62%; animation-delay: 0.24s; }
-#celebrate-fx .cfx-sparkles span:nth-child(5) { left: 48%; top: 16%; animation-delay: 0.1s; }
-#celebrate-fx .cfx-sparkles span:nth-child(6) { left: 54%; top: 74%; animation-delay: 0.28s; }
+#celebrate-fx .cfx-sparkles span:nth-child(1) { left: 10%; top: 26%; animation-delay: 0.04s; }
+#celebrate-fx .cfx-sparkles span:nth-child(2) { left: 82%; top: 20%; animation-delay: 0.1s; }
+#celebrate-fx .cfx-sparkles span:nth-child(3) { left: 18%; top: 70%; animation-delay: 0.16s; }
+#celebrate-fx .cfx-sparkles span:nth-child(4) { left: 74%; top: 64%; animation-delay: 0.22s; }
+#celebrate-fx .cfx-sparkles span:nth-child(5) { left: 46%; top: 12%; animation-delay: 0.08s; }
+#celebrate-fx .cfx-sparkles span:nth-child(6) { left: 56%; top: 78%; animation-delay: 0.26s; }
+#celebrate-fx .cfx-sparkles span:nth-child(7) { left: 28%; top: 40%; animation-delay: 0.14s; }
+#celebrate-fx .cfx-sparkles span:nth-child(8) { left: 66%; top: 36%; animation-delay: 0.2s; }
+#celebrate-fx .cfx-sparkles span:nth-child(9) { left: 8%; top: 52%; animation-delay: 0.3s; }
+#celebrate-fx .cfx-sparkles span:nth-child(10) { left: 90%; top: 48%; animation-delay: 0.18s; }
+#celebrate-fx .cfx-sparkles span:nth-child(11) { left: 38%; top: 58%; animation-delay: 0.12s; }
+#celebrate-fx .cfx-sparkles span:nth-child(12) { left: 60%; top: 24%; animation-delay: 0.28s; }
 @keyframes cfxSpark {
-  0% { opacity: 0; transform: translateY(6px) scale(0.4); }
-  25% { opacity: 0.85; transform: translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateY(-18px) scale(0.7); }
+  0% { opacity: 0; transform: translateY(8px) scale(0.35); }
+  22% { opacity: 1; transform: translateY(0) scale(1.15); }
+  100% { opacity: 0; transform: translateY(-28px) scale(0.6); }
 }
 #celebrate-fx .cfx-copy {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   text-align: center;
-  padding: 0.85rem 1.25rem;
-  border-radius: 10px;
-  background: color-mix(in srgb, #1a1612 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--cfx, #ffe08a) 35%, transparent);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
-  animation: cfxCopy 2s ease-out forwards;
-  max-width: min(88vw, 360px);
+  padding: 0.95rem 1.35rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, #1a1612 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cfx, #ffe08a) 42%, transparent);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.34),
+    0 0 28px color-mix(in srgb, var(--cfx, #ffe08a) 22%, transparent);
+  animation: cfxCopy 2.4s ease-out forwards;
+  max-width: min(90vw, 400px);
+}
+#celebrate-fx[data-variant="jackpot"] .cfx-copy {
+  animation-duration: 3s;
 }
 @keyframes cfxCopy {
-  0% { opacity: 0; transform: translateY(10px) scale(0.96); }
-  16% { opacity: 1; transform: translateY(0) scale(1); }
+  0% { opacity: 0; transform: translateY(14px) scale(0.92); }
+  12% { opacity: 1; transform: translateY(0) scale(1.04); }
+  22% { transform: translateY(0) scale(1); }
   78% { opacity: 1; }
-  100% { opacity: 0; transform: translateY(-6px); }
+  100% { opacity: 0; transform: translateY(-8px) scale(0.98); }
 }
 #celebrate-fx .cfx-title {
   font-family: var(--display);
-  font-size: clamp(1.15rem, 3.2vw, 1.55rem);
+  font-size: clamp(1.25rem, 3.6vw, 1.85rem);
   font-weight: 800;
   color: color-mix(in srgb, var(--cfx, #ffe08a) 82%, #fff);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--cfx, #ffe08a) 35%, transparent);
+}
+#celebrate-fx[data-variant="jackpot"] .cfx-title {
+  font-size: clamp(1.4rem, 4vw, 2.1rem);
 }
 #celebrate-fx .cfx-detail {
-  margin-top: 0.3rem;
-  font-size: 0.88rem;
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
   color: #f2e8d4;
-  opacity: 0.9;
+  opacity: 0.92;
 }

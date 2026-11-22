@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.22',
+    date: '2026-11-22',
+    items: [
+      'スロットなどの上役・当たり演出に紙吹雪を追加し、盛り上がりを強化',
+    ],
+  },
+  {
     version: '1.9.18',
     date: '2026-11-22',
     items: [
