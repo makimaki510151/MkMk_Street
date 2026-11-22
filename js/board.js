@@ -39,6 +39,15 @@ export const DEFAULT_GOAL = 10000;
 export const DEFAULT_CASH = 2200;
 export const DEFAULT_MAP_ID = 'central_cross';
 
+/** 株価は常に2桁に収める（1桁暴落・3桁高騰を防ぐ） */
+export const STOCK_PRICE_MIN = 10;
+export const STOCK_PRICE_MAX = 99;
+
+export function clampStockPrice(n) {
+  const v = Math.floor(Number(n) || 0);
+  return Math.max(STOCK_PRICE_MIN, Math.min(STOCK_PRICE_MAX, v));
+}
+
 function link(...pairs) {
   for (const [a, b] of pairs) {
     if (!a.nexts.includes(b.id)) a.nexts.push(b.id);
@@ -109,7 +118,8 @@ function buildAreas(nodes, areaOverrides = {}) {
       throw new Error(`エリア${a}のお店が${shops.length}件（上限${AREA_SHOP_MAX}）`);
     }
     const avg = shops.reduce((s, n) => s + n.basePrice, 0) / shops.length;
-    const targetStock = Math.max(1, Math.floor(avg / 10));
+    // 株価は常に2桁（10〜99G）。1桁暴落・3桁高騰を初期値でも出さない
+    const targetStock = clampStockPrice(Math.floor(avg / 10));
     const meta = { ...(AREA_META[a] || {}), ...(areaOverrides[a] || {}) };
     areas[a] = {
       B: Math.ceil((targetStock * 65536) / avg),

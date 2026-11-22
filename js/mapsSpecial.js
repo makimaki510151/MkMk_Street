@@ -85,7 +85,8 @@ function buildAreas(nodes, areaOverrides = {}, areaMeta = {}) {
       throw new Error(`エリア${a}のお店が${shops.length}件（上限${AREA_SHOP_MAX}）`);
     }
     const avg = shops.reduce((s, n) => s + n.basePrice, 0) / shops.length;
-    const targetStock = Math.max(1, Math.floor(avg / 10));
+    // board.js の STOCK_PRICE_MIN/MAX（10〜99）と同値。循環 import 回避のため直書き
+    const targetStock = Math.max(10, Math.min(99, Math.floor(avg / 10)));
     const meta = { ...(FALLBACK_AREA_META[a] || {}), ...(areaMeta[a] || {}), ...(areaOverrides[a] || {}) };
     areas[a] = {
       B: Math.ceil((targetStock * 65536) / avg),
