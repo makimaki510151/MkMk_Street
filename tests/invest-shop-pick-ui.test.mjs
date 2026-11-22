@@ -23,7 +23,7 @@ describe('invest shop pick UI', () => {
 
   it('uses a single scroll container inside shop-pick-modal', () => {
     assert.match(css, /#modal \.modal-card\.shop-pick-modal\s*\{[^}]*overflow:\s*hidden/s);
-    assert.match(css, /#modal \.modal-card\.shop-pick-modal \.shop-pick-scroll\s*,[\s\S]*?max-height:\s*none/s);
+    assert.match(css, /#modal \.modal-card\.shop-pick-modal \.pick-invest-list[\s\S]*?max-height:\s*none/s);
     assert.match(css, /\.shop-pick-area-head\s*\{[^}]*position:\s*sticky/s);
   });
 });
