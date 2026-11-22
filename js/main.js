@@ -4400,7 +4400,7 @@ function formatCoinPickLabel(pick) {
 }
 
 function formatHighLowPickLabel(pick) {
-  return pick === 'high' ? 'ハイ' : 'ロー';
+  return pick === 'high' ? '高' : '低';
 }
 
 /** 全員参加ミニゲームの共通結果一行（出目・着順など） */
@@ -4409,7 +4409,7 @@ function formatMinigameSharedLine(reveal) {
   const game = reveal?.game || '';
   if (game === 'guess_dice' && s.roll != null) return `出目 ${s.roll}`;
   if (game === 'high_low' && s.secret != null) {
-    return `数字 ${s.secret}（${s.band === 'high' ? 'ハイ' : 'ロー'}）`;
+    return `数字 ${s.secret}（${s.band === 'high' ? '高' : '低'}）`;
   }
   if (game === 'coin' && s.face) return s.face === 'heads' ? 'おもて' : 'うら';
   if (game === 'roulette' && s.spin != null) {
@@ -4961,7 +4961,7 @@ async function animateBalloonDashReveal(body, reveal) {
 async function animateHighLowReveal(body, reveal) {
   const secret = reveal.shared?.secret ?? reveal.outcome?.secret ?? 1;
   const bandRaw = reveal.shared?.band ?? reveal.outcome?.band;
-  const band = bandRaw === 'high' ? 'ハイ' : 'ロー';
+  const band = bandRaw === 'high' ? '高' : '低';
   const partyRows = (reveal.results || []).map((r) => ({
     name: r.playerName || '',
     color: r.playerColor || '#c4a574',
@@ -4980,7 +4980,7 @@ async function animateHighLowReveal(body, reveal) {
           <div class="mg-dice-pick-grid">
             ${partyRows.map((r) => `
               <div class="mg-dice-pick ${r.win ? 'is-win' : ''}" style="--pc:${escapeHtml(r.color)}" title="${escapeHtml(r.name)}">
-                <div class="mg-die mg-die-sm">${formatHighLowPickLabel(r.pick)}</div>
+                <div class="mg-die mg-die-sm mg-hl-face">${formatHighLowPickLabel(r.pick)}</div>
                 <span class="mg-dice-pick-name">${escapeHtml(r.name)}</span>
               </div>
             `).join('')}
@@ -7857,12 +7857,12 @@ function showChoiceModal(g) {
       });
     } else if (game === 'high_low') {
       body.innerHTML = `
-        <p class="modal-lead">次の数字はハイ？ ロー？${partyTag}</p>
-        <p class="hint">${partyHint ? `${partyHint} ` : ''}1〜10のうち、6以上がハイ・5以下がロー。</p>
+        <p class="modal-lead">次の数字は高？ 低？${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}1〜10のうち、6以上が高・5以下が低。</p>
         ${statusHtml}
         <div class="modal-actions">
-          <button class="btn primary" id="m-hi">ハイ（6〜10）</button>
-          <button class="btn" id="m-lo">ロー（1〜5）</button>
+          <button class="btn primary" id="m-hi">高（6〜10）</button>
+          <button class="btn" id="m-lo">低（1〜5）</button>
         </div>`;
       $('#m-hi').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'high' } }); };
       $('#m-lo').onclick = () => { hideModal(); sendAction({ type: 'choice', choice: { action: 'pick', value: 'low' } }); };
