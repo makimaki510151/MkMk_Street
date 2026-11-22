@@ -25,6 +25,10 @@
   --display: 'Syne', 'Zen Kaku Gothic New', sans-serif;
   --side-w: 340px;
   --ui-pad: 0.78rem;
+  --scroll-size: 8px;
+  --scroll-track: color-mix(in srgb, var(--bg0) 72%, var(--surface));
+  --scroll-thumb: color-mix(in srgb, var(--accent) 42%, var(--surface-2));
+  --scroll-thumb-hover: color-mix(in srgb, var(--accent-strong) 58%, var(--surface-2));
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -37,6 +41,37 @@ body {
     linear-gradient(180deg, rgba(232, 228, 220, 0.03), transparent 28%),
     linear-gradient(135deg, var(--bg0) 0%, var(--bg1) 55%, #182028 100%);
   overflow: hidden;
+}
+
+/* スクロールバー：暗いパネル＋金アクセントに合わせた細いレール */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+*::-webkit-scrollbar {
+  width: var(--scroll-size);
+  height: var(--scroll-size);
+}
+*::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+  border-radius: var(--radius-sm);
+}
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-strong) 35%, var(--scroll-thumb)),
+    var(--scroll-thumb)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-sm);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  border-color: color-mix(in srgb, var(--accent-strong) 45%, transparent);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--scroll-track);
 }
 
 button, input { font: inherit; }
@@ -1771,7 +1806,6 @@ body.your-turn #btn-roll:not(:disabled) {
   flex-direction: column;
   gap: 0.3rem;
   max-height: min(46vh, 320px);
-  scrollbar-width: thin;
 }
 .event-stamp {
   --eb: var(--accent);

@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.22',
+    date: '2026-11-22',
+    items: [
+      'スクロールバーの見た目をUIの暗いパネル／金アクセントに合わせて調整',
+    ],
+  },
+  {
     version: '1.9.19',
     date: '2026-11-22',
     items: [
