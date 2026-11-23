@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.39',
+    date: '2026-11-23',
+    items: [
+      '通行守りで買い物料0のときも、5倍買いの選択が出るよう修正',
+    ],
+  },
+  {
     version: '1.9.36',
     date: '2026-11-23',
     items: [

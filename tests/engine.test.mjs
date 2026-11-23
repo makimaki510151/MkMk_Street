@@ -2347,6 +2347,40 @@ describe('MkMk Street engine', () => {
     assert.equal(shop.owner, 0);
   });
 
+  it('toll shield zeros toll but still offers five_buy', () => {
+    const g = createGame({
+      players: [{ name: 'Payer', cash: 8000 }, { name: 'Owner', cash: 5000 }],
+      seed: 94,
+      cash: 8000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    shop.price = 200;
+    shop.basePrice = 200;
+    shop.baseToll = 120;
+    shop.extraInvest = 0;
+    shop.protectTurns = 0;
+    g.players[0].flags.tollShield = true;
+    const cashBefore = g.players[0].cash;
+    const ownerBefore = g.players[1].cash;
+
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+
+    assert.equal(g.players[0].flags.tollShield, false);
+    assert.equal(g.players[0].cash, cashBefore);
+    assert.equal(g.players[1].cash, ownerBefore);
+    assert.ok(g.logs.some((l) => /通行守り/.test(l.text)));
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'five_buy');
+    assert.equal(g.pending?.shopId, shop.id);
+    assert.equal(g.pending?.toll, 0);
+    assert.equal(g.pending?.price, shop.price * 5);
+  });
+
   it('five_buy success returns FX metadata for client sync', () => {
     const g = createGame({
       players: [{ name: 'A', cash: 5000 }, { name: 'B', cash: 5000 }],

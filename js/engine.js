@@ -2976,11 +2976,11 @@ function payToll(g, payer, sq) {
     return;
   }
 
-  // スクラッチ等の通行守り
+  // スクラッチ等の通行守り：買い物料は0にするが、5倍買いの選択は通常どおり出す
   if (payer.flags?.tollShield) {
     payer.flags.tollShield = false;
     addLog(g, `${payer.name} の通行守りで買い物料0！`, 'event');
-    endTurn(g);
+    offerFiveBuyOrEnd(g, payer, sq, 0);
     return;
   }
   // 家主側の買い物料アップ
