@@ -100,6 +100,11 @@ import {
   markOrderRollPlayerLeft,
 } from './orderRoll.js';
 import { isLocalPlayer, isMyTurnSeat } from './turnOwner.js';
+import {
+  clampModalDrag,
+  floatingModalMaxHeightPx,
+  MODAL_DRAG_MARGINS,
+} from './modalLayout.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -3022,7 +3027,10 @@ function enterGame() {
   const canvas = $('#board');
   app.renderer = createRenderer(canvas);
   app.renderer.resize();
-  window.addEventListener('resize', () => app.renderer?.resize());
+  window.addEventListener('resize', () => {
+    app.renderer?.resize();
+    if (app.modalDrag) applyModalPosition();
+  });
   app.renderer.startLoop(() => ({
     game: app.game,
     hideDiceResult: !!app.hideDiceResult,
@@ -3371,6 +3379,19 @@ function applyModalPosition() {
   const card = $('#modal-card');
   if (!card) return;
   if (app.modalDrag) {
+    // 端寄せした小さいカードの座標を、大きい増資モーダル等でも画面内に収める
+    const maxH = floatingModalMaxHeightPx(window.innerHeight, MODAL_DRAG_MARGINS);
+    card.style.maxHeight = `${maxH}px`;
+    const w = card.offsetWidth || 320;
+    const h = card.offsetHeight || 200;
+    const next = clampModalDrag(
+      app.modalDrag,
+      { w, h },
+      { w: window.innerWidth, h: window.innerHeight },
+      MODAL_DRAG_MARGINS,
+    );
+    app.modalDrag.x = next.x;
+    app.modalDrag.y = next.y;
     card.style.position = 'fixed';
     card.style.left = `${app.modalDrag.x}px`;
     card.style.top = `${app.modalDrag.y}px`;
@@ -3380,7 +3401,16 @@ function applyModalPosition() {
     card.style.left = '';
     card.style.top = '';
     card.style.margin = '';
+    card.style.maxHeight = '';
   }
+}
+
+/** コンテンツ差し替え後にサイズが変わっても端からのはみ出しを直す */
+function scheduleModalLayoutClamp() {
+  requestAnimationFrame(() => {
+    if (!app.modalActive || app.modalMode === 'hidden' || !app.modalDrag) return;
+    applyModalPosition();
+  });
 }
 
 function applyModalMode() {
@@ -3433,8 +3463,14 @@ function bindModalDrag() {
     if (!dragging || !app.modalDrag) return;
     const w = card.offsetWidth || 320;
     const h = card.offsetHeight || 200;
-    app.modalDrag.x = Math.max(8, Math.min(window.innerWidth - w - 8, origX + e.clientX - startX));
-    app.modalDrag.y = Math.max(52, Math.min(window.innerHeight - h - 8, origY + e.clientY - startY));
+    const next = clampModalDrag(
+      { x: origX + e.clientX - startX, y: origY + e.clientY - startY },
+      { w, h },
+      { w: window.innerWidth, h: window.innerHeight },
+      MODAL_DRAG_MARGINS,
+    );
+    app.modalDrag.x = next.x;
+    app.modalDrag.y = next.y;
     applyModalPosition();
   });
 
@@ -7421,6 +7457,7 @@ function showChoiceModal(g) {
   const fp = modalContentKey(g, pend) || pendingFingerprint(pend);
   if (fp && fp === app.modalPendingKey && !modal.hidden && body?.childNodes?.length) {
     applyModalMode();
+    scheduleModalLayoutClamp();
     return;
   }
   const drafts = (!modal.hidden && body?.childNodes?.length)
@@ -7439,6 +7476,7 @@ function showChoiceModal(g) {
   $('#modal-card').classList.remove('shop-pick-modal');
   hideForkRails();
 
+  try {
   if (pend.type === 'fork') {
     title.textContent = `どちらへ進む？（残り${pend.stepsLeft}マス）`;
     $('#modal-card').classList.add('fork-hint-only');
@@ -8928,6 +8966,9 @@ function showChoiceModal(g) {
   }
 
   $('#modal-card').classList.remove('wide');
+  } finally {
+    scheduleModalLayoutClamp();
+  }
 }
 
 function hideModal() {
@@ -8939,10 +8980,11 @@ function hideModal() {
   $('#btn-modal-restore').hidden = true;
   hideForkRails();
   const card = $('#modal-card');
-  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'raise-modal', 'wide');
+  card?.classList.remove('fork-hint-only', 'scratch-modal', 'stock-modal', 'raise-modal', 'wide', 'shop-pick-modal');
+  if (card) card.style.maxHeight = '';
   const body = $('#modal-body');
   if (body) body.innerHTML = '';
-  $('#modal')?.classList.remove('centered');
+  $('#modal')?.classList.remove('centered', 'floating');
   app.renderer?.clearStockHighlight();
   app.renderer?.clearInvestHighlight();
   app.renderer?.clearShopPickHighlight?.();
