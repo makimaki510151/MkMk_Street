@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.34',
+    date: '2026-11-23',
+    items: [
+      'CPUがLv3〜4まではマーク集めと銀行レベルアップを優先するよう強化（昇進賞金で資本を伸ばす）',
+    ],
+  },
+  {
     version: '1.9.33',
     date: '2026-11-23',
     items: [
