@@ -6049,7 +6049,7 @@ export function cpuScoreForkPath(g, p, fromId, nextId) {
   return scoreForkPath(g, p, fromId, nextId, traits, focus, phase);
 }
 
-function cpuPickFork(g, p, options) {
+export function cpuPickFork(g, p, options) {
   if (!options?.length) return null;
   const traits = getCpuPersonality(p);
   const focus = cpuFocusAreas(g, p, traits);
@@ -6065,6 +6065,16 @@ function cpuPickFork(g, p, options) {
     }
   }
   return best?.id ?? null;
+}
+
+/** CPU の分岐先だけ返す（chooseFork はしない）。UI は resolveForkChoice に委譲する */
+export function cpuChooseForkId(g) {
+  if (g.phase !== 'await_fork' || g.pending?.type !== 'fork') return null;
+  const p = currentPlayer(g);
+  const opts = g.pending.options || [];
+  let nextId = cpuPickFork(g, p, opts);
+  if (nextId == null) nextId = opts[0]?.id;
+  return nextId ?? null;
 }
 
 export function cpuShouldBuyShop(g, p, sq, traits = getCpuPersonality(p)) {

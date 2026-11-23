@@ -17,6 +17,7 @@ import {
   sumShopPrices,
   defaultShopTradeCashDelta,
   cpuAct,
+  cpuChooseForkId,
   currentPlayer,
   getPlayerAssets,
   buildGameResults,
@@ -1777,6 +1778,12 @@ function playRemoteFx(data) {
       clearBusyUnlessEventUi();
       refreshGameUI();
     });
+  }
+  if (data.kind === 'step' && data.from != null && data.to != null) {
+    // スイッチ／ワープ直前など、state を遅延する着地ステップ用
+    const dur = Number(data.dur) || 380;
+    app.renderer?.animateToken(data.pid, data.from, data.to, dur);
+    audio.sfx.step();
   }
   if (data.kind === 'switchSlide' && data.moves?.length) {
     // 先にスライド予約 → その後に論理座標を更新（一瞬の新位置フラッシュを防ぐ）
@@ -3913,7 +3920,10 @@ async function applyLocalAction(action) {
     try {
       const result = applyChoice(app.game, action.choice);
       if (!result.ok) {
-        if (result.state) commitGameState(result.state);
+        if (result.state) {
+          commitGameState(result.state);
+          syncState();
+        }
         toast(choiceErrorMessage(result.error));
         refreshGameUI();
         return;
@@ -3946,7 +3956,8 @@ async function applyLocalAction(action) {
         await presentPotionReveal(result);
       }
       if ((pend.type === 'stock' || pend.type === 'level_up') && action.choice.action === 'buy') audio.sfx.buy();
-      syncState();
+      // ワープ／スクラッチ後は NPC 待ちに埋もれないよう force
+      syncState(result.warps?.length || result.scratched ? { forceNpcSync: true } : {});
       refreshGameUI();
 
       // 銀行通過後：進行方向選択 or 移動再開
@@ -4014,6 +4025,8 @@ async function resolveForkChoice(nextId) {
   app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
+  // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く
+  holdSwitchTilesAtFrom(result.switchMoves);
   // 門／階層へ分岐したときは入口まで歩かせ、warps で飛ばす
   const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
     ?? result.warps?.[0]?.from;
@@ -4021,21 +4034,40 @@ async function resolveForkChoice(nextId) {
   if (result.warps?.length) armWarpHolds(result.warps);
   app.renderer?.animateToken(pid, from, stepTo, 400);
   audio.sfx.step();
-  if (!result.warps?.length) {
-    syncState({ anim: { pid, from, to: stepTo } });
-  }
+  // 盤面切替／ワープ中は最終 state を遅延。着地コマは step FX で先送り
+  syncLandStep(pid, from, stepTo, {
+    deferBoard: !!(result.warps?.length || (result.done && result.switchMoves?.length)),
+  });
   refreshGameUI();
   await wait(result.warps?.length ? 400 : 420);
-  if (result.warps?.length) {
-    await presentWarpFx(result.warps);
-    syncState();
-    refreshGameUI();
-  }
   if (result.done) {
     onLandingSfx();
-    if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
+    const landed = app.game.players[pid]?.pos;
+    if (landed != null) app.inspectedId = landed;
+    // ワープとスイッチはまとめて演出し、途中 sync しない（盤面フラッシュ防止）
+    if (result.switchMoves?.length) {
+      await presentSwitchFx(result.switchMoves);
+    } else if (landed != null && getNode(app.game, landed)?.type === 'switch') {
+      pushEventStamp({
+        kicker: 'スイッチ',
+        title: '航路が切り替わった',
+        detail: '経路が切り替わった',
+        kind: 'system',
+        color: '#ffe08a',
+        silentStamp: true,
+      });
+      toast('航路が切り替わった');
+    }
+    if (result.warps?.length) await presentWarpFx(result.warps);
+    syncState({ forceNpcSync: true });
+    refreshGameUI();
     await resumeAfterMovement();
   } else {
+    if (result.warps?.length) {
+      await presentWarpFx(result.warps);
+      syncState({ forceNpcSync: true });
+      refreshGameUI();
+    }
     await continueAdvancing();
     await resumeAfterMovement();
   }
@@ -4077,6 +4109,37 @@ function armSwitchSlides(moves, dur = 780) {
   }
 }
 
+/** スイッチ切替直後、スライド開始まで動くマスを from 座標に据え置く */
+function holdSwitchTilesAtFrom(moves) {
+  if (!moves?.length || !app.game) return;
+  for (const m of moves) {
+    if (!m || m.id == null || !m.from) continue;
+    const node = app.game.map.find((n) => n.id === m.id);
+    if (node) {
+      node.col = m.from.col;
+      node.row = m.from.row;
+    }
+  }
+}
+
+/**
+ * 着地／1歩のゲスト同期。
+ * 盤面演出や NPC 演出で state を遅延する場合は step FX だけ先に送り、
+ * flush 時の anim 二重再生を避ける。
+ */
+function syncLandStep(pid, from, to, { deferBoard = false } = {}) {
+  const npcPending = !!(app.pendingEventNpcFx?.length);
+  if (deferBoard || npcPending) {
+    broadcastFx({ kind: 'step', pid, from, to, dur: 400 });
+    if (!deferBoard) {
+      // NPC 待ち：anim 無しで遅延マークだけ残し、flush で force 同期
+      syncState({});
+    }
+    return;
+  }
+  syncState({ anim: { pid, from, to } });
+}
+
 async function continueAdvancing() {
   app.deferEventFlash = true;
   while (app.game?.move && app.game.phase === 'moving') {
@@ -4087,20 +4150,11 @@ async function continueAdvancing() {
     if (result.state) commitGameState(result.state);
     // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く。
     // presentSwitchFx が to へ戻してからスライドを開始する（瞬時切替→巻き戻り防止）。
-    if (result.switchMoves?.length) {
-      for (const m of result.switchMoves) {
-        if (!m || m.id == null || !m.from) continue;
-        const node = app.game.map.find((n) => n.id === m.id);
-        if (node) {
-          node.col = m.from.col;
-          node.row = m.from.row;
-        }
-      }
-    }
+    holdSwitchTilesAtFrom(result.switchMoves);
 
     if (result.forked) {
       audio.sfx.fork();
-      syncState();
+      syncState({ forceNpcSync: true });
       refreshGameUI();
       return;
     }
@@ -4113,11 +4167,10 @@ async function continueAdvancing() {
       if (result.warps?.length) armWarpHolds(result.warps);
       app.renderer?.animateToken(pid, result.from ?? from, stepTo, 400);
       audio.sfx.step();
-      // スイッチ／ワープがある場合、新座標の state 同期を演出後に回す
-      // （ゲストが一瞬新位置→スライド／ワープ開始の巻き戻りフラッシュを見ないように）
-      if (!(result.warps?.length || (result.done && result.switchMoves?.length))) {
-        syncState({ anim: { pid, from: result.from ?? from, to: stepTo } });
-      }
+      // スイッチ／ワープ／NPC待ちでは最終 state を遅延し、コマだけ step FX で先送り
+      syncLandStep(pid, result.from ?? from, stepTo, {
+        deferBoard: !!(result.warps?.length || (result.done && result.switchMoves?.length)),
+      });
       refreshGameUI();
       // ワープへ繋ぐときはステップ完了と同時に演出開始（ホールド隙間を作らない）
       await wait(result.warps?.length ? 400 : 420);
@@ -4125,7 +4178,7 @@ async function continueAdvancing() {
 
     // 銀行通過割込み（昇進→株→方向）
     if (result.bankInterrupt || app.game.phase === 'await_choice') {
-      syncState();
+      syncState({ forceNpcSync: true });
       refreshGameUI();
       return;
     }
@@ -4133,7 +4186,7 @@ async function continueAdvancing() {
     // 門／階層など残移動ありの途中ワープは、ここで即演出してから歩き続ける
     if (result.warps?.length && !result.done) {
       await presentWarpFx(result.warps);
-      syncState();
+      syncState({ forceNpcSync: true });
       refreshGameUI();
     }
 
@@ -4157,13 +4210,13 @@ async function continueAdvancing() {
         toast('航路が切り替わった');
       }
       if (result.warps?.length) await presentWarpFx(result.warps);
-      // スイッチ時は演出後にまとめて同期（途中同期だとゲストが瞬時切替→巻き戻りする）
-      syncState();
+      // 演出後は必ず force（NPC待ちで着地 pos / switchState が遅れないように）
+      syncState({ forceNpcSync: true });
       refreshGameUI();
       return;
     }
   }
-  syncState();
+  syncState({ forceNpcSync: true });
   refreshGameUI();
 }
 
@@ -4238,12 +4291,14 @@ function armEventNpcMoveHolds(fxList) {
 async function flushPendingEventNpcFx() {
   const fx = app.pendingEventNpcFx || [];
   app.pendingEventNpcFx = [];
-  if (!fx.length) return;
-  await presentEventNpcFx(fx);
-  // 演出完了後に遅延していた state と合わせて同期
+  const hadDeferred = app.deferredStateExtra != null;
   const extra = app.deferredStateExtra || {};
   app.deferredStateExtra = null;
-  syncState({ ...extra, forceNpcSync: true });
+  if (fx.length) await presentEventNpcFx(fx);
+  // 演出が空でも遅延 extra が残っていれば必ず配信（force sync 後の取りこぼし防止）
+  if (fx.length || hadDeferred) {
+    syncState({ ...extra, forceNpcSync: true });
+  }
 }
 
 async function presentEventNpcFx(fxList, remote = false) {
@@ -5726,7 +5781,7 @@ async function handleHostAction(from, data) {
       if (result.potionReveal) {
         await presentPotionReveal(result);
       }
-      syncState();
+      syncState(result.warps?.length || result.scratched ? { forceNpcSync: true } : {});
       refreshGameUI();
       if (result.resumeMove || (app.game.phase === 'moving' && app.game.move)) {
         app.busy = true;
@@ -5772,6 +5827,8 @@ function syncState(extra = {}) {
     return;
   }
   const { forceNpcSync: _force, ...rest } = extra;
+  // 成功配信時は遅延 extra を破棄（古い anim が flush で二重再生されないように）
+  app.deferredStateExtra = null;
   app.net.broadcast({ type: 'state', state: serializeState(app.game), ...rest });
 }
 
@@ -5846,36 +5903,24 @@ function scheduleCpu() {
     }
 
     if (phase === 'await_fork') {
-      let result = cpuAct(app.game);
-      // cpuAct 失敗で return すると分岐待ちのまま永久停止するため、先頭候補で再試行
-      if (!result?.ok) {
+      // 人間と同じ resolveForkChoice 経路へ（ワープ／スイッチ演出と sync を共通化）
+      let nextId = cpuChooseForkId(app.game);
+      if (nextId == null) {
         const opts = app.game.pending?.options;
-        if (app.game.pending?.type === 'fork' && opts?.length) {
-          result = chooseFork(app.game, opts[0].id);
-        }
+        nextId = opts?.[0]?.id ?? null;
       }
-      if (!result?.ok) {
-        syncState();
+      if (nextId == null) {
+        syncState({ forceNpcSync: true });
         refreshGameUI();
         if (clearBusyUnlessEventUi()) scheduleCpu();
         return;
       }
-      const pid = app.game.currentPlayerIdx;
-      // chooseFork already applied in cpuAct
-      if (result.state) commitGameState(result.state);
-      if (result.stepped) {
-        app.busy = true;
-        app.deferEventFlash = true;
-        app.renderer?.animateToken(pid, result.from, result.to, 400);
-        audio.sfx.step();
-        syncState({ anim: { pid, from: result.from, to: result.to } });
-        refreshGameUI();
-        await wait(420);
-        await continueAdvancing();
-        await resumeAfterMovement();
-      } else {
-        refreshGameUI();
-        if (clearBusyUnlessEventUi()) scheduleCpu();
+      if (app.forkResolving) return;
+      app.forkResolving = true;
+      try {
+        await resolveForkChoice(nextId);
+      } finally {
+        app.forkResolving = false;
       }
       return;
     }
@@ -5894,7 +5939,7 @@ function scheduleCpu() {
       if (result?.reveal) {
         await presentMinigameResult(result);
       }
-      syncState();
+      syncState(result?.warps?.length || result?.scratched ? { forceNpcSync: true } : {});
       refreshGameUI();
       // null / !ok で pending が残る場合は再スケジュールすると同じ失敗を繰り返す。
       // cpuAct 側で escape 済みであることが前提。未解消なら短遅延で再試行（最大は busy 外）。
