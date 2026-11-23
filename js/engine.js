@@ -107,9 +107,9 @@ export const CPU_PERSONALITIES = {
     stockBudget: 0.22,
     vacant: 4.2,
     ownArea: 2.55,
-    enemyToll: -2.9,
-    bank: 0.7,
-    mark: 1.55,
+    enemyToll: -2.45,
+    bank: 1.15,
+    mark: 2.2,
     stockbroker: 0.3,
     scratch: 0.4,
     minigame: 0.45,
@@ -122,9 +122,9 @@ export const CPU_PERSONALITIES = {
     stockBudget: 0.64,
     vacant: 2.1,
     ownArea: 1.55,
-    enemyToll: -3.35,
-    bank: 1.75,
-    mark: 1.35,
+    enemyToll: -2.8,
+    bank: 2.0,
+    mark: 1.95,
     stockbroker: 2.85,
     scratch: 0.45,
     minigame: 0.4,
@@ -137,9 +137,9 @@ export const CPU_PERSONALITIES = {
     stockBudget: 0.3,
     vacant: 3.0,
     ownArea: 3.9,
-    enemyToll: -2.55,
-    bank: 1.0,
-    mark: 1.85,
+    enemyToll: -2.2,
+    bank: 1.4,
+    mark: 2.4,
     stockbroker: 0.95,
     scratch: 0.8,
     minigame: 0.55,
@@ -152,9 +152,9 @@ export const CPU_PERSONALITIES = {
     stockBudget: 0.28,
     vacant: 2.4,
     ownArea: 1.35,
-    enemyToll: -1.85,
-    bank: 0.55,
-    mark: 3.1,
+    enemyToll: -1.6,
+    bank: 1.1,
+    mark: 3.4,
     stockbroker: 0.4,
     scratch: 2.4,
     minigame: 2.2,
@@ -166,6 +166,29 @@ export function getCpuPersonality(p) {
     ? p.personality
     : CPU_PERSONALITY_KEYS[(p?.id || 0) % CPU_PERSONALITY_KEYS.length];
   return { key, ...CPU_PERSONALITIES[key] };
+}
+
+/**
+ * マーク集め／銀行レベルアップ志向。
+ * Lv3〜4までは昇進賞金で資本を伸ばすのが強いので climbUrgency を高くする。
+ */
+export function cpuPromotionDrive(p) {
+  const level = Math.max(1, Number(p?.level) || 1);
+  const missing = (p?.marks || []).filter((m) => !m).length;
+  const wild = getWildcardCount(p);
+  const canLevel = missing === 0 || wild >= missing;
+  const needMarks = missing > 0 && wild < missing;
+  // Lv1–2: 最大、Lv3: 強、Lv4: 中、Lv5+: 弱（物件・株へシフト）
+  const climbUrgency = level <= 2 ? 1 : level === 3 ? 0.92 : level === 4 ? 0.58 : 0.18;
+  return {
+    level,
+    missing,
+    wild,
+    canLevel,
+    needMarks,
+    earlyClimb: level <= 4,
+    climbUrgency,
+  };
 }
 
 /**
@@ -5789,7 +5812,7 @@ export function cpuFocusAreas(g, p, traits = getCpuPersonality(p)) {
 }
 
 /** from→target の前方最短距離（分岐込み BFS） */
-function cpuForwardDist(g, from, prev, target, limit = 28) {
+export function cpuForwardDist(g, from, prev, target, limit = 28) {
   if (from === target) return 0;
   const seen = new Set([`${from}:${prev ?? -1}`]);
   const q = [{ id: from, prev, d: 0 }];
@@ -5807,12 +5830,19 @@ function cpuForwardDist(g, from, prev, target, limit = 28) {
   return limit + 1;
 }
 
-/** 欠けマーク／suit_fill までの最短距離 */
-function cpuDistToMissingMark(g, from, prev, p, limit = 28) {
+/** 欠けマーク／suit_fill までの最短距離（開始マス自身も含む） */
+export function cpuDistToMissingMark(g, from, prev, p, limit = 28) {
   const missing = [];
   for (let i = 0; i < 4; i++) if (!p.marks?.[i]) missing.push(i);
-  if (!missing.length && (Number(p.wildcards) || 0) > 0) return limit + 1;
+  if (!missing.length) return limit + 1;
   const want = new Set(missing);
+  const isWantedMark = (node) => {
+    if (!node) return false;
+    if (node.type === 'suit_fill') return true;
+    if (node.type === 'mark') return want.has(node.mark ?? node.suit);
+    return false;
+  };
+  if (isWantedMark(getNode(g, from))) return 0;
   const seen = new Set([`${from}:${prev ?? -1}`]);
   const q = [{ id: from, prev, d: 0 }];
   while (q.length) {
@@ -5821,9 +5851,7 @@ function cpuDistToMissingMark(g, from, prev, p, limit = 28) {
     for (const nid of getForwardNexts(g, cur.id, cur.prev)) {
       const key = `${nid}:${cur.id}`;
       if (seen.has(key)) continue;
-      const node = getNode(g, nid);
-      if (node?.type === 'suit_fill') return cur.d + 1;
-      if (node?.type === 'mark' && (want.size === 0 || want.has(node.suit))) return cur.d + 1;
+      if (isWantedMark(getNode(g, nid))) return cur.d + 1;
       seen.add(key);
       q.push({ id: nid, prev: cur.id, d: cur.d + 1 });
     }
@@ -5834,19 +5862,23 @@ function cpuDistToMissingMark(g, from, prev, p, limit = 28) {
 function scoreNodeForCpu(g, p, node, traits, focus, phase) {
   if (!node) return 0;
   const inFocus = focus.includes(node.area);
+  const drive = cpuPromotionDrive(p);
+  const climb = drive.climbUrgency;
   let s = 0;
   if (node.type === 'shop') {
     if (node.owner < 0) {
-      s += traits.vacant * (inFocus ? 1.65 : 1);
+      // 序盤昇進フェーズは空き店をやや抑えてマーク／銀行を優先
+      const vacantScale = drive.earlyClimb ? (1 - climb * 0.28) : 1;
+      s += traits.vacant * (inFocus ? 1.65 : 1) * vacantScale;
       const cnt = getPlayerAreaCount(g, p.id, node.area);
-      s += cnt * 1.45 * traits.ownArea * (inFocus ? 1.35 : 1);
+      s += cnt * 1.45 * traits.ownArea * (inFocus ? 1.35 : 1) * vacantScale;
       if (cnt >= 2) s += 3.2 * traits.ownArea;
       const shops = getAreaShops(g, node.area);
       const vacantLeft = shops.filter((x) => x.owner < 0).length;
       if (cnt >= 1 && vacantLeft <= 2) s += 1.6 * traits.ownArea;
       if (cnt + 1 >= shops.length && vacantLeft <= 1) s += 4.5 * traits.ownArea;
-      if (inFocus) s += 2.0 * traits.ownArea;
-      s += cpuShopTrafficScore(g, node) * (phase.lethal ? 0.15 : 0.85);
+      if (inFocus) s += 2.0 * traits.ownArea * vacantScale;
+      s += cpuShopTrafficScore(g, node) * (phase.lethal ? 0.15 : 0.85) * vacantScale;
       if (phase.lethal || phase.closing) s *= 0.15;
     } else if (node.owner === p.id) {
       s += 1.15 * traits.ownArea * (inFocus ? 1.4 : 1);
@@ -5858,32 +5890,47 @@ function scoreNodeForCpu(g, p, node, traits, focus, phase) {
       let pressure = p.cash < reserve ? 2.8 : (p.cash < reserve * 1.5 ? 1.6 : 1);
       if (phase.leading) pressure *= 1.25;
       if (phase.nearGoal || phase.lethal) pressure *= 1.55;
-      s += traits.enemyToll * pressure * Math.min(6, toll / 70);
-      if (toll >= p.cash) s -= 8 * pressure;
-      if (hasAreaMonopoly(g, node.owner, node.area)) s -= 2.8 * pressure;
+      // 昇進狙い中は中程度の通行料リスクを許容（破産級は除く）
+      if ((drive.needMarks || drive.canLevel) && climb > 0.3) {
+        pressure *= p.cash >= toll * 1.35 ? (1 - climb * 0.45) : (1 - climb * 0.22);
+      }
+      let tollPen = traits.enemyToll * pressure * Math.min(6, toll / 70);
+      if (toll >= p.cash) {
+        s += tollPen - 8 * pressure;
+      } else {
+        if ((drive.needMarks || drive.canLevel) && climb > 0.3) tollPen *= (1 - climb * 0.4);
+        s += tollPen;
+      }
+      if (hasAreaMonopoly(g, node.owner, node.area)) {
+        s -= 2.8 * pressure * ((drive.needMarks || drive.canLevel) && climb > 0.3 ? 0.65 : 1);
+      }
       if (phase.lethal) s -= 4 * pressure;
     }
   } else if (node.type === 'bank') {
     let bank = traits.bank;
+    // 昇進可能なら銀行を強く狙う（特に Lv≦4）
+    if (drive.canLevel) bank *= 1.6 + climb * 2.4;
+    else if (drive.needMarks) bank *= 1.1 + climb * 0.35;
+    else bank *= 1.15;
     if (phase.nearGoal) bank *= 2.6;
     if (phase.closing) bank *= 1.8;
     if (phase.lethal) bank *= 5.5;
     if (phase.trailing && traits.key === 'broker') bank *= 1.3;
     s += bank;
   } else if (node.type === 'mark' || node.type === 'suit_fill') {
-    const missing = (p.marks || []).filter((m) => !m).length;
-    const needLvl = missing > 0 || (Number(p.wildcards) || 0) === 0;
-    let markBoost = traits.mark * (needLvl ? 1.85 : 1);
-    if (missing >= 3) markBoost *= 1.55;
-    else if (missing >= 2) markBoost *= 1.3;
-    else if (missing >= 1) markBoost *= 1.15;
+    const { missing, needMarks } = drive;
+    let markBoost = traits.mark * (needMarks ? 1.7 + climb * 1.1 : 1.0);
+    if (missing >= 3) markBoost *= 1.55 + climb * 0.35;
+    else if (missing >= 2) markBoost *= 1.35 + climb * 0.25;
+    else if (missing >= 1) markBoost *= 1.2 + climb * 0.15;
     if (phase.trailing) markBoost *= 1.25;
     if (traits.key === 'gambler' && phase.trailing) markBoost *= 1.2;
-    if (phase.lethal) markBoost *= 0.25;
+    if (phase.lethal) markBoost *= needMarks ? 0.5 : 0.25;
     s += markBoost;
   } else if (node.type === 'stockbroker') {
-    // ゴール直前は資産調整のため証券も評価
     let sb = traits.stockbroker * (phase.nearGoal && !phase.lethal ? 1.15 : 1);
+    // 序盤昇進中は証券を抑える
+    if (drive.earlyClimb) sb *= 1 - climb * 0.45;
     if (phase.lethal) sb *= 0.35;
     s += sb;
   } else if (node.type === 'scratch' || node.type === 'event') {
@@ -5899,6 +5946,8 @@ function scoreNodeForCpu(g, p, node, traits, focus, phase) {
 }
 
 function scoreForkPath(g, p, fromId, nextId, traits, focus, phase) {
+  const drive = cpuPromotionDrive(p);
+  const climb = drive.climbUrgency;
   let score = 0;
   let cur = nextId;
   let prev = fromId;
@@ -5919,20 +5968,37 @@ function scoreForkPath(g, p, fromId, nextId, traits, focus, phase) {
     prev = cur;
     cur = best;
   }
-  // マーク最短／銀行最短を動的に加点
+  // マーク最短／銀行最短を動的に加点（Lv≦4 の昇進を重視）
   const bankDist = cpuForwardDist(g, nextId, fromId, g.startId, 30);
   if (phase.lethal || phase.closing) {
     score += Math.max(0, 22 - bankDist) * (phase.lethal ? 2.8 : 1.4);
+  } else if (drive.canLevel) {
+    score += Math.max(0, 22 - bankDist) * (1.2 + climb * 1.5) * Math.max(0.8, traits.bank);
   } else if (phase.nearGoal) {
-    score += Math.max(0, 18 - bankDist) * 0.7;
+    score += Math.max(0, 18 - bankDist) * 0.85;
+  } else if (drive.earlyClimb) {
+    score += Math.max(0, 14 - bankDist) * (0.35 + climb * 0.45) * Math.max(0.7, traits.bank);
   }
   const markDist = cpuDistToMissingMark(g, nextId, fromId, p, 30);
-  if (!phase.lethal && markDist <= 30) {
+  if (drive.needMarks && markDist <= 30) {
+    const w = phase.lethal ? 0.4 : (0.7 + climb * 0.85);
+    score += Math.max(0, 22 - markDist) * traits.mark * w;
+    if (markDist <= 8) score += (2.5 + climb * 3) * traits.mark;
+    if (markDist <= 4) score += (3 + climb * 3.5) * traits.mark;
+  } else if (!phase.lethal && markDist <= 30) {
     score += Math.max(0, 16 - markDist) * traits.mark * 0.55;
   }
   const jitter = traits.key === 'gambler' ? 0.55 : 0.12;
   score += cpuNoise(g, p, nextId + 11) * jitter;
   return score;
+}
+
+/** 分岐候補のスコア（テスト／デバッグ用） */
+export function cpuScoreForkPath(g, p, fromId, nextId) {
+  const traits = getCpuPersonality(p);
+  const focus = cpuFocusAreas(g, p, traits);
+  const phase = cpuGamePhase(g, p);
+  return scoreForkPath(g, p, fromId, nextId, traits, focus, phase);
 }
 
 function cpuPickFork(g, p, options) {
