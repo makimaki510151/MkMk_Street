@@ -4583,8 +4583,8 @@ button.pc-flag.peek-on {
     grid-row: 3;
     display: flex;
     flex-direction: column;
-    gap: 0.32rem;
-    padding: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    gap: 0.22rem;
+    padding: 0.28rem 0.45rem calc(0.3rem + env(safe-area-inset-bottom, 0px));
     background: color-mix(in srgb, var(--bg0) 94%, #000);
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
   }
@@ -4625,10 +4625,10 @@ button.pc-flag.peek-on {
     flex: 0 0 auto;
     display: grid;
     grid-template-columns: auto auto;
-    gap: 0.05rem 0.3rem;
+    gap: 0.02rem 0.28rem;
     align-items: center;
     min-width: 4.4rem;
-    padding: 0.22rem 0.4rem;
+    padding: 0.16rem 0.34rem;
     border-radius: var(--radius-sm);
     border: 1px solid color-mix(in srgb, var(--pc) 45%, var(--line));
     background: color-mix(in srgb, var(--pc) 12%, var(--surface));
@@ -4667,8 +4667,8 @@ button.pc-flag.peek-on {
     gap: 0.3rem;
   }
   .mobile-info-btn {
-    padding: 0.36rem 0.25rem;
-    font-size: 0.72rem;
+    padding: 0.28rem 0.2rem;
+    font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     color: var(--muted);
@@ -4683,17 +4683,17 @@ button.pc-flag.peek-on {
     background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   }
 
-  .side-controls .dice-row { gap: 0.4rem; }
+  .side-controls .dice-row { gap: 0.35rem; }
   .side-controls #dice-face {
-    width: 2.5rem;
-    height: 2.5rem;
-    font-size: 1.25rem;
+    width: 2.35rem;
+    height: 2.35rem;
+    font-size: 1.15rem;
   }
   .side-controls #btn-roll {
     flex: 1;
-    min-height: 2.5rem;
-    font-size: 0.9rem;
-    padding: 0.55rem 0.7rem;
+    min-height: 2.35rem;
+    font-size: 0.88rem;
+    padding: 0.45rem 0.6rem;
   }
 
   .side-backdrop {
@@ -4777,29 +4777,38 @@ button.pc-flag.peek-on {
   #event-feed { max-height: min(32vh, 220px); }
 
   #modal {
-    padding: 0 0.5rem calc(7.5rem + env(safe-area-inset-bottom, 0px)) 0.5rem;
+    padding: 0 0.5rem calc(6.2rem + env(safe-area-inset-bottom, 0px)) 0.5rem;
     place-items: end end;
   }
+  /* #modal.floating の 100dvh-60px より詳細度を上げて縦伸びを防ぐ */
   #modal .modal-card,
-  #modal .modal-card.stock-modal {
+  #modal .modal-card.stock-modal,
+  #modal.floating .modal-card,
+  #modal.floating .modal-card.wide,
+  #modal.floating .modal-card.stock-modal {
     width: min(360px, 96vw);
+    max-width: calc(100vw - 16px);
     max-height: min(48vh, 420px);
   }
-  #modal .modal-card.shop-pick-modal {
+  #modal .modal-card.shop-pick-modal,
+  #modal .modal-card.raise-modal,
+  #modal.floating .modal-card.shop-pick-modal,
+  #modal.floating .modal-card.raise-modal {
     width: min(360px, 96vw);
+    max-width: calc(100vw - 16px);
     max-height: min(58vh, 520px);
   }
   #modal.centered .modal-card.scratch-modal {
-    width: min(96vw, 520px);
-    max-height: 96vh;
-    padding: 0.55rem 0.6rem 0.5rem;
+    width: min(96vw, 480px);
+    max-height: min(78dvh, calc(100dvh - 2rem));
+    padding: 0.45rem 0.5rem 0.4rem;
   }
   #modal.centered .modal-card.scratch-modal .scratch-grid {
-    --scratch-size: min(440px, calc(96vw - 1.5rem), calc(96vh - 10.5rem));
+    --scratch-size: min(300px, calc(96vw - 1.5rem), calc(100dvh - 16rem));
   }
   #btn-modal-restore {
     right: 0.65rem;
-    bottom: calc(7.2rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
   }
 
   #screen-title { justify-content: center; align-items: stretch; }
@@ -4807,8 +4816,8 @@ button.pc-flag.peek-on {
   .title-actions .btn.large { min-width: 0; width: 100%; }
   .results-panel {
     width: min(96vw, 520px);
-    max-height: 94vh;
-    padding: 1rem 0.9rem 0.9rem;
+    max-height: min(86dvh, calc(100dvh - 1rem));
+    padding: 0.85rem 0.8rem 0.75rem;
   }
   .results-tabs { gap: 0.2rem; }
   .results-tab {
