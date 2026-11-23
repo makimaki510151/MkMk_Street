@@ -2676,6 +2676,18 @@ button.pc-flag.peek-on {
 #modal.floating .modal-card {
   pointer-events: auto;
   z-index: 31;
+  /* 端寄せ後に大きいカードへ切り替わってもビューポート内に収める */
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 60px);
+  max-height: calc(100dvh - 60px);
+}
+#modal.floating .modal-card.shop-pick-modal,
+#modal.floating .modal-card.raise-modal,
+#modal.floating .modal-card.wide,
+#modal.floating .modal-card.stock-modal {
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 60px);
+  max-height: calc(100dvh - 60px);
 }
 .modal-drag-handle { cursor: grab; user-select: none; touch-action: none; }
 .modal-drag-handle:active { cursor: grabbing; }

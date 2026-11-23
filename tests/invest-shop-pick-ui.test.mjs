@@ -26,4 +26,12 @@ describe('invest shop pick UI', () => {
     assert.match(css, /#modal \.modal-card\.shop-pick-modal \.pick-invest-list[\s\S]*?max-height:\s*none/s);
     assert.match(css, /\.shop-pick-area-head\s*\{[^}]*position:\s*sticky/s);
   });
+
+  it('scrolls the shop list when a shop is picked from the map', () => {
+    assert.match(mainJs, /function scrollShopPickIntoView/);
+    assert.match(
+      mainJs,
+      /pick-invest-shop\[data-shop=[\s\S]*?btn\.click\(\);\s*\/\/[^\n]*\s*scrollShopPickIntoView\(btn\)/,
+    );
+  });
 });
