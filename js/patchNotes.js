@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.9.41',
+    date: '2026-11-23',
+    items: [
+      '通信同期ずれを追加修正（CPU分岐も人間と同じ演出経路、ワープ／着地後は force 同期、遅延 state の取りこぼし防止）',
+    ],
+  },
+  {
     version: '1.9.40',
     date: '2026-11-23',
     items: [
