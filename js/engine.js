@@ -3502,6 +3502,20 @@ function openEventDebtIfNeeded(g, p, resume = { type: 'after_event' }) {
   return true;
 }
 
+/**
+ * スクラッチ等のイベントワープで店マスに乗ったとき、通常着地と同じ購入／通行料／増資を開く。
+ * @returns {boolean} 店着地処理を行ったら true（endTurn 済みの場合も含む）
+ */
+function maybeResolvePostEventShopLand(g, p) {
+  if (!p || p.bankrupt || g.phase === 'gameover') return false;
+  // すでに別の選択待ちがあるなら触らない
+  if (g.phase === 'await_choice' && g.pending) return false;
+  const sq = getNode(g, p.pos);
+  if (!sq || sq.type !== 'shop') return false;
+  resolveShop(g, p, sq);
+  return true;
+}
+
 /** スクラッチ後の続行（負債解消後もここへ戻る） */
 function continueAfterScratchEvent(g, p) {
   if (maybeOpenForceSell(g, p)) return 'forceSell';
@@ -3516,6 +3530,8 @@ function continueAfterScratchEvent(g, p) {
   if (maybeOpenMonoHearing(g, p)) return 'monoHearing';
   if (maybeOpenMinigame(g, p)) return 'minigame';
   const spawnedNpc = maybeSpawnEventNpc(g, p);
+  // 空き店／相手店／自店へワープした場合は着地扱い（買えないのは不可）
+  if (maybeResolvePostEventShopLand(g, p)) return 'shopLand';
   if (p.flags.extraRoll) {
     p.flags.extraRoll = false;
     g.phase = 'await_roll';
