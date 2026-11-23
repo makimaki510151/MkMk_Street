@@ -190,7 +190,7 @@ describe('scratch new events & minigames', () => {
     assert.equal(miss.win, false);
   });
 
-  it('silent_bid unique free bids pay; collisions miss', () => {
+  it('silent_bid fixed options: unique picks pay, collisions miss', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
       seed: 55,
@@ -205,29 +205,29 @@ describe('scratch new events & minigames', () => {
       playerId: 0,
       starterId: 0,
       game: 'silent_bid',
-      label: 'サイレント入札',
+      label: 'かぶりなし賞金',
       participantIds: ordered,
       picks: {},
       party: true,
-      pot: 120,
     };
-    const mid = applyChoice(g, { action: 'pick', value: 80 });
+    const mid = applyChoice(g, { action: 'pick', value: 100 });
     assert.equal(mid.minigamePick, true);
-    applyChoice(g, { action: 'pick', value: 80 }); // collide with A
-    const fin = applyChoice(g, { action: 'pick', value: 55 });
+    applyChoice(g, { action: 'pick', value: 100 }); // collide with A
+    const fin = applyChoice(g, { action: 'pick', value: 300 });
     assert.equal(fin.minigame, true);
     assert.equal(fin.reveal?.game, 'silent_bid');
-    assert.equal(fin.reveal.shared?.pot, 120);
+    assert.deepEqual(fin.reveal.shared?.options, [50, 100, 300]);
     assert.equal(fin.reveal.results.length, 3);
     const byId = Object.fromEntries(fin.reveal.results.map((r) => [r.playerId, r]));
     assert.equal(byId[0].win, false, 'A collided');
     assert.equal(byId[1].win, false, 'B collided');
     assert.equal(byId[2].win, true, 'C unique');
-    assert.equal(byId[2].pick, 55);
-    assert.ok(byId[2].prizeWon >= 55);
+    assert.equal(byId[2].pick, 300);
+    assert.equal(byId[2].prizeWon, 300);
+    assert.equal(byId[0].prizeWon, 0);
   });
 
-  it('silent_bid clamps free input to pot and rejects max spam via uniqueness', () => {
+  it('silent_bid normalizes invalid picks to 100 and scores uniqueness', () => {
     const helpers = {
       grantMinigamePrize: (p, amount, messages, text) => {
         p.cash += amount;
@@ -243,19 +243,22 @@ describe('scratch new events & minigames', () => {
       flatPrize: (n) => n,
     };
     const g = { goal: 10000, players: [{ id: 0, name: 'A', cash: 100, level: 1 }] };
-    const shared = { pot: 100, allBids: { 0: 100, 1: 100, 2: 40 } };
+    const shared = { allBids: { 0: 100, 1: 100, 2: 50 }, options: [50, 100, 300] };
     const a = scoreNewMinigamePlayer(g, g.players[0], 'silent_bid', 100, shared, helpers);
     assert.equal(a.win, false);
+    assert.equal(a.prizeWon, 0);
     const c = scoreNewMinigamePlayer(
       g,
       { id: 2, name: 'C', cash: 100, level: 1 },
       'silent_bid',
-      40,
+      50,
       shared,
       helpers,
     );
     assert.equal(c.win, true);
-    assert.equal(c.prizeWon, 40);
+    assert.equal(c.prizeWon, 50);
+    assert.equal(normalizeNewMinigamePick('silent_bid', { value: 999 }), 100);
+    assert.equal(normalizeNewMinigamePick('silent_bid', { value: 300 }), 300);
   });
 
   it('scratch apply opens pick_dice pending from catalog effect', () => {

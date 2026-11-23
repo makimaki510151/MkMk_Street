@@ -205,7 +205,7 @@ function buildCatalog() {
     ['heist', '金庫破り', 'heist'],
     ['balloon_dash', 'バルーンチャレンジ', 'balloon_dash'],
     ['memory_match', '神経衰弱', 'memory_match'],
-    ['silent_bid', 'サイレント入札', 'silent_bid'],
+    ['silent_bid', 'かぶりなし賞金', 'silent_bid'],
     ['push_pull', '押し引き', 'push_pull'],
     ['divide_pool', '配分ゲーム', 'divide_pool'],
     ['target_roulette', 'ターゲットルーレット', 'target_roulette'],
