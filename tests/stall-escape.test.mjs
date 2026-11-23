@@ -153,10 +153,12 @@ describe('stall escape: shop_protect / co_own empty targets', () => {
 
 describe('stall escape: bankrupt clears own pending', () => {
   it('declareBankrupt drops await_choice owned by the bankrupt player', () => {
+    // 3人以上でないと残り1人で即 gameover になる
     const g = createGame({
-      players: [{ name: 'A' }, { name: 'B' }],
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
       seed: 31,
       cash: 100,
+      bankruptLimit: 0,
     });
     const shop = g.map.find((n) => n.type === 'shop');
     shop.owner = 0;

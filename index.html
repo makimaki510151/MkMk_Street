@@ -141,6 +141,7 @@
           <li>マークをそろえて銀行に戻ると、<strong>昇進 → 株1種類 → 進む方向</strong>の順です。</li>
           <li>昇進賞金はレベルごとに全員同額（高いほど増えます）。</li>
           <li>総資産が目標以上なら、<strong>銀行に止まる／通過する</strong>と勝利。昇進賞金だけで初めて目標に達した場合は、いったん出てから再通過が必要です。</li>
+          <li>開始前に<strong>破産人数で決着</strong>を選べます（既定は最後の1人まで）。例: 「1人」なら、誰か1人が破産した時点で生存者の総資産が多い人が勝ちます。</li>
           <li>誰かが目標に達するとBGMが変わります。終了後は順位・統計・アワードを表示／エクスポートできます。タイトルの<strong>試合結果</strong>から保存したJSONをあとから表示できます。</li>
         </ul>
       </section>
@@ -160,7 +161,7 @@
         <h3>オンライン</h3>
         <ul>
           <li>ホストが部屋を作りコードを共有。ゲストは同じコードで入室。<strong>バージョンが違うと入れません</strong>（タイトルに表示）。</li>
-          <li>開始前に<strong>順番決めダイス（1〜100）</strong>で手番順を決めます（同点は同じ出目の人だけ振り直し）。出目がそろったら順位を表示し、<strong>ホストが開始を押す</strong>とゲームへ進みます。ロビーでプレイヤー色・<strong>初期資金</strong>（既定2200G）・目標資産を設定できます。</li>
+          <li>開始前に<strong>順番決めダイス（1〜100）</strong>で手番順を決めます（同点は同じ出目の人だけ振り直し）。出目がそろったら順位を表示し、<strong>ホストが開始を押す</strong>とゲームへ進みます。ロビーでプレイヤー色・<strong>初期資金</strong>（既定2200G）・目標資産・<strong>破産人数で決着</strong>（例: 1人破産で総資産決着）を設定できます。</li>
           <li>切断しても<strong>同じ部屋コード・同じ名前</strong>で再接続できます。ホストは切断者をCPU化／キックできます。</li>
           <li>相手の操作待ちでは<strong>催促</strong>ボタンが使えます。部屋を作り直すときは先に<strong>部屋を解体</strong>します。</li>
         </ul>
@@ -216,6 +217,11 @@
             <legend>マップ</legend>
             <div class="map-picker-grid map-picker-chips" id="setup-map-options"></div>
           </fieldset>
+          <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-bankrupt-limit-picker">
+            <legend>破産人数で決着</legend>
+            <div class="map-picker-grid map-picker-chips" id="setup-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
+            <p class="hint cpu-diff-hint" id="setup-bankrupt-limit-hint"></p>
+          </fieldset>
           <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-cpu-diff-picker">
             <legend>CPUの強さ</legend>
             <div class="map-picker-grid map-picker-chips" id="setup-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
@@ -262,6 +268,11 @@
           <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
           <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
         </div>
+        <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-bankrupt-limit-picker">
+          <legend>破産人数で決着</legend>
+          <div class="map-picker-grid map-picker-chips" id="lobby-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
+          <p class="hint cpu-diff-hint" id="lobby-bankrupt-limit-hint"></p>
+        </fieldset>
         <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-cpu-diff-picker">
           <legend>CPUの強さ</legend>
           <div class="map-picker-grid map-picker-chips" id="lobby-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
@@ -289,6 +300,7 @@
           </aside>
         </div>
       </div>
+      <p class="hint" id="lobby-guest-bankrupt-limit" hidden></p>
       <aside id="lobby-guest-map" class="map-preview map-preview-lobby lobby-guest-map" hidden aria-live="polite">
         <div class="map-preview-head">
           <strong id="lobby-guest-map-name">マップ</strong>
