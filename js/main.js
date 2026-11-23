@@ -4011,13 +4011,31 @@ async function resolveForkChoice(nextId) {
   app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
-  app.renderer?.animateToken(pid, from, nextId, 400);
+  // 門／階層へ分岐したときは入口まで歩かせ、warps で飛ばす
+  const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
+    ?? result.warps?.[0]?.from;
+  const stepTo = warpFrom != null ? warpFrom : nextId;
+  if (result.warps?.length) armWarpHolds(result.warps);
+  app.renderer?.animateToken(pid, from, stepTo, 400);
   audio.sfx.step();
-  syncState({ anim: { pid, from, to: nextId } });
+  if (!result.warps?.length) {
+    syncState({ anim: { pid, from, to: stepTo } });
+  }
   refreshGameUI();
-  await wait(420);
-  await continueAdvancing();
-  await resumeAfterMovement();
+  await wait(result.warps?.length ? 400 : 420);
+  if (result.warps?.length) {
+    await presentWarpFx(result.warps);
+    syncState();
+    refreshGameUI();
+  }
+  if (result.done) {
+    onLandingSfx();
+    if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
+    await resumeAfterMovement();
+  } else {
+    await continueAdvancing();
+    await resumeAfterMovement();
+  }
   // 着地が購入/増資待ちなら確実に選択UIを再掲（busy 残留や告知での欠落防止）
   if (isLocalPendingChoice(app.game)) {
     app.busy = false;
@@ -4085,20 +4103,21 @@ async function continueAdvancing() {
     }
 
     if (result.stepped) {
-      // ワープがある最終歩は「出発マス」まで歩かせ、目的地への瞬間移動を防ぐ
+      // 門／階層／着地ワープ：論理座標が先に飛んでも、見た目は入口まで歩かせる
       const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
         ?? result.warps?.[0]?.from;
-      const stepTo = (result.done && warpFrom != null) ? warpFrom : result.to;
+      const stepTo = warpFrom != null ? warpFrom : result.to;
+      if (result.warps?.length) armWarpHolds(result.warps);
       app.renderer?.animateToken(pid, result.from ?? from, stepTo, 400);
       audio.sfx.step();
-      // 最終歩でスイッチ／ワープがある場合、新座標の state 同期を演出後に回す
+      // スイッチ／ワープがある場合、新座標の state 同期を演出後に回す
       // （ゲストが一瞬新位置→スライド／ワープ開始の巻き戻りフラッシュを見ないように）
-      if (!(result.done && (result.switchMoves?.length || result.warps?.length))) {
+      if (!(result.warps?.length || (result.done && result.switchMoves?.length))) {
         syncState({ anim: { pid, from: result.from ?? from, to: stepTo } });
       }
       refreshGameUI();
       // ワープへ繋ぐときはステップ完了と同時に演出開始（ホールド隙間を作らない）
-      await wait(result.done && result.warps?.length ? 400 : 420);
+      await wait(result.warps?.length ? 400 : 420);
     }
 
     // 銀行通過割込み（昇進→株→方向）
@@ -4106,6 +4125,13 @@ async function continueAdvancing() {
       syncState();
       refreshGameUI();
       return;
+    }
+
+    // 門／階層など残移動ありの途中ワープは、ここで即演出してから歩き続ける
+    if (result.warps?.length && !result.done) {
+      await presentWarpFx(result.warps);
+      syncState();
+      refreshGameUI();
     }
 
     if (result.done) {

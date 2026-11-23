@@ -602,6 +602,11 @@ describe('MkMk Street engine', () => {
     assert.equal(gateStep.gate, true);
     assert.equal(gSky.players[0].pos, gateB.id);
     assert.equal(gSky.move.stepsLeft, 2);
+    // 途中ワープは warps に載せ、to は入口（見た目の歩行先）にする
+    assert.ok(gateStep.warps?.length >= 1, 'mid-move gate should expose warp fx');
+    assert.equal(gateStep.warps[0].from, gateA.id);
+    assert.equal(gateStep.warps[0].to, gateB.id);
+    assert.equal(gateStep.to, gateA.id);
 
     // ランダム転移：小島の転移マスへ
     const rand = gSky.map.find((n) => n.type === 'warp_random');

@@ -2254,13 +2254,17 @@ export function advanceMove(g) {
   // 下降／上昇：乗った時点で階層移動（残出目は維持）
   if (tryShaftTransit(g, p)) {
     if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, shaft: true };
+    // 残移動あり：UIは入口まで歩かせてから warps で飛ばす（to は入口）
+    const warps = takeWarpFx(g);
+    const entrance = warps[0]?.from ?? nextId;
     return {
       ok: true,
       stepped: true,
       from,
-      to: p.pos,
+      to: entrance,
       shaft: true,
       done: false,
+      warps,
       stepsLeft: g.move.stepsLeft,
       state: serializeState(g),
     };
@@ -2269,13 +2273,17 @@ export function advanceMove(g) {
   // 門：乗った時点で反対側へ（残出目は維持）
   if (tryGateTransit(g, p)) {
     if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, gate: true };
+    // 残移動あり：UIは入口まで歩かせてから warps で飛ばす（to は入口）
+    const warps = takeWarpFx(g);
+    const entrance = warps[0]?.from ?? nextId;
     return {
       ok: true,
       stepped: true,
       from,
-      to: p.pos,
+      to: entrance,
       gate: true,
       done: false,
+      warps,
       stepsLeft: g.move.stepsLeft,
       state: serializeState(g),
     };
@@ -2349,13 +2357,16 @@ export function chooseFork(g, nextId) {
 
   if (tryShaftTransit(g, p)) {
     if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, shaft: true };
+    const warps = takeWarpFx(g);
+    const entrance = warps[0]?.from ?? nextId;
     return {
       ok: true,
       stepped: true,
       from,
-      to: p.pos,
+      to: entrance,
       shaft: true,
       done: false,
+      warps,
       stepsLeft: g.move.stepsLeft,
       state: serializeState(g),
     };
@@ -2363,13 +2374,16 @@ export function chooseFork(g, nextId) {
 
   if (tryGateTransit(g, p)) {
     if (g.move.stepsLeft <= 0) return { ...finishMove(g, p), stepped: true, from, to: p.pos, gate: true };
+    const warps = takeWarpFx(g);
+    const entrance = warps[0]?.from ?? nextId;
     return {
       ok: true,
       stepped: true,
       from,
-      to: p.pos,
+      to: entrance,
       gate: true,
       done: false,
+      warps,
       stepsLeft: g.move.stepsLeft,
       state: serializeState(g),
     };
