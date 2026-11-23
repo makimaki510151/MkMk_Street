@@ -1714,7 +1714,7 @@ export function getForwardNexts(g, pos, prevPos) {
  * 乗った時点で即時ジャンプするマス（門・階層）の行き先。
  * ワープは着地時のみなのでここでは扱わない。
  */
-function immediateTransitDest(g, pos) {
+export function immediateTransitDest(g, pos) {
   const n = getNode(g, pos);
   if (!n) return null;
   if (n.type === 'gate') {
@@ -1734,6 +1734,17 @@ function immediateTransitDest(g, pos) {
     if (dest && dest.id !== n.id) return dest.id;
   }
   return null;
+}
+
+/**
+ * 1歩で nextId に入ったあとの実位置。
+ * 門／階層なら入口を経由して反対側へ（プレイヤー移動と同じ）。
+ * @returns {{ pos: number, prev: number|null, via: number|null }}
+ */
+export function stepLandAfter(g, fromPos, nextId) {
+  const transit = immediateTransitDest(g, nextId);
+  if (transit != null) return { pos: transit, prev: null, via: nextId };
+  return { pos: nextId, prev: fromPos, via: null };
 }
 
 /** ワープ着地なら転送先（1段）。門は「乗った時点」で処理するためここでは扱わない。 */
@@ -5364,7 +5375,7 @@ function shopPathValue(sq) {
   return (Number(sq?.basePrice) || 0) + (Number(sq?.extraInvest) || 0);
 }
 
-/** maxSteps 以内で到達しうる最高値の有主店 */
+/** maxSteps 以内で到達しうる最高値の有主店（門／階層ジャンプ込み） */
 function findBestOwnedShopSteps(g, fromPos, prevPos, maxSteps) {
   const bestAt = new Map();
   const q = [{ id: fromPos, prev: prevPos, steps: 0 }];
@@ -5375,14 +5386,15 @@ function findBestOwnedShopSteps(g, fromPos, prevPos, maxSteps) {
     if (cur.steps >= maxSteps) continue;
     for (const nid of getForwardNexts(g, cur.id, cur.prev)) {
       const steps = cur.steps + 1;
-      if (bestAt.has(nid) && bestAt.get(nid) <= steps) continue;
-      bestAt.set(nid, steps);
-      q.push({ id: nid, prev: cur.id, steps });
-      const node = getNode(g, nid);
+      const land = stepLandAfter(g, cur.id, nid);
+      if (bestAt.has(land.pos) && bestAt.get(land.pos) <= steps) continue;
+      bestAt.set(land.pos, steps);
+      q.push({ id: land.pos, prev: land.prev, steps });
+      const node = getNode(g, land.pos);
       if (node?.type === 'shop' && node.owner >= 0) {
         const val = shopPathValue(node);
         if (!best || val > best.val || (val === best.val && steps < best.steps)) {
-          best = { id: nid, steps, val };
+          best = { id: land.pos, steps, val };
         }
       }
     }
@@ -5398,10 +5410,11 @@ function approxNodeDist(g, from, target, limit = 24) {
     const cur = q.shift();
     if (cur.d >= limit) continue;
     for (const nid of getForwardNexts(g, cur.id, cur.prev)) {
-      if (seen.has(nid)) continue;
-      if (nid === target) return cur.d + 1;
-      seen.add(nid);
-      q.push({ id: nid, d: cur.d + 1, prev: cur.id });
+      const land = stepLandAfter(g, cur.id, nid);
+      if (seen.has(land.pos)) continue;
+      if (land.pos === target) return cur.d + 1;
+      seen.add(land.pos);
+      q.push({ id: land.pos, d: cur.d + 1, prev: land.prev });
     }
   }
   return limit + 1;
@@ -5458,19 +5471,65 @@ function fairyGiftToPlayer(g, player) {
   }
 }
 
-export function departEventNpc(g, npc) {
+/**
+ * 退場をキュー（コマは演出が終わるまで残す＝最終移動が見える／同期ずれ防止）
+ */
+export function queueEventNpcDepart(g, npc) {
   ensureEventNpcState(g);
-  const idx = g.eventNpcs.findIndex((n) => n.id === npc.id);
-  if (idx >= 0) g.eventNpcs.splice(idx, 1);
+  if (!npc || npc.departQueued) return;
+  npc.departQueued = true;
+  npc.actsLeft = 0;
   addLog(g, `${npc.label} は異界へと帰っていった…`, 'event');
-  g.eventNpcFx.push({ type: 'depart', npcId: npc.id, kind: npc.kind, pos: npc.pos });
+  g.eventNpcFx.push({
+    type: 'depart',
+    npcId: npc.id,
+    kind: npc.kind,
+    label: npc.label,
+    pos: npc.pos,
+  });
   if (npc.kind === 'poverty') {
     g.povertyHolidayClearTurn = (g.turn || 1) + 1;
   }
 }
 
+/** 退場演出後に実体を外す */
+export function removeEventNpc(g, npcId) {
+  ensureEventNpcState(g);
+  const idx = g.eventNpcs.findIndex((n) => n.id === npcId);
+  if (idx >= 0) g.eventNpcs.splice(idx, 1);
+}
+
+/** @deprecated queueEventNpcDepart + removeEventNpc を使う */
+export function departEventNpc(g, npc) {
+  queueEventNpcDepart(g, npc);
+  removeEventNpc(g, npc.id);
+}
+
+function applyNpcTileEffects(g, npc, pos, gifted) {
+  if (npc.kind === 'mark_fairy') {
+    for (const pl of g.players) {
+      if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
+      gifted.add(pl.id);
+      fairyGiftToPlayer(g, pl);
+    }
+  }
+  if (npc.kind === 'poverty') {
+    const node = getNode(g, pos);
+    if (node?.type === 'shop') {
+      node.eventHoliday = true;
+      const owner = node.owner >= 0 ? g.players[node.owner] : null;
+      addLog(
+        g,
+        `貧乏神が「${node.label || '店'}」を休ませた${owner ? `（${owner.name}）` : ''}`,
+        'event',
+      );
+    }
+  }
+}
+
 function takeEventNpcTurn(g, npc) {
   ensureEventNpcState(g);
+  if (npc.departQueued || (npc.actsLeft != null && npc.actsLeft <= 0)) return;
   if (npc.kind === 'poverty') {
     clearMapEventHolidays(g);
     g.povertyHolidayClearTurn = null;
@@ -5483,41 +5542,20 @@ function takeEventNpcTurn(g, npc) {
   const gifted = new Set();
 
   // 行動開始地点にいるプレイヤーともすれ違い扱い
-  if (npc.kind === 'mark_fairy') {
-    for (const pl of g.players) {
-      if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
-      gifted.add(pl.id);
-      fairyGiftToPlayer(g, pl);
-    }
-  }
+  applyNpcTileEffects(g, npc, pos, gifted);
 
   for (let i = 0; i < roll; i++) {
     const opts = getForwardNexts(g, pos, prev);
     if (!opts.length) break;
     const nextId = pickNpcStep(g, npc, opts, targetId);
-    prev = pos;
-    pos = nextId;
-    path.push(pos);
+    const land = stepLandAfter(g, pos, nextId);
+    // 門／階層：入口→出口を path に含め、UI がワープ演出できるようにする
+    if (land.via != null) path.push(land.via);
+    path.push(land.pos);
+    prev = land.prev;
+    pos = land.pos;
 
-    if (npc.kind === 'mark_fairy') {
-      for (const pl of g.players) {
-        if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
-        gifted.add(pl.id);
-        fairyGiftToPlayer(g, pl);
-      }
-    }
-    if (npc.kind === 'poverty') {
-      const node = getNode(g, pos);
-      if (node?.type === 'shop') {
-        node.eventHoliday = true;
-        const owner = node.owner >= 0 ? g.players[node.owner] : null;
-        addLog(
-          g,
-          `貧乏神が「${node.label || '店'}」を休ませた${owner ? `（${owner.name}）` : ''}`,
-          'event',
-        );
-      }
-    }
+    applyNpcTileEffects(g, npc, pos, gifted);
   }
 
   npc.prevPos = prev;
@@ -5536,13 +5574,7 @@ function takeEventNpcTurn(g, npc) {
     }
   }
 
-  if (npc.kind === 'mark_fairy') {
-    for (const pl of g.players) {
-      if (pl.bankrupt || pl.pos !== pos || gifted.has(pl.id)) continue;
-      gifted.add(pl.id);
-      fairyGiftToPlayer(g, pl);
-    }
-  }
+  applyNpcTileEffects(g, npc, pos, gifted);
 
   const left = Math.max(0, (npc.actsLeft || 1) - 1);
   npc.actsLeft = left;
@@ -5559,7 +5591,8 @@ function takeEventNpcTurn(g, npc) {
     roll,
   });
 
-  if (left <= 0) departEventNpc(g, npc);
+  // 退場はキューのみ。実削除は演出後（最終移動が描画でき、ゲスト同期ずれも防ぐ）
+  if (left <= 0) queueEventNpcDepart(g, npc);
 }
 
 /** 4番目プレイヤー後（または少人数なら最後の席）でイベントNPC行動 */
@@ -5572,6 +5605,7 @@ export function runEventNpcRound(g) {
   const ordered = [...g.eventNpcs].sort((a, b) => a.spawnOrder - b.spawnOrder);
   for (const npc of ordered) {
     if (!g.eventNpcs.some((n) => n.id === npc.id)) continue;
+    if (npc.departQueued || (npc.actsLeft != null && npc.actsLeft <= 0)) continue;
     takeEventNpcTurn(g, npc);
   }
   maybeClearPovertyHolidays(g);
