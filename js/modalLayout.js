@@ -8,6 +8,21 @@ export const MODAL_DRAG_MARGINS = Object.freeze({
   bottom: 8,
 });
 
+/** スマホのアクションドックぶん、下端を空ける（px） */
+export const MOBILE_MODAL_DOCK_RESERVE = 112;
+
+/**
+ * @param {boolean} mobile
+ * @returns {{ x: number, top: number, bottom: number }}
+ */
+export function modalDragMarginsForUi(mobile) {
+  if (!mobile) return { ...MODAL_DRAG_MARGINS };
+  return {
+    ...MODAL_DRAG_MARGINS,
+    bottom: Math.max(MODAL_DRAG_MARGINS.bottom, MOBILE_MODAL_DOCK_RESERVE),
+  };
+}
+
 /**
  * @param {{ x: number, y: number }} drag
  * @param {{ w: number, h: number }} cardSize
@@ -34,9 +49,26 @@ export function clampModalDrag(drag, cardSize, viewport, margins = MODAL_DRAG_MA
 /**
  * フローティング時にカードが収まる最大高さ（px）。
  * top マージン＋bottom マージンを引いたビューポート高さ。
+ * スマホでは画面の半分前後に抑え、ドックと重ならないようにする。
+ *
+ * @param {number} viewportH
+ * @param {{ x?: number, top?: number, bottom?: number }} [margins]
+ * @param {{ mobile?: boolean, variant?: 'default' | 'shop-pick' | 'raise' | 'stock' }} [opts]
  */
-export function floatingModalMaxHeightPx(viewportH, margins = MODAL_DRAG_MARGINS) {
+export function floatingModalMaxHeightPx(viewportH, margins = MODAL_DRAG_MARGINS, opts = {}) {
   const mt = margins.top ?? MODAL_DRAG_MARGINS.top;
   const mb = margins.bottom ?? MODAL_DRAG_MARGINS.bottom;
-  return Math.max(140, (Number(viewportH) || 0) - mt - mb);
+  const vh = Number(viewportH) || 0;
+  let max = Math.max(140, vh - mt - mb);
+  if (opts.mobile) {
+    const variant = opts.variant || 'default';
+    if (variant === 'shop-pick' || variant === 'raise') {
+      max = Math.min(max, Math.round(vh * 0.58), 520);
+    } else if (variant === 'stock') {
+      max = Math.min(max, Math.round(vh * 0.52), 460);
+    } else {
+      max = Math.min(max, Math.round(vh * 0.48), 420);
+    }
+  }
+  return max;
 }

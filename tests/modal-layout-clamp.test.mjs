@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import {
   clampModalDrag,
   floatingModalMaxHeightPx,
+  modalDragMarginsForUi,
+  MOBILE_MODAL_DOCK_RESERVE,
   MODAL_DRAG_MARGINS,
 } from '../js/modalLayout.js';
 
@@ -58,6 +60,21 @@ describe('clampModalDrag', () => {
     );
     assert.equal(floatingModalMaxHeightPx(100), 140);
   });
+
+  it('caps floating max height on mobile so cards stay compact', () => {
+    const margins = modalDragMarginsForUi(true);
+    assert.equal(margins.bottom, MOBILE_MODAL_DOCK_RESERVE);
+    const tallPhone = floatingModalMaxHeightPx(844, margins, { mobile: true });
+    assert.ok(tallPhone <= 420);
+    assert.ok(tallPhone <= Math.round(844 * 0.48));
+    const shop = floatingModalMaxHeightPx(844, margins, {
+      mobile: true,
+      variant: 'shop-pick',
+    });
+    assert.ok(shop <= 520);
+    assert.ok(shop <= Math.round(844 * 0.58));
+    assert.ok(shop >= tallPhone);
+  });
 });
 
 describe('modal overflow wiring', () => {
@@ -66,11 +83,23 @@ describe('modal overflow wiring', () => {
     assert.match(mainJs, /function scheduleModalLayoutClamp/);
     assert.match(mainJs, /clampModalDrag\(/);
     assert.match(mainJs, /floatingModalMaxHeightPx\(/);
+    assert.match(mainJs, /modalDragMarginsForUi\(/);
     assert.match(mainJs, /scheduleModalLayoutClamp\(\)/);
   });
 
   it('caps floating modal size in CSS', () => {
     assert.match(css, /#modal\.floating \.modal-card\s*\{[^}]*max-height:\s*calc\(100dvh - 60px\)/s);
     assert.match(css, /#modal\.floating \.modal-card\.shop-pick-modal/);
+  });
+
+  it('overrides floating modal height under the mobile breakpoint', () => {
+    assert.match(
+      css,
+      /@media \(max-width: 900px\) and \(hover: none\), \(max-width: 640px\)[\s\S]*#modal\.floating \.modal-card[\s\S]*max-height:\s*min\(48vh, 420px\)/,
+    );
+    assert.match(
+      css,
+      /#modal\.centered \.modal-card\.scratch-modal\s*\{[^}]*max-height:\s*min\(78dvh/s,
+    );
   });
 });

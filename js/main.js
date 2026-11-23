@@ -106,7 +106,7 @@ import { isLocalPlayer, isMyTurnSeat } from './turnOwner.js';
 import {
   clampModalDrag,
   floatingModalMaxHeightPx,
-  MODAL_DRAG_MARGINS,
+  modalDragMarginsForUi,
 } from './modalLayout.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -3386,12 +3386,27 @@ function bindModalTools() {
   }, { passive: true });
 }
 
+function floatingModalVariant(card) {
+  if (!card) return 'default';
+  if (card.classList.contains('shop-pick-modal') || card.classList.contains('raise-modal')) {
+    return 'shop-pick';
+  }
+  if (card.classList.contains('stock-modal')) return 'stock';
+  return 'default';
+}
+
 function applyModalPosition() {
   const card = $('#modal-card');
   if (!card) return;
   if (app.modalDrag) {
-    // 端寄せした小さいカードの座標を、大きい増資モーダル等でも画面内に収める
-    const maxH = floatingModalMaxHeightPx(window.innerHeight, MODAL_DRAG_MARGINS);
+    // 端寄せした小さいカードの座標を、大きい増資モーダル等でも画面内に収める。
+    // スマホはアクションドック分を空けつつ、高さ上限を抑える。
+    const mobile = isMobileUi();
+    const margins = modalDragMarginsForUi(mobile);
+    const maxH = floatingModalMaxHeightPx(window.innerHeight, margins, {
+      mobile,
+      variant: floatingModalVariant(card),
+    });
     card.style.maxHeight = `${maxH}px`;
     const w = card.offsetWidth || 320;
     const h = card.offsetHeight || 200;
@@ -3399,7 +3414,7 @@ function applyModalPosition() {
       app.modalDrag,
       { w, h },
       { w: window.innerWidth, h: window.innerHeight },
-      MODAL_DRAG_MARGINS,
+      margins,
     );
     app.modalDrag.x = next.x;
     app.modalDrag.y = next.y;
@@ -3478,7 +3493,7 @@ function bindModalDrag() {
       { x: origX + e.clientX - startX, y: origY + e.clientY - startY },
       { w, h },
       { w: window.innerWidth, h: window.innerHeight },
-      MODAL_DRAG_MARGINS,
+      modalDragMarginsForUi(isMobileUi()),
     );
     app.modalDrag.x = next.x;
     app.modalDrag.y = next.y;

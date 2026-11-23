@@ -42,6 +42,22 @@ describe('mobile UI shell', () => {
     assert.match(css, /\.mobile-info-nav \{/);
   });
 
+  it('keeps mobile floating/scratch UI from consuming nearly the full viewport height', () => {
+    assert.match(
+      css,
+      /#modal\.floating \.modal-card[\s\S]*max-height:\s*min\(48vh, 420px\)/,
+    );
+    assert.doesNotMatch(
+      css,
+      /@media \(max-width: 900px\) and \(hover: none\), \(max-width: 640px\)[\s\S]*#modal\.centered \.modal-card\.scratch-modal\s*\{[^}]*max-height:\s*96vh/s,
+    );
+    assert.match(
+      css,
+      /#modal\.centered \.modal-card\.scratch-modal\s*\{[^}]*max-height:\s*min\(78dvh/s,
+    );
+    assert.match(main, /modalDragMarginsForUi\(/);
+  });
+
   it('keeps a compact PC two-column shell on small desktop windows', () => {
     assert.match(css, /--side-w:\s*clamp\(/);
     assert.match(css, /Compact PC shell/);
