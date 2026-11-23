@@ -29,6 +29,24 @@ function link(...pairs) {
   }
 }
 
+/** 階層出口（・着）など、隣マスからは入れず出発のみの一方通行にする */
+function sealInboundExceptSelf(nodes, isExit) {
+  for (const exit of nodes) {
+    if (!isExit(exit)) continue;
+    exit.oneWayOut = true;
+    for (const n of nodes) {
+      if (n.id === exit.id || !n.nexts?.includes(exit.id)) continue;
+      n.nexts = n.nexts.filter((id) => id !== exit.id);
+    }
+  }
+}
+
+/** 下降・着（地下）／上昇・着（地上）＝入口からの転送先。隣からの侵入は無効 */
+function isShaftLandingExit(n) {
+  if (!n || n.type !== 'shaft') return false;
+  return (n.shaft === 'down' && n.floor === 2) || (n.shaft === 'up' && n.floor === 1);
+}
+
 function linkGridOrthoAndGapDiagonals(grid) {
   const ortho = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -572,6 +590,7 @@ export function buildGreedMine() {
           floor,
           col,
           row,
+          ...(floor === 2 ? { oneWayOut: true } : {}),
         }));
         continue;
       }
@@ -584,6 +603,7 @@ export function buildGreedMine() {
           floor,
           col,
           row,
+          ...(floor === 1 ? { oneWayOut: true } : {}),
         }));
         continue;
       }
@@ -612,6 +632,8 @@ export function buildGreedMine() {
   }
   if (!ctx.bank) throw new Error('強欲鉱山: 銀行なし');
   linkGridOrthoAndGapDiagonals(grid);
+  // 上昇・着／下降・着は階層転送の出口。隣マスから入っても効果がないので侵入禁止（出ていく一方通行）
+  sealInboundExceptSelf(nodes, isShaftLandingExit);
 
   return packBoard(nodes, ctx.bank, W, gridRows.length, {
     mapId: 'greed_mine',
