@@ -35,11 +35,21 @@ describe('mobile UI shell', () => {
   });
 
   it('CSS opens side as sheet only under mobile breakpoint', () => {
-    assert.match(css, /@media \(max-width: 900px\)/);
+    assert.match(css, /@media \(max-width: 900px\) and \(hover: none\), \(max-width: 640px\)/);
     assert.match(css, /body\.side-sheet-open \.side/);
     assert.match(css, /\.topbar \.topbar-detail \{ display: none; \}/);
     assert.match(css, /\.mobile-player-strip \{/);
     assert.match(css, /\.mobile-info-nav \{/);
+  });
+
+  it('keeps a compact PC two-column shell on small desktop windows', () => {
+    assert.match(css, /--side-w:\s*clamp\(/);
+    assert.match(css, /Compact PC shell/);
+    assert.match(
+      css,
+      /@media \(max-width: 900px\) and \(min-width: 641px\) and \(hover: hover\) and \(pointer: fine\)/,
+    );
+    assert.match(css, /@media \(max-height: 760px\) and \(min-width: 641px\)/);
   });
 
   it('JS exposes open/close side sheet helpers', () => {
@@ -48,5 +58,9 @@ describe('mobile UI shell', () => {
     assert.match(main, /function renderMobilePlayerStrip/);
     assert.match(main, /function isMobileUi/);
     assert.match(main, /sideSheetOpen/);
+    assert.match(
+      main,
+      /MOBILE_UI_MQ = '\(max-width: 900px\) and \(hover: none\), \(max-width: 640px\)'/,
+    );
   });
 });
