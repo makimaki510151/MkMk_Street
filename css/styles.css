@@ -1376,6 +1376,20 @@ button.pc-flag.peek-on {
   overflow: auto;
   flex: 1 1 auto;
 }
+.cpu-diff-picker {
+  margin: 0.35rem 0 0.55rem;
+}
+.cpu-diff-picker .cpu-diff-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+.cpu-diff-picker .map-option-body small {
+  display: block;
+  font-size: 0.7rem;
+  opacity: 0.8;
+  margin-top: 0.15rem;
+}
 .seat-editors-compact .seat-row {
   margin-bottom: 0;
   gap: 0.35rem;
