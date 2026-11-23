@@ -152,7 +152,7 @@
           <li>スクラッチで<strong>マークの妖精／大商人／貧乏神</strong>を呼べます（同種は同時に1体まで）。NPCは周回ごとに徘徊し、3〜7回行動したあと異界へ帰ります。</li>
           <li><strong>ラッキー</strong>中は、他者の買い物料の20%を銀行から受け取れます（次の自分の番まで）。</li>
           <li>ミニゲームの報酬は<strong>レベルで緩やかに上乗せ</strong>（一発当たりは目標額の約8%まで）。サイコロ当て／コイン／ハイロー／競馬／ルーレットなど共通結果型は<strong>全員参加</strong>（選択がそろってから精算）。スロットや金庫破りなどは引いた人だけの個人挑戦です。</li>
-          <li>CPUには店舗王／株マニア／独占屋／勝負師の個性があります。</li>
+          <li>CPUには店舗王／株マニア／独占屋／勝負師の個性があります。対戦開始時に<strong>初心／中級</strong>の強さを選べます（中級＝これまでの強さ）。</li>
         </ul>
       </section>
 
@@ -216,6 +216,11 @@
             <legend>マップ</legend>
             <div class="map-picker-grid map-picker-chips" id="setup-map-options"></div>
           </fieldset>
+          <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-cpu-diff-picker">
+            <legend>CPUの強さ</legend>
+            <div class="map-picker-grid map-picker-chips" id="setup-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
+            <p class="hint cpu-diff-hint" id="setup-cpu-diff-hint"></p>
+          </fieldset>
           <div id="seat-editors" class="seat-editors-compact"></div>
           <div class="row-actions">
             <button class="btn" id="btn-setup-back">戻る</button>
@@ -257,6 +262,11 @@
           <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
           <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
         </div>
+        <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-cpu-diff-picker">
+          <legend>CPUの強さ</legend>
+          <div class="map-picker-grid map-picker-chips" id="lobby-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
+          <p class="hint cpu-diff-hint" id="lobby-cpu-diff-hint"></p>
+        </fieldset>
         <div class="setup-money-row">
           <label class="field">目標資産（G）
             <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />

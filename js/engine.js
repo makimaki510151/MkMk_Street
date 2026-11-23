@@ -161,11 +161,81 @@ export const CPU_PERSONALITIES = {
   },
 };
 
+/**
+ * CPU 難易度。normal（中級）＝従来の強さ。beginner（初心）は弱体化。
+ */
+export const CPU_DIFFICULTY_KEYS = ['beginner', 'normal'];
+export const CPU_DIFFICULTY_DEFAULT = 'normal';
+export const CPU_DIFFICULTIES = {
+  beginner: {
+    id: 'beginner',
+    label: '初心',
+    hint: '買い控え・ミス多め。入門向け',
+    traitScale: {
+      shopBuy: 0.52,
+      fiveBuy: 0.32,
+      investRate: 0.48,
+      stockBudget: 0.5,
+      vacant: 0.48,
+      ownArea: 0.55,
+      enemyToll: 0.4,
+      bank: 0.75,
+      mark: 0.7,
+      stockbroker: 0.5,
+      scratch: 0.75,
+      minigame: 0.75,
+    },
+    mistakeChance: 0.32,
+    reserveMult: 1.55,
+    desireOffset: -0.42,
+    fiveBuyOffset: -0.35,
+    forkRandomChance: 0.4,
+  },
+  normal: {
+    id: 'normal',
+    label: '中級',
+    hint: 'これまでのCPUの強さ',
+    traitScale: null,
+    mistakeChance: 0,
+    reserveMult: 1,
+    desireOffset: 0,
+    fiveBuyOffset: 0,
+    forkRandomChance: 0,
+  },
+};
+
+export function normalizeCpuDifficulty(raw) {
+  const key = String(raw || '').trim().toLowerCase();
+  if (key === 'beginner' || key === 'easy' || key === '初心') return 'beginner';
+  if (key === 'normal' || key === 'medium' || key === '中級' || key === 'intermediate') return 'normal';
+  return CPU_DIFFICULTY_DEFAULT;
+}
+
+export function getCpuDifficultyProfile(pOrKey) {
+  const key = typeof pOrKey === 'string' || pOrKey == null
+    ? normalizeCpuDifficulty(pOrKey)
+    : normalizeCpuDifficulty(pOrKey?.cpuDifficulty);
+  return CPU_DIFFICULTIES[key] || CPU_DIFFICULTIES[CPU_DIFFICULTY_DEFAULT];
+}
+
+function scaleCpuTraits(base, profile) {
+  const out = { ...base, difficulty: profile.id };
+  const scale = profile.traitScale;
+  if (!scale) return out;
+  for (const [k, mult] of Object.entries(scale)) {
+    if (typeof out[k] === 'number' && Number.isFinite(mult)) {
+      out[k] = out[k] * mult;
+    }
+  }
+  return out;
+}
+
 export function getCpuPersonality(p) {
   const key = p?.personality && CPU_PERSONALITIES[p.personality]
     ? p.personality
     : CPU_PERSONALITY_KEYS[(p?.id || 0) % CPU_PERSONALITY_KEYS.length];
-  return { key, ...CPU_PERSONALITIES[key] };
+  const base = { key, ...CPU_PERSONALITIES[key] };
+  return scaleCpuTraits(base, getCpuDifficultyProfile(p));
 }
 
 /**
@@ -548,11 +618,13 @@ export function createGame({
   seed = Date.now(),
   cash,
   mapId = DEFAULT_MAP_ID,
+  cpuDifficulty,
 } = {}) {
   const board = buildBoard(mapId);
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
   const resolvedGoal = goal ?? board.goal ?? DEFAULT_GOAL;
   const rng = mulberry32(seed);
+  const resolvedCpuDifficulty = normalizeCpuDifficulty(cpuDifficulty);
 
   let cpuOrd = 0;
   const colored = normalizeLobbyColors(players);
@@ -570,6 +642,9 @@ export function createGame({
       color: pl.color,
       isCPU,
       personality,
+      cpuDifficulty: isCPU
+        ? normalizeCpuDifficulty(pl.cpuDifficulty || resolvedCpuDifficulty)
+        : null,
       cash: initialCash,
       pos: board.startId,
       prevPos: null,
@@ -621,6 +696,7 @@ export function createGame({
     winnerId: null,
     turn: 1,
     goalPressure: false,
+    cpuDifficulty: resolvedCpuDifficulty,
     switchState: board.switchState || 0,
     switchGates: board.switchGates || [],
     switchMoves: board.switchMoves || [],
@@ -1640,6 +1716,7 @@ export function serializeState(g) {
     winnerId: g.winnerId,
     turn: g.turn,
     goalPressure: !!g.goalPressure,
+    cpuDifficulty: normalizeCpuDifficulty(g.cpuDifficulty),
     worthHistory: (g.worthHistory || []).slice(-80),
     _seed: g._seed,
     _rngCount: g._rngCount,
@@ -1695,6 +1772,15 @@ export function restoreState(data) {
   {
     const raw = Number(g.diceMax);
     g.diceMax = Number.isFinite(raw) && raw >= 2 ? Math.floor(raw) : MOVE_DICE_MAX_DEFAULT;
+  }
+  g.cpuDifficulty = normalizeCpuDifficulty(g.cpuDifficulty);
+  for (const p of g.players || []) {
+    if (!p) continue;
+    if (p.isCPU) {
+      p.cpuDifficulty = normalizeCpuDifficulty(p.cpuDifficulty || g.cpuDifficulty);
+    } else {
+      p.cpuDifficulty = null;
+    }
   }
   applySwitchState(g);
   return g;
@@ -3444,6 +3530,7 @@ export function convertPlayerToCpu(g, pid) {
   if (!p.personality) {
     p.personality = CPU_PERSONALITY_KEYS[pid % CPU_PERSONALITY_KEYS.length];
   }
+  p.cpuDifficulty = normalizeCpuDifficulty(p.cpuDifficulty || g.cpuDifficulty);
   if (!p.flags) p.flags = {};
   p.flags.reclaimableHuman = true;
   addLog(g, `${p.name} をCPUに切り替え（同じ名前で再接続可）`, 'system');
@@ -5722,7 +5809,9 @@ export function cpuCashReserve(g, p) {
   const assets = getPlayerAssets(g, p);
   const fromToll = Math.floor(maxToll * 1.05);
   const fromAssets = Math.floor(Math.max(0, assets.total) * 0.1);
-  return Math.max(400, fromToll, Math.min(1400, fromAssets));
+  const base = Math.max(400, fromToll, Math.min(1400, fromAssets));
+  const mult = getCpuDifficultyProfile(p).reserveMult || 1;
+  return Math.floor(base * mult);
 }
 
 /** 支出後もクッションを残せるか（現金＋株のみ。店売却前提の買いを避ける） */
@@ -6067,6 +6156,12 @@ export function cpuScoreForkPath(g, p, fromId, nextId) {
 
 export function cpuPickFork(g, p, options) {
   if (!options?.length) return null;
+  const profile = getCpuDifficultyProfile(p);
+  // 初心は一定確率で無作為分岐（最適ルートを外す）
+  if (profile.forkRandomChance > 0 && cpuNoise(g, p, 901) < profile.forkRandomChance) {
+    const idx = Math.floor(cpuNoise(g, p, 902) * options.length) % options.length;
+    return options[idx]?.id ?? options[0]?.id ?? null;
+  }
   const traits = getCpuPersonality(p);
   const focus = cpuFocusAreas(g, p, traits);
   const phase = cpuGamePhase(g, p);
@@ -6127,6 +6222,7 @@ export function cpuShouldBuyShop(g, p, sq, traits = getCpuPersonality(p)) {
   if (inFocus && vacantLeft <= 3 && traits.shopBuy >= 0.8) return true;
   if (inFocus && areaCnt >= 1 && vacantLeft <= 2 && traits.shopBuy >= 0.75) return true;
 
+  const profile = getCpuDifficultyProfile(p);
   let desire = traits.shopBuy + areaCnt * 0.55 * Math.min(1.6, traits.ownArea / 2);
   desire += Math.min(1.4, traits.vacant * 0.22);
   desire += cpuShopTrafficScore(g, sq) * 0.22;
@@ -6138,13 +6234,21 @@ export function cpuShouldBuyShop(g, p, sq, traits = getCpuPersonality(p)) {
   if (phase.nearGoal) desire -= 0.55;
   if (price > p.cash) desire -= 0.28;
   if (p.cash - price < cpuCashReserve(g, p)) desire -= 0.32;
+  desire += profile.desireOffset || 0;
 
-  if (desire >= 0.9) return true;
-  if (desire < 0.5) return false;
-  if (traits.key === 'gambler') {
-    return cpuNoise(g, p, sq.id + 31) < Math.min(0.92, desire * 0.62);
+  let buy = false;
+  if (desire >= 0.9) buy = true;
+  else if (desire < 0.5) buy = false;
+  else if (traits.key === 'gambler') {
+    buy = cpuNoise(g, p, sq.id + 31) < Math.min(0.92, desire * 0.62);
+  } else {
+    buy = desire >= 0.72;
   }
-  return desire >= 0.72;
+  // 初心は「買う」判断を一定確率で見送る
+  if (buy && profile.mistakeChance > 0 && cpuNoise(g, p, sq.id + 77) < profile.mistakeChance) {
+    return false;
+  }
+  return buy;
 }
 
 /** 5倍買いの期待値ざっくり（独占後の増資枠＋株上昇 vs コスト） */
@@ -6185,6 +6289,7 @@ export function cpuShouldFiveBuy(g, p, pend, traits = getCpuPersonality(p)) {
   if (phase.lethal) return false;
   if (phase.closing) return false;
 
+  const profile = getCpuDifficultyProfile(p);
   const ev = cpuFiveBuyExpectedValue(g, p, sq, price);
   let score = traits.fiveBuy;
   if (focus.includes(sq.area)) score += 0.35;
@@ -6195,13 +6300,27 @@ export function cpuShouldFiveBuy(g, p, pend, traits = getCpuPersonality(p)) {
   if (phase.trailing && traits.key === 'magnate') score += 0.2;
   if (phase.nearGoal) score -= 0.35;
   if (p.cash < price + cpuCashReserve(g, p)) score -= 0.5;
-  // 交渉不成時でも EV がコストを上回れば実行
-  if (ev > price * 0.08 && myCnt >= 1) return true;
+  score += profile.fiveBuyOffset || 0;
+  // 交渉不成時でも EV がコストを上回れば実行（初心はより厳しめ）
+  const evOk = profile.id === 'beginner'
+    ? (ev > price * 0.22 && myCnt >= 1)
+    : (ev > price * 0.08 && myCnt >= 1);
+  if (evOk) {
+    if (profile.mistakeChance > 0 && cpuNoise(g, p, (pend.shopId || 0) + 61) < profile.mistakeChance) {
+      return false;
+    }
+    return true;
+  }
 
-  if (score >= 0.72) return true;
-  if (score < 0.28) return false;
-  if (traits.key === 'gambler') return cpuNoise(g, p, (pend.shopId || 0) + 47) < Math.min(0.75, score);
-  return score >= 0.55;
+  let take = false;
+  if (score >= 0.72) take = true;
+  else if (score < 0.28) take = false;
+  else if (traits.key === 'gambler') take = cpuNoise(g, p, (pend.shopId || 0) + 47) < Math.min(0.75, score);
+  else take = score >= 0.55;
+  if (take && profile.mistakeChance > 0 && cpuNoise(g, p, (pend.shopId || 0) + 83) < profile.mistakeChance) {
+    return false;
+  }
+  return take;
 }
 
 /**

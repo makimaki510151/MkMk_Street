@@ -44,6 +44,10 @@ import {
   normalizePlayerColor,
   normalizeLobbyColors,
   getCpuPersonality,
+  CPU_DIFFICULTIES,
+  CPU_DIFFICULTY_KEYS,
+  CPU_DIFFICULTY_DEFAULT,
+  normalizeCpuDifficulty,
   hasAreaMonopoly,
   getTollMulti,
   getAreaShops,
@@ -124,6 +128,8 @@ const app = {
   lobbyPlayers: [],
   /** ロビーで選択中のマップ（ゲスト同期用） */
   lobbyMapId: DEFAULT_MAP_ID,
+  /** CPU 難易度（beginner / normal）。ローカル・ホスト共通 */
+  cpuDifficulty: CPU_DIFFICULTY_DEFAULT,
   /** 自分が選んだロビー色 */
   lobbyColor: PLAYER_COLORS[0],
   /** 開始前の順番決めダイス状態 */
@@ -406,7 +412,62 @@ function broadcastLobbySync(extra = {}) {
     type: 'lobby_sync',
     players: app.lobbyPlayers,
     mapId,
+    cpuDifficulty: normalizeCpuDifficulty(app.cpuDifficulty),
     ...extra,
+  });
+}
+
+const CPU_DIFF_STORAGE_KEY = 'mkmk_cpu_difficulty';
+
+function loadSavedCpuDifficulty() {
+  try {
+    return normalizeCpuDifficulty(localStorage.getItem(CPU_DIFF_STORAGE_KEY));
+  } catch {
+    return CPU_DIFFICULTY_DEFAULT;
+  }
+}
+
+function saveCpuDifficulty(key) {
+  const normalized = normalizeCpuDifficulty(key);
+  app.cpuDifficulty = normalized;
+  try {
+    localStorage.setItem(CPU_DIFF_STORAGE_KEY, normalized);
+  } catch { /* ignore */ }
+  return normalized;
+}
+
+function readCpuDifficultyFromUi(containerSel) {
+  const checked = document.querySelector(`${containerSel} input[name="cpu-diff"]:checked`);
+  return normalizeCpuDifficulty(checked?.value || app.cpuDifficulty);
+}
+
+function renderCpuDifficultyPicker(containerId, hintId, {
+  selected = app.cpuDifficulty,
+  onChange,
+} = {}) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  const current = normalizeCpuDifficulty(selected);
+  box.innerHTML = CPU_DIFFICULTY_KEYS.map((key) => {
+    const d = CPU_DIFFICULTIES[key];
+    const id = `${containerId}-${key}`;
+    return `<label class="map-option" for="${id}">
+      <input type="radio" name="cpu-diff" id="${id}" value="${key}" ${key === current ? 'checked' : ''} />
+      <span class="map-option-body">
+        <strong>${escapeHtml(d.label)}</strong>
+        <small>${escapeHtml(d.hint || '')}</small>
+      </span>
+    </label>`;
+  }).join('');
+  const hint = hintId ? document.getElementById(hintId) : null;
+  if (hint) hint.textContent = CPU_DIFFICULTIES[current]?.hint || '';
+  box.querySelectorAll('input[name="cpu-diff"]').forEach((input) => {
+    input.onchange = () => {
+      if (!input.checked) return;
+      const next = saveCpuDifficulty(input.value);
+      if (hint) hint.textContent = CPU_DIFFICULTIES[next]?.hint || '';
+      onChange?.(next);
+    };
   });
 }
 
@@ -1115,10 +1176,14 @@ function openSetupLocal() {
   showScreen('screen-setup');
   $('#setup-online-only').hidden = true;
   $('#setup-title').textContent = 'ローカル対戦';
+  app.cpuDifficulty = loadSavedCpuDifficulty();
   renderMapPicker('setup-map-options', DEFAULT_MAP_ID, 'setup-goal', 'setup-cash', {
     canvasId: 'setup-map-preview',
     nameId: 'setup-map-preview-name',
     blurbId: 'setup-map-preview-blurb',
+  });
+  renderCpuDifficultyPicker('setup-cpu-diff-options', 'setup-cpu-diff-hint', {
+    selected: app.cpuDifficulty,
   });
   renderSeatEditors(2);
   // レイアウト確定後にプレビュー解像度を合わせる
@@ -1132,6 +1197,7 @@ function openSetupLocal() {
   $('#btn-start-game').onclick = () => {
     const seats = readSeatEditors();
     if (seats.length < 2) return toast('2人以上必要です');
+    saveCpuDifficulty(readCpuDifficultyFromUi('#setup-cpu-diff-options'));
     // 全席の名前を保持（未参加席も含む）
     const allNames = [0, 1, 2, 3].map((i) => (
       $(`input.seat-name[data-i="${i}"]`)?.value || DEFAULT_SEAT_NAMES[i]
@@ -1224,6 +1290,7 @@ async function openLobby(role, prefill = {}) {
   }
   app.lobbyPlayers = [];
   app.mode = role;
+  app.cpuDifficulty = loadSavedCpuDifficulty();
   showScreen('screen-lobby');
   $('#lobby-role').textContent = role === 'host' ? 'ホスト（部屋を作る）' : 'ゲスト（部屋に入る）';
   $('#lobby-room-wrap').hidden = role === 'host';
@@ -1231,6 +1298,12 @@ async function openLobby(role, prefill = {}) {
   $('#btn-lobby-start').hidden = role !== 'host';
   $('#btn-add-cpu').hidden = role !== 'host';
   $('#lobby-code-display').textContent = '------';
+  if (role === 'host') {
+    renderCpuDifficultyPicker('lobby-cpu-diff-options', 'lobby-cpu-diff-hint', {
+      selected: app.cpuDifficulty,
+      onChange: () => broadcastLobbySync(),
+    });
+  }
   $('#lobby-players').innerHTML = '';
   syncLobbyRoomControls({ roomOpen: false });
   const guestMap = $('#lobby-guest-map');
@@ -1382,6 +1455,7 @@ async function openLobby(role, prefill = {}) {
     const goal = Number($('#lobby-goal').value) || 10000;
     const cash = readStartCash('lobby-cash');
     const mapId = selectedMapId('#lobby-map-options');
+    const cpuDifficulty = saveCpuDifficulty(readCpuDifficultyFromUi('#lobby-cpu-diff-options'));
     resyncLobbyColors();
     const players = app.lobbyPlayers.map((p) => ({
       peerId: p.peerId,
@@ -1390,7 +1464,7 @@ async function openLobby(role, prefill = {}) {
       isCPU: !!p.isCPU,
       key: p.peerId,
     }));
-    beginOrderRoll({ players, goal, cash, mapId, mode: 'host' });
+    beginOrderRoll({ players, goal, cash, mapId, mode: 'host', cpuDifficulty });
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -1610,6 +1684,7 @@ function handleNetEvent({ from, data }) {
       app.lobbyPlayers = normalizeLobbyColors(data.players || []);
       renderLobbyPlayers();
       if (data.mapId) applyLobbyMapPreview(data.mapId);
+      if (data.cpuDifficulty) app.cpuDifficulty = normalizeCpuDifficulty(data.cpuDifficulty);
       const guestWrap = $('#lobby-guest-map');
       if (guestWrap) guestWrap.hidden = false;
       return;
@@ -2039,7 +2114,7 @@ function syncGoalPressureBgm(g) {
 }
 
 /** 順番決めダイスを開始（ホスト／ローカル） */
-function beginOrderRoll({ players, goal, cash, mapId, mode }) {
+function beginOrderRoll({ players, goal, cash, mapId, mode, cpuDifficulty }) {
   const list = players.map((p, i) => ({
     key: p.key || p.peerId || `p-${i}`,
     peerId: p.peerId || null,
@@ -2061,6 +2136,7 @@ function beginOrderRoll({ players, goal, cash, mapId, mode }) {
     cash: cash ?? DEFAULT_CASH,
     mapId,
     mode,
+    cpuDifficulty: normalizeCpuDifficulty(cpuDifficulty ?? app.cpuDifficulty),
   };
   showOrderRollScreen();
   broadcastOrderRollSync();
@@ -2502,12 +2578,13 @@ function confirmOrderRollStart() {
   const cash = o.cash ?? DEFAULT_CASH;
   const mapId = o.mapId;
   const mode = o.mode;
+  const cpuDifficulty = normalizeCpuDifficulty(o.cpuDifficulty ?? app.cpuDifficulty);
   clearOrderRollRevealTimers();
   app.orderRoll = null;
 
   if (mode === 'local') {
     app.mode = 'local';
-    app.game = createGame({ players, goal, cash, mapId });
+    app.game = createGame({ players, goal, cash, mapId, cpuDifficulty });
     app.localSeat = players.findIndex((p) => !p.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -2515,7 +2592,7 @@ function confirmOrderRollStart() {
   }
 
   // host online
-  app.game = createGame({ players, goal, cash, mapId });
+  app.game = createGame({ players, goal, cash, mapId, cpuDifficulty });
   app.localSeat = app.game.players.findIndex((p) => p.peerId === app.net?.peerId);
   if (app.localSeat < 0) app.localSeat = 0;
   app.net.broadcast({
@@ -2548,9 +2625,10 @@ function startLocal(seats) {
   const cash = mapFromDemo
     ? (mapDef?.defaultCash ?? DEFAULT_CASH)
     : readStartCash('setup-cash');
+  const cpuDifficulty = normalizeCpuDifficulty(app.cpuDifficulty);
   // デモ直入れは順番ダイスを飛ばす
   if (demo) {
-    app.game = createGame({ players: seats, goal, cash, mapId });
+    app.game = createGame({ players: seats, goal, cash, mapId, cpuDifficulty });
     app.localSeat = seats.findIndex((s) => !s.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -2562,7 +2640,7 @@ function startLocal(seats) {
     peerId: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
     key: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
   }));
-  beginOrderRoll({ players, goal, cash, mapId, mode: 'local' });
+  beginOrderRoll({ players, goal, cash, mapId, mode: 'local', cpuDifficulty });
 }
 
 function maybeDemoLanding() {
