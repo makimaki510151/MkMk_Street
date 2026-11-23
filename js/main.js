@@ -1778,6 +1778,12 @@ function playRemoteFx(data) {
       refreshGameUI();
     });
   }
+  if (data.kind === 'step' && data.from != null && data.to != null) {
+    // スイッチ／ワープ直前など、state を遅延する着地ステップ用
+    const dur = Number(data.dur) || 380;
+    app.renderer?.animateToken(data.pid, data.from, data.to, dur);
+    audio.sfx.step();
+  }
   if (data.kind === 'switchSlide' && data.moves?.length) {
     // 先にスライド予約 → その後に論理座標を更新（一瞬の新位置フラッシュを防ぐ）
     armSwitchSlides(data.moves);
@@ -4014,6 +4020,8 @@ async function resolveForkChoice(nextId) {
   app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
+  // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く
+  holdSwitchTilesAtFrom(result.switchMoves);
   // 門／階層へ分岐したときは入口まで歩かせ、warps で飛ばす
   const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
     ?? result.warps?.[0]?.from;
@@ -4021,7 +4029,12 @@ async function resolveForkChoice(nextId) {
   if (result.warps?.length) armWarpHolds(result.warps);
   app.renderer?.animateToken(pid, from, stepTo, 400);
   audio.sfx.step();
-  if (!result.warps?.length) {
+  // 盤面切替／ワープ中は最終 state を遅延。スイッチ着地は step FX だけ先に送る
+  if (result.warps?.length) {
+    /* state は演出後 */
+  } else if (result.done && result.switchMoves?.length) {
+    broadcastFx({ kind: 'step', pid, from, to: stepTo, dur: 400 });
+  } else {
     syncState({ anim: { pid, from, to: stepTo } });
   }
   refreshGameUI();
@@ -4033,7 +4046,24 @@ async function resolveForkChoice(nextId) {
   }
   if (result.done) {
     onLandingSfx();
-    if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
+    const landed = app.game.players[pid]?.pos;
+    if (landed != null) app.inspectedId = landed;
+    if (result.switchMoves?.length) {
+      await presentSwitchFx(result.switchMoves);
+    } else if (landed != null && getNode(app.game, landed)?.type === 'switch') {
+      pushEventStamp({
+        kicker: 'スイッチ',
+        title: '航路が切り替わった',
+        detail: '経路が切り替わった',
+        kind: 'system',
+        color: '#ffe08a',
+        silentStamp: true,
+      });
+      toast('航路が切り替わった');
+    }
+    // 分岐からの最終着地で state 同期が抜け、ゲストがスイッチに乗らないずれを防ぐ
+    syncState(result.switchMoves?.length ? { forceNpcSync: true } : {});
+    refreshGameUI();
     await resumeAfterMovement();
   } else {
     await continueAdvancing();
@@ -4077,6 +4107,19 @@ function armSwitchSlides(moves, dur = 780) {
   }
 }
 
+/** スイッチ切替直後、スライド開始まで動くマスを from 座標に据え置く */
+function holdSwitchTilesAtFrom(moves) {
+  if (!moves?.length || !app.game) return;
+  for (const m of moves) {
+    if (!m || m.id == null || !m.from) continue;
+    const node = app.game.map.find((n) => n.id === m.id);
+    if (node) {
+      node.col = m.from.col;
+      node.row = m.from.row;
+    }
+  }
+}
+
 async function continueAdvancing() {
   app.deferEventFlash = true;
   while (app.game?.move && app.game.phase === 'moving') {
@@ -4087,16 +4130,7 @@ async function continueAdvancing() {
     if (result.state) commitGameState(result.state);
     // スイッチ切替後、await 中に新座標で描画されないよう見た目だけ from に据え置く。
     // presentSwitchFx が to へ戻してからスライドを開始する（瞬時切替→巻き戻り防止）。
-    if (result.switchMoves?.length) {
-      for (const m of result.switchMoves) {
-        if (!m || m.id == null || !m.from) continue;
-        const node = app.game.map.find((n) => n.id === m.id);
-        if (node) {
-          node.col = m.from.col;
-          node.row = m.from.row;
-        }
-      }
-    }
+    holdSwitchTilesAtFrom(result.switchMoves);
 
     if (result.forked) {
       audio.sfx.fork();
@@ -4113,9 +4147,20 @@ async function continueAdvancing() {
       if (result.warps?.length) armWarpHolds(result.warps);
       app.renderer?.animateToken(pid, result.from ?? from, stepTo, 400);
       audio.sfx.step();
-      // スイッチ／ワープがある場合、新座標の state 同期を演出後に回す
+      // スイッチ／ワープがある場合、盤面の最終 state 同期を演出後に回す
       // （ゲストが一瞬新位置→スライド／ワープ開始の巻き戻りフラッシュを見ないように）
-      if (!(result.warps?.length || (result.done && result.switchMoves?.length))) {
+      // ただしスイッチ着地のコマ1歩は step FX で先に送り、「乗れていない」同期ずれを防ぐ
+      if (result.warps?.length) {
+        /* state は演出後 */
+      } else if (result.done && result.switchMoves?.length) {
+        broadcastFx({
+          kind: 'step',
+          pid,
+          from: result.from ?? from,
+          to: stepTo,
+          dur: 400,
+        });
+      } else {
         syncState({ anim: { pid, from: result.from ?? from, to: stepTo } });
       }
       refreshGameUI();
@@ -4158,7 +4203,8 @@ async function continueAdvancing() {
       }
       if (result.warps?.length) await presentWarpFx(result.warps);
       // スイッチ時は演出後にまとめて同期（途中同期だとゲストが瞬時切替→巻き戻りする）
-      syncState();
+      // NPC演出待ちで遅延しないよう force（着地位置・switchState を確実に配信）
+      syncState(result.switchMoves?.length ? { forceNpcSync: true } : {});
       refreshGameUI();
       return;
     }
