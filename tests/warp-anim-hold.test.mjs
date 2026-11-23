@@ -25,7 +25,9 @@ describe('warp anim hold (no teleport-before-fly)', () => {
     assert.match(main, /function armWarpHolds/);
     assert.match(main, /armWarpHolds\(result\.warps\)/);
     assert.match(main, /armWarpHolds\(warps\)/);
-    // 最終歩はワープ出発マスへ歩かせる
-    assert.match(main, /stepTo = \(result\.done && warpFrom != null\) \? warpFrom : result\.to/);
+    // 門／階層／着地ワープとも、見た目は出発マスへ歩かせる
+    assert.match(main, /const stepTo = warpFrom != null \? warpFrom : result\.to/);
+    // 残移動ありの途中ワープも即演出してから歩き続ける
+    assert.match(main, /result\.warps\?\.length && !result\.done/);
   });
 });

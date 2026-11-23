@@ -57,6 +57,8 @@ import {
   POTION_CARD_COUNT,
   POTION_EFFECT_LABELS,
   takeEventNpcFx,
+  removeEventNpc,
+  immediateTransitDest,
 } from './engine.js';
 import {
   AREA_META,
@@ -1727,6 +1729,7 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'eventNpcDepart') {
     app.renderer?.clearTokenHold(data.npcId);
+    if (app.game && data.npcId != null) removeEventNpc(app.game, data.npcId);
     pushEventStamp({
       kicker: 'イベントNPC',
       title: '異界へ帰っていった',
@@ -4011,13 +4014,31 @@ async function resolveForkChoice(nextId) {
   app.modalPendingKey = null;
   app.busy = true;
   app.deferEventFlash = true;
-  app.renderer?.animateToken(pid, from, nextId, 400);
+  // 門／階層へ分岐したときは入口まで歩かせ、warps で飛ばす
+  const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
+    ?? result.warps?.[0]?.from;
+  const stepTo = warpFrom != null ? warpFrom : nextId;
+  if (result.warps?.length) armWarpHolds(result.warps);
+  app.renderer?.animateToken(pid, from, stepTo, 400);
   audio.sfx.step();
-  syncState({ anim: { pid, from, to: nextId } });
+  if (!result.warps?.length) {
+    syncState({ anim: { pid, from, to: stepTo } });
+  }
   refreshGameUI();
-  await wait(420);
-  await continueAdvancing();
-  await resumeAfterMovement();
+  await wait(result.warps?.length ? 400 : 420);
+  if (result.warps?.length) {
+    await presentWarpFx(result.warps);
+    syncState();
+    refreshGameUI();
+  }
+  if (result.done) {
+    onLandingSfx();
+    if (result.switchMoves?.length) await presentSwitchFx(result.switchMoves);
+    await resumeAfterMovement();
+  } else {
+    await continueAdvancing();
+    await resumeAfterMovement();
+  }
   // 着地が購入/増資待ちなら確実に選択UIを再掲（busy 残留や告知での欠落防止）
   if (isLocalPendingChoice(app.game)) {
     app.busy = false;
@@ -4085,20 +4106,21 @@ async function continueAdvancing() {
     }
 
     if (result.stepped) {
-      // ワープがある最終歩は「出発マス」まで歩かせ、目的地への瞬間移動を防ぐ
+      // 門／階層／着地ワープ：論理座標が先に飛んでも、見た目は入口まで歩かせる
       const warpFrom = result.warps?.find((w) => w.pid === pid)?.from
         ?? result.warps?.[0]?.from;
-      const stepTo = (result.done && warpFrom != null) ? warpFrom : result.to;
+      const stepTo = warpFrom != null ? warpFrom : result.to;
+      if (result.warps?.length) armWarpHolds(result.warps);
       app.renderer?.animateToken(pid, result.from ?? from, stepTo, 400);
       audio.sfx.step();
-      // 最終歩でスイッチ／ワープがある場合、新座標の state 同期を演出後に回す
+      // スイッチ／ワープがある場合、新座標の state 同期を演出後に回す
       // （ゲストが一瞬新位置→スライド／ワープ開始の巻き戻りフラッシュを見ないように）
-      if (!(result.done && (result.switchMoves?.length || result.warps?.length))) {
+      if (!(result.warps?.length || (result.done && result.switchMoves?.length))) {
         syncState({ anim: { pid, from: result.from ?? from, to: stepTo } });
       }
       refreshGameUI();
       // ワープへ繋ぐときはステップ完了と同時に演出開始（ホールド隙間を作らない）
-      await wait(result.done && result.warps?.length ? 400 : 420);
+      await wait(result.warps?.length ? 400 : 420);
     }
 
     // 銀行通過割込み（昇進→株→方向）
@@ -4106,6 +4128,13 @@ async function continueAdvancing() {
       syncState();
       refreshGameUI();
       return;
+    }
+
+    // 門／階層など残移動ありの途中ワープは、ここで即演出してから歩き続ける
+    if (result.warps?.length && !result.done) {
+      await presentWarpFx(result.warps);
+      syncState();
+      refreshGameUI();
     }
 
     if (result.done) {
@@ -4211,6 +4240,10 @@ async function flushPendingEventNpcFx() {
   app.pendingEventNpcFx = [];
   if (!fx.length) return;
   await presentEventNpcFx(fx);
+  // 演出完了後に遅延していた state と合わせて同期
+  const extra = app.deferredStateExtra || {};
+  app.deferredStateExtra = null;
+  syncState({ ...extra, forceNpcSync: true });
 }
 
 async function presentEventNpcFx(fxList, remote = false) {
@@ -4264,6 +4297,8 @@ async function presentEventNpcFx(fxList, remote = false) {
         });
       }
       app.renderer?.clearTokenHold(fx.npcId);
+      // 退場キュー済みコマをここで外す（最終移動の描画後）
+      if (app.game && fx.npcId != null) removeEventNpc(app.game, fx.npcId);
       await wait(360);
     }
   }
@@ -4280,7 +4315,7 @@ async function presentEventNpcMove(fx, remote = false) {
     : [fx.from, fx.to].filter((id) => id != null);
   if (!path.length || fx.npcId == null) return;
   const diceMax = Math.max(2, Number(fx.diceMax) || 6);
-  const roll = Math.max(1, Math.min(diceMax, Number(fx.roll) || path.length - 1));
+  const roll = Math.max(1, Math.min(diceMax, Number(fx.roll) || Math.max(1, path.length - 1)));
   const label = fx.label || 'イベントNPC';
 
   app.renderer?.holdToken(fx.npcId, path[0]);
@@ -4306,12 +4341,20 @@ async function presentEventNpcMove(fx, remote = false) {
   for (let i = 1; i < path.length; i += 1) {
     const from = path[i - 1];
     const to = path[i];
-    app.renderer?.animateToken(fx.npcId, from, to, 400);
-    audio.sfx.step();
-    // ゲストは eventNpcMove パケット側で歩行するため、ここは状態のみ同期（二重ホップ防止）
-    if (!remote) syncState();
-    refreshGameUI();
-    await wait(420);
+    const transit = app.game ? immediateTransitDest(app.game, from) : null;
+    if (transit != null && transit === to) {
+      // 門／階層：歩行ではなくワープ演出
+      app.renderer?.animateWarp?.(fx.npcId, from, to, 900);
+      if (audio.sfx.warp) audio.sfx.warp();
+      else audio.sfx.step();
+      refreshGameUI();
+      await wait(960);
+    } else {
+      app.renderer?.animateToken(fx.npcId, from, to, 400);
+      audio.sfx.step();
+      refreshGameUI();
+      await wait(420);
+    }
   }
   app.renderer?.clearTokenHold(fx.npcId);
 }
@@ -5721,9 +5764,15 @@ async function handleHostAction(from, data) {
 }
 
 function syncState(extra = {}) {
-  if (app.mode === 'host' && app.net) {
-    app.net.broadcast({ type: 'state', state: serializeState(app.game), ...extra });
+  if (app.mode !== 'host' || !app.net) return;
+  // イベントNPC演出キューがある間は最終位置への state を遅延（ゲスト瞬移・同期ずれ防止）
+  if (app.pendingEventNpcFx?.length && !extra.forceNpcSync) {
+    const { forceNpcSync: _f, ...rest } = extra;
+    app.deferredStateExtra = { ...(app.deferredStateExtra || {}), ...rest };
+    return;
   }
+  const { forceNpcSync: _force, ...rest } = extra;
+  app.net.broadcast({ type: 'state', state: serializeState(app.game), ...rest });
 }
 
 function broadcastFx(fx) {

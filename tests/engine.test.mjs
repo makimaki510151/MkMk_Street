@@ -106,6 +106,7 @@ import {
   spawnEventNpc,
   canSpawnEventNpc,
   runEventNpcRound,
+  takeEventNpcFx,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode } from '../js/board.js';
 import {
@@ -602,6 +603,11 @@ describe('MkMk Street engine', () => {
     assert.equal(gateStep.gate, true);
     assert.equal(gSky.players[0].pos, gateB.id);
     assert.equal(gSky.move.stepsLeft, 2);
+    // 途中ワープは warps に載せ、to は入口（見た目の歩行先）にする
+    assert.ok(gateStep.warps?.length >= 1, 'mid-move gate should expose warp fx');
+    assert.equal(gateStep.warps[0].from, gateA.id);
+    assert.equal(gateStep.warps[0].to, gateB.id);
+    assert.equal(gateStep.to, gateA.id);
 
     // ランダム転移：小島の転移マスへ
     const rand = gSky.map.find((n) => n.type === 'warp_random');
@@ -2345,6 +2351,40 @@ describe('MkMk Street engine', () => {
     assert.equal(done.fiveBuyMulti, 5);
     assert.equal(done.fiveBuyPlayerId, 0);
     assert.equal(shop.owner, 0);
+  });
+
+  it('toll shield zeros toll but still offers five_buy', () => {
+    const g = createGame({
+      players: [{ name: 'Payer', cash: 8000 }, { name: 'Owner', cash: 5000 }],
+      seed: 94,
+      cash: 8000,
+    });
+    const shop = g.map.find((n) => n.type === 'shop');
+    assert.ok(shop);
+    shop.owner = 1;
+    shop.price = 200;
+    shop.basePrice = 200;
+    shop.baseToll = 120;
+    shop.extraInvest = 0;
+    shop.protectTurns = 0;
+    g.players[0].flags.tollShield = true;
+    const cashBefore = g.players[0].cash;
+    const ownerBefore = g.players[1].cash;
+
+    g.players[0].pos = shop.id;
+    g.phase = 'moving';
+    g.move = { stepsLeft: 0, path: [shop.id], passedBank: false, startPos: g.startId };
+    advanceMove(g);
+
+    assert.equal(g.players[0].flags.tollShield, false);
+    assert.equal(g.players[0].cash, cashBefore);
+    assert.equal(g.players[1].cash, ownerBefore);
+    assert.ok(g.logs.some((l) => /通行守り/.test(l.text)));
+    assert.equal(g.phase, 'await_choice');
+    assert.equal(g.pending?.type, 'five_buy');
+    assert.equal(g.pending?.shopId, shop.id);
+    assert.equal(g.pending?.toll, 0);
+    assert.equal(g.pending?.price, shop.price * 5);
   });
 
   it('five_buy success returns FX metadata for client sync', () => {
@@ -4465,7 +4505,11 @@ describe('MkMk Street engine', () => {
     fairy.prevPos = null;
     runEventNpcRound(g);
     assert.equal(g.players[0].marks.filter(Boolean).length, 1);
-    assert.equal(g.eventNpcs.some((n) => n.kind === 'mark_fairy'), false);
+    // 退場は演出用にキューのみ。実削除は UI が removeEventNpc するまで残す
+    const left = g.eventNpcs.find((n) => n.kind === 'mark_fairy');
+    assert.ok(left);
+    assert.equal(left.departQueued, true);
+    assert.ok(takeEventNpcFx(g).some((f) => f.type === 'depart'));
   });
 
   it('mark fairy gives nothing when marks and wildcards are full', () => {
