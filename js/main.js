@@ -48,6 +48,10 @@ import {
   CPU_DIFFICULTY_KEYS,
   CPU_DIFFICULTY_DEFAULT,
   normalizeCpuDifficulty,
+  BANKRUPT_LIMIT_OPTIONS,
+  BANKRUPT_LIMIT_DEFAULT,
+  normalizeBankruptLimit,
+  bankruptLimitLabel,
   hasAreaMonopoly,
   getTollMulti,
   getAreaShops,
@@ -130,6 +134,7 @@ const app = {
   lobbyMapId: DEFAULT_MAP_ID,
   /** CPU 難易度（beginner / normal）。ローカル・ホスト共通 */
   cpuDifficulty: CPU_DIFFICULTY_DEFAULT,
+  bankruptLimit: BANKRUPT_LIMIT_DEFAULT,
   /** 自分が選んだロビー色 */
   lobbyColor: PLAYER_COLORS[0],
   /** 開始前の順番決めダイス状態 */
@@ -413,6 +418,7 @@ function broadcastLobbySync(extra = {}) {
     players: app.lobbyPlayers,
     mapId,
     cpuDifficulty: normalizeCpuDifficulty(app.cpuDifficulty),
+    bankruptLimit: normalizeBankruptLimit(app.bankruptLimit),
     ...extra,
   });
 }
@@ -466,6 +472,63 @@ function renderCpuDifficultyPicker(containerId, hintId, {
       if (!input.checked) return;
       const next = saveCpuDifficulty(input.value);
       if (hint) hint.textContent = CPU_DIFFICULTIES[next]?.hint || '';
+      onChange?.(next);
+    };
+  });
+}
+
+const BANKRUPT_LIMIT_STORAGE_KEY = 'mkmk_bankrupt_limit';
+
+function loadSavedBankruptLimit() {
+  try {
+    return normalizeBankruptLimit(localStorage.getItem(BANKRUPT_LIMIT_STORAGE_KEY));
+  } catch {
+    return BANKRUPT_LIMIT_DEFAULT;
+  }
+}
+
+function saveBankruptLimit(raw) {
+  const normalized = normalizeBankruptLimit(raw);
+  app.bankruptLimit = normalized;
+  try {
+    localStorage.setItem(BANKRUPT_LIMIT_STORAGE_KEY, String(normalized));
+  } catch { /* ignore */ }
+  return normalized;
+}
+
+function readBankruptLimitFromUi(containerSel) {
+  const checked = document.querySelector(`${containerSel} input[name="bankrupt-limit"]:checked`);
+  return normalizeBankruptLimit(checked?.value ?? app.bankruptLimit);
+}
+
+function renderBankruptLimitPicker(containerId, hintId, {
+  selected = app.bankruptLimit,
+  onChange,
+} = {}) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  const current = normalizeBankruptLimit(selected);
+  box.innerHTML = BANKRUPT_LIMIT_OPTIONS.map((opt) => {
+    const id = `${containerId}-${opt.value}`;
+    return `<label class="map-option" for="${id}">
+      <input type="radio" name="bankrupt-limit" id="${id}" value="${opt.value}" ${opt.value === current ? 'checked' : ''} />
+      <span class="map-option-body">
+        <strong>${escapeHtml(opt.label)}</strong>
+        <small>${escapeHtml(opt.hint || '')}</small>
+      </span>
+    </label>`;
+  }).join('');
+  const hint = hintId ? document.getElementById(hintId) : null;
+  if (hint) {
+    hint.textContent = BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === current)?.hint || '';
+  }
+  box.querySelectorAll('input[name="bankrupt-limit"]').forEach((input) => {
+    input.onchange = () => {
+      if (!input.checked) return;
+      const next = saveBankruptLimit(input.value);
+      if (hint) {
+        hint.textContent = BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === next)?.hint || '';
+      }
       onChange?.(next);
     };
   });
@@ -1182,6 +1245,10 @@ function openSetupLocal() {
     nameId: 'setup-map-preview-name',
     blurbId: 'setup-map-preview-blurb',
   });
+  app.bankruptLimit = loadSavedBankruptLimit();
+  renderBankruptLimitPicker('setup-bankrupt-limit-options', 'setup-bankrupt-limit-hint', {
+    selected: app.bankruptLimit,
+  });
   renderCpuDifficultyPicker('setup-cpu-diff-options', 'setup-cpu-diff-hint', {
     selected: app.cpuDifficulty,
   });
@@ -1198,6 +1265,7 @@ function openSetupLocal() {
     const seats = readSeatEditors();
     if (seats.length < 2) return toast('2人以上必要です');
     saveCpuDifficulty(readCpuDifficultyFromUi('#setup-cpu-diff-options'));
+    saveBankruptLimit(readBankruptLimitFromUi('#setup-bankrupt-limit-options'));
     // 全席の名前を保持（未参加席も含む）
     const allNames = [0, 1, 2, 3].map((i) => (
       $(`input.seat-name[data-i="${i}"]`)?.value || DEFAULT_SEAT_NAMES[i]
@@ -1291,6 +1359,7 @@ async function openLobby(role, prefill = {}) {
   app.lobbyPlayers = [];
   app.mode = role;
   app.cpuDifficulty = loadSavedCpuDifficulty();
+  app.bankruptLimit = loadSavedBankruptLimit();
   showScreen('screen-lobby');
   $('#lobby-role').textContent = role === 'host' ? 'ホスト（部屋を作る）' : 'ゲスト（部屋に入る）';
   $('#lobby-room-wrap').hidden = role === 'host';
@@ -1299,6 +1368,10 @@ async function openLobby(role, prefill = {}) {
   $('#btn-add-cpu').hidden = role !== 'host';
   $('#lobby-code-display').textContent = '------';
   if (role === 'host') {
+    renderBankruptLimitPicker('lobby-bankrupt-limit-options', 'lobby-bankrupt-limit-hint', {
+      selected: app.bankruptLimit,
+      onChange: () => broadcastLobbySync(),
+    });
     renderCpuDifficultyPicker('lobby-cpu-diff-options', 'lobby-cpu-diff-hint', {
       selected: app.cpuDifficulty,
       onChange: () => broadcastLobbySync(),
@@ -1308,6 +1381,11 @@ async function openLobby(role, prefill = {}) {
   syncLobbyRoomControls({ roomOpen: false });
   const guestMap = $('#lobby-guest-map');
   if (guestMap) guestMap.hidden = role === 'host';
+  const guestRule = $('#lobby-guest-bankrupt-limit');
+  if (guestRule) {
+    guestRule.hidden = true;
+    guestRule.textContent = '';
+  }
   app.lobbyMapId = DEFAULT_MAP_ID;
   if (role === 'host') {
     renderMapPicker('lobby-map-options', DEFAULT_MAP_ID, 'lobby-goal', 'lobby-cash', {
@@ -1456,6 +1534,7 @@ async function openLobby(role, prefill = {}) {
     const cash = readStartCash('lobby-cash');
     const mapId = selectedMapId('#lobby-map-options');
     const cpuDifficulty = saveCpuDifficulty(readCpuDifficultyFromUi('#lobby-cpu-diff-options'));
+    const bankruptLimit = saveBankruptLimit(readBankruptLimitFromUi('#lobby-bankrupt-limit-options'));
     resyncLobbyColors();
     const players = app.lobbyPlayers.map((p) => ({
       peerId: p.peerId,
@@ -1464,7 +1543,7 @@ async function openLobby(role, prefill = {}) {
       isCPU: !!p.isCPU,
       key: p.peerId,
     }));
-    beginOrderRoll({ players, goal, cash, mapId, mode: 'host', cpuDifficulty });
+    beginOrderRoll({ players, goal, cash, mapId, mode: 'host', cpuDifficulty, bankruptLimit });
   };
 
   $('#btn-add-cpu').onclick = () => {
@@ -1685,6 +1764,12 @@ function handleNetEvent({ from, data }) {
       renderLobbyPlayers();
       if (data.mapId) applyLobbyMapPreview(data.mapId);
       if (data.cpuDifficulty) app.cpuDifficulty = normalizeCpuDifficulty(data.cpuDifficulty);
+      if (data.bankruptLimit != null) app.bankruptLimit = normalizeBankruptLimit(data.bankruptLimit);
+      const guestRule = $('#lobby-guest-bankrupt-limit');
+      if (guestRule) {
+        guestRule.hidden = false;
+        guestRule.textContent = `決着ルール: 破産 ${bankruptLimitLabel(app.bankruptLimit)}`;
+      }
       const guestWrap = $('#lobby-guest-map');
       if (guestWrap) guestWrap.hidden = false;
       return;
@@ -2114,7 +2199,7 @@ function syncGoalPressureBgm(g) {
 }
 
 /** 順番決めダイスを開始（ホスト／ローカル） */
-function beginOrderRoll({ players, goal, cash, mapId, mode, cpuDifficulty }) {
+function beginOrderRoll({ players, goal, cash, mapId, mode, cpuDifficulty, bankruptLimit }) {
   const list = players.map((p, i) => ({
     key: p.key || p.peerId || `p-${i}`,
     peerId: p.peerId || null,
@@ -2137,6 +2222,7 @@ function beginOrderRoll({ players, goal, cash, mapId, mode, cpuDifficulty }) {
     mapId,
     mode,
     cpuDifficulty: normalizeCpuDifficulty(cpuDifficulty ?? app.cpuDifficulty),
+    bankruptLimit: normalizeBankruptLimit(bankruptLimit ?? app.bankruptLimit),
   };
   showOrderRollScreen();
   broadcastOrderRollSync();
@@ -2579,12 +2665,13 @@ function confirmOrderRollStart() {
   const mapId = o.mapId;
   const mode = o.mode;
   const cpuDifficulty = normalizeCpuDifficulty(o.cpuDifficulty ?? app.cpuDifficulty);
+  const bankruptLimit = normalizeBankruptLimit(o.bankruptLimit ?? app.bankruptLimit);
   clearOrderRollRevealTimers();
   app.orderRoll = null;
 
   if (mode === 'local') {
     app.mode = 'local';
-    app.game = createGame({ players, goal, cash, mapId, cpuDifficulty });
+    app.game = createGame({ players, goal, cash, mapId, cpuDifficulty, bankruptLimit });
     app.localSeat = players.findIndex((p) => !p.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -2592,7 +2679,7 @@ function confirmOrderRollStart() {
   }
 
   // host online
-  app.game = createGame({ players, goal, cash, mapId, cpuDifficulty });
+  app.game = createGame({ players, goal, cash, mapId, cpuDifficulty, bankruptLimit });
   app.localSeat = app.game.players.findIndex((p) => p.peerId === app.net?.peerId);
   if (app.localSeat < 0) app.localSeat = 0;
   app.net.broadcast({
@@ -2626,9 +2713,10 @@ function startLocal(seats) {
     ? (mapDef?.defaultCash ?? DEFAULT_CASH)
     : readStartCash('setup-cash');
   const cpuDifficulty = normalizeCpuDifficulty(app.cpuDifficulty);
+  const bankruptLimit = normalizeBankruptLimit(app.bankruptLimit);
   // デモ直入れは順番ダイスを飛ばす
   if (demo) {
-    app.game = createGame({ players: seats, goal, cash, mapId, cpuDifficulty });
+    app.game = createGame({ players: seats, goal, cash, mapId, cpuDifficulty, bankruptLimit });
     app.localSeat = seats.findIndex((s) => !s.isCPU);
     if (app.localSeat < 0) app.localSeat = 0;
     enterGame();
@@ -2640,7 +2728,7 @@ function startLocal(seats) {
     peerId: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
     key: s.isCPU ? `cpu-local-${i}` : `local-${i}`,
   }));
-  beginOrderRoll({ players, goal, cash, mapId, mode: 'local', cpuDifficulty });
+  beginOrderRoll({ players, goal, cash, mapId, mode: 'local', cpuDifficulty, bankruptLimit });
 }
 
 function maybeDemoLanding() {
@@ -6245,9 +6333,11 @@ function refreshGameUI() {
   const pressure = getGoalPressurePlayers(g);
   const mapChip = $('#map-chip');
   if (mapChip) mapChip.textContent = g.mapName || getMapDefName(g.mapId);
+  const bustRule = normalizeBankruptLimit(g.bankruptLimit);
+  const bustChip = bustRule > 0 ? ` · 破産${bustRule}人決着` : '';
   $('#goal-chip').textContent = pressure.length
-    ? `目標 ${g.goal.toLocaleString()}G ⚠到達${pressure.length}人`
-    : `目標 ${g.goal.toLocaleString()}G`;
+    ? `目標 ${g.goal.toLocaleString()}G ⚠到達${pressure.length}人${bustChip}`
+    : `目標 ${g.goal.toLocaleString()}G${bustChip}`;
   $('#goal-chip').classList.toggle('urgent', pressure.length > 0);
   $('#turn-chip').textContent = `ターン ${g.turn}`;
   const cur = currentPlayer(g);

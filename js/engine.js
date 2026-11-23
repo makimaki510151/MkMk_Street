@@ -204,6 +204,90 @@ export const CPU_DIFFICULTIES = {
   },
 };
 
+/**
+ * 破産人数による早期決着。
+ * 0 = 従来どおり残り1人まで。
+ * 1〜3 = その人数が破産した時点で、生存者の総資産が多い人が勝ち。
+ */
+export const BANKRUPT_LIMIT_DEFAULT = 0;
+export const BANKRUPT_LIMIT_OPTIONS = [
+  { value: 0, label: '最後まで', hint: '残り1人になるまで続ける（従来）' },
+  { value: 1, label: '1人', hint: '1人が破産した時点で総資産決着' },
+  { value: 2, label: '2人', hint: '2人が破産した時点で総資産決着' },
+  { value: 3, label: '3人', hint: '3人が破産した時点で総資産決着' },
+];
+
+export function normalizeBankruptLimit(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(3, n);
+}
+
+export function bankruptLimitLabel(raw) {
+  const v = normalizeBankruptLimit(raw);
+  return BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === v)?.label || '最後まで';
+}
+
+/** 生存者のうち総資産が最大のプレイヤー ID（同点は現金→席順） */
+export function pickWinnerByAssets(g) {
+  let bestId = null;
+  let bestTotal = -Infinity;
+  let bestCash = -Infinity;
+  for (const p of g.players || []) {
+    if (!p || p.bankrupt) continue;
+    const a = getPlayerAssets(g, p);
+    const total = Number(a?.total) || 0;
+    const cash = Number(a?.cash) || 0;
+    if (
+      total > bestTotal
+      || (total === bestTotal && cash > bestCash)
+      || (total === bestTotal && cash === bestCash && (bestId == null || p.id < bestId))
+    ) {
+      bestId = p.id;
+      bestTotal = total;
+      bestCash = cash;
+    }
+  }
+  return bestId;
+}
+
+/**
+ * 破産人数ルール／生き残り1人で決着する。
+ * @returns {boolean} ゲーム終了したら true
+ */
+export function maybeEndByBankruptRule(g) {
+  if (!g || g.phase === 'gameover') return true;
+  const alive = (g.players || []).filter((pl) => pl && !pl.bankrupt);
+  const busted = (g.players || []).length - alive.length;
+  const limit = normalizeBankruptLimit(g.bankruptLimit);
+
+  if (alive.length <= 1) {
+    g.winnerId = alive[0]?.id ?? null;
+    g.phase = 'gameover';
+    if (alive[0]) addLog(g, `🏆 ${alive[0].name} の勝利（他プレイヤー破産）`, 'win');
+    recordWorthSnapshot(g);
+    return true;
+  }
+
+  if (limit > 0 && busted >= limit) {
+    const winnerId = pickWinnerByAssets(g);
+    g.winnerId = winnerId;
+    g.phase = 'gameover';
+    const w = winnerId != null ? g.players[winnerId] : null;
+    const total = w ? getPlayerAssets(g, w).total : 0;
+    addLog(
+      g,
+      w
+        ? `🏆 ${w.name} の勝利！ 破産${busted}人で総資産決着（${total.toLocaleString()}G）`
+        : `破産${busted}人で決着（勝者なし）`,
+      'win',
+    );
+    recordWorthSnapshot(g);
+    return true;
+  }
+  return false;
+}
+
 export function normalizeCpuDifficulty(raw) {
   const key = String(raw || '').trim().toLowerCase();
   if (key === 'beginner' || key === 'easy' || key === '初心') return 'beginner';
@@ -619,12 +703,14 @@ export function createGame({
   cash,
   mapId = DEFAULT_MAP_ID,
   cpuDifficulty,
+  bankruptLimit,
 } = {}) {
   const board = buildBoard(mapId);
   const initialCash = cash ?? board.initialCash ?? DEFAULT_CASH;
   const resolvedGoal = goal ?? board.goal ?? DEFAULT_GOAL;
   const rng = mulberry32(seed);
   const resolvedCpuDifficulty = normalizeCpuDifficulty(cpuDifficulty);
+  const resolvedBankruptLimit = normalizeBankruptLimit(bankruptLimit);
 
   let cpuOrd = 0;
   const colored = normalizeLobbyColors(players);
@@ -697,6 +783,8 @@ export function createGame({
     turn: 1,
     goalPressure: false,
     cpuDifficulty: resolvedCpuDifficulty,
+    /** 0=最後まで。1〜3=その人数破産で総資産決着 */
+    bankruptLimit: resolvedBankruptLimit,
     switchState: board.switchState || 0,
     switchGates: board.switchGates || [],
     switchMoves: board.switchMoves || [],
@@ -1717,6 +1805,7 @@ export function serializeState(g) {
     turn: g.turn,
     goalPressure: !!g.goalPressure,
     cpuDifficulty: normalizeCpuDifficulty(g.cpuDifficulty),
+    bankruptLimit: normalizeBankruptLimit(g.bankruptLimit),
     worthHistory: (g.worthHistory || []).slice(-80),
     _seed: g._seed,
     _rngCount: g._rngCount,
@@ -1774,6 +1863,7 @@ export function restoreState(data) {
     g.diceMax = Number.isFinite(raw) && raw >= 2 ? Math.floor(raw) : MOVE_DICE_MAX_DEFAULT;
   }
   g.cpuDifficulty = normalizeCpuDifficulty(g.cpuDifficulty);
+  g.bankruptLimit = normalizeBankruptLimit(g.bankruptLimit);
   for (const p of g.players || []) {
     if (!p) continue;
     if (p.isCPU) {
@@ -3518,6 +3608,8 @@ export function declareBankrupt(g, p) {
   }
   addLog(g, `${p.name} が破産…`, 'system');
   updateAreaStockPrices(g);
+  // 破産人数ルール（例: 1人破産で総資産決着）／生き残り1人
+  maybeEndByBankruptRule(g);
 }
 
 /** 切断プレイヤーをCPUに切り替えて進行を続ける */
@@ -3543,6 +3635,9 @@ export function kickDisconnectedPlayer(g, pid) {
   if (!p || p.bankrupt) return { ok: false, error: 'invalid' };
   addLog(g, `${p.name} をキック`, 'system');
   declareBankrupt(g, p);
+  if (g.phase === 'gameover') {
+    return { ok: true, kicked: true, state: serializeState(g) };
+  }
 
   // 全員参加ミニゲーム中に参加者をキック → 残メンバーで継続／精算（開催者に再ロールを渡さない）
   if (g.pending?.type === 'minigame') {
@@ -5756,15 +5851,8 @@ function endTurn(g) {
 
   recordWorthSnapshot(g);
 
-  // 生存プレイヤーへ
-  const alive = g.players.filter((pl) => !pl.bankrupt);
-  if (alive.length <= 1) {
-    g.winnerId = alive[0]?.id ?? null;
-    g.phase = 'gameover';
-    if (alive[0]) addLog(g, `🏆 ${alive[0].name} の勝利（他プレイヤー破産）`, 'win');
-    recordWorthSnapshot(g);
-    return;
-  }
+  // 破産人数ルール／生き残り1人で決着
+  if (maybeEndByBankruptRule(g)) return;
 
   // 4番目（または最後）のプレイヤー行動後、ターン切替前にイベントNPC
   if (shouldRunEventNpcsAfter(g, endingIdx)) {
