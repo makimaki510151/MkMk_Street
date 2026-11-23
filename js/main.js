@@ -57,6 +57,8 @@ import {
   POTION_CARD_COUNT,
   POTION_EFFECT_LABELS,
   takeEventNpcFx,
+  removeEventNpc,
+  immediateTransitDest,
 } from './engine.js';
 import {
   AREA_META,
@@ -1727,6 +1729,7 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'eventNpcDepart') {
     app.renderer?.clearTokenHold(data.npcId);
+    if (app.game && data.npcId != null) removeEventNpc(app.game, data.npcId);
     pushEventStamp({
       kicker: 'イベントNPC',
       title: '異界へ帰っていった',
@@ -4237,6 +4240,10 @@ async function flushPendingEventNpcFx() {
   app.pendingEventNpcFx = [];
   if (!fx.length) return;
   await presentEventNpcFx(fx);
+  // 演出完了後に遅延していた state と合わせて同期
+  const extra = app.deferredStateExtra || {};
+  app.deferredStateExtra = null;
+  syncState({ ...extra, forceNpcSync: true });
 }
 
 async function presentEventNpcFx(fxList, remote = false) {
@@ -4290,6 +4297,8 @@ async function presentEventNpcFx(fxList, remote = false) {
         });
       }
       app.renderer?.clearTokenHold(fx.npcId);
+      // 退場キュー済みコマをここで外す（最終移動の描画後）
+      if (app.game && fx.npcId != null) removeEventNpc(app.game, fx.npcId);
       await wait(360);
     }
   }
@@ -4306,7 +4315,7 @@ async function presentEventNpcMove(fx, remote = false) {
     : [fx.from, fx.to].filter((id) => id != null);
   if (!path.length || fx.npcId == null) return;
   const diceMax = Math.max(2, Number(fx.diceMax) || 6);
-  const roll = Math.max(1, Math.min(diceMax, Number(fx.roll) || path.length - 1));
+  const roll = Math.max(1, Math.min(diceMax, Number(fx.roll) || Math.max(1, path.length - 1)));
   const label = fx.label || 'イベントNPC';
 
   app.renderer?.holdToken(fx.npcId, path[0]);
@@ -4332,12 +4341,20 @@ async function presentEventNpcMove(fx, remote = false) {
   for (let i = 1; i < path.length; i += 1) {
     const from = path[i - 1];
     const to = path[i];
-    app.renderer?.animateToken(fx.npcId, from, to, 400);
-    audio.sfx.step();
-    // ゲストは eventNpcMove パケット側で歩行するため、ここは状態のみ同期（二重ホップ防止）
-    if (!remote) syncState();
-    refreshGameUI();
-    await wait(420);
+    const transit = app.game ? immediateTransitDest(app.game, from) : null;
+    if (transit != null && transit === to) {
+      // 門／階層：歩行ではなくワープ演出
+      app.renderer?.animateWarp?.(fx.npcId, from, to, 900);
+      if (audio.sfx.warp) audio.sfx.warp();
+      else audio.sfx.step();
+      refreshGameUI();
+      await wait(960);
+    } else {
+      app.renderer?.animateToken(fx.npcId, from, to, 400);
+      audio.sfx.step();
+      refreshGameUI();
+      await wait(420);
+    }
   }
   app.renderer?.clearTokenHold(fx.npcId);
 }
@@ -5747,9 +5764,15 @@ async function handleHostAction(from, data) {
 }
 
 function syncState(extra = {}) {
-  if (app.mode === 'host' && app.net) {
-    app.net.broadcast({ type: 'state', state: serializeState(app.game), ...extra });
+  if (app.mode !== 'host' || !app.net) return;
+  // イベントNPC演出キューがある間は最終位置への state を遅延（ゲスト瞬移・同期ずれ防止）
+  if (app.pendingEventNpcFx?.length && !extra.forceNpcSync) {
+    const { forceNpcSync: _f, ...rest } = extra;
+    app.deferredStateExtra = { ...(app.deferredStateExtra || {}), ...rest };
+    return;
   }
+  const { forceNpcSync: _force, ...rest } = extra;
+  app.net.broadcast({ type: 'state', state: serializeState(app.game), ...rest });
 }
 
 function broadcastFx(fx) {

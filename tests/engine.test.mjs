@@ -106,6 +106,7 @@ import {
   spawnEventNpc,
   canSpawnEventNpc,
   runEventNpcRound,
+  takeEventNpcFx,
 } from '../js/engine.js';
 import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode } from '../js/board.js';
 import {
@@ -4470,7 +4471,11 @@ describe('MkMk Street engine', () => {
     fairy.prevPos = null;
     runEventNpcRound(g);
     assert.equal(g.players[0].marks.filter(Boolean).length, 1);
-    assert.equal(g.eventNpcs.some((n) => n.kind === 'mark_fairy'), false);
+    // 退場は演出用にキューのみ。実削除は UI が removeEventNpc するまで残す
+    const left = g.eventNpcs.find((n) => n.kind === 'mark_fairy');
+    assert.ok(left);
+    assert.equal(left.departQueued, true);
+    assert.ok(takeEventNpcFx(g).some((f) => f.type === 'depart'));
   });
 
   it('mark fairy gives nothing when marks and wildcards are full', () => {
