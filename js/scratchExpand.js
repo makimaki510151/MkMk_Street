@@ -7,12 +7,15 @@ export const NEW_PARTY_MINIGAMES = new Set(['silent_bid', 'hot_potato', 'target_
 
 export const NEW_MINIGAME_LABELS = {
   memory_match: '神経衰弱',
-  silent_bid: 'サイレント入札',
+  silent_bid: 'かぶりなし賞金',
   push_pull: '押し引き',
   divide_pool: '配分ゲーム',
   target_roulette: 'ターゲットルーレット',
   hot_potato: 'パス禁止',
 };
+
+/** かぶりなし賞金の申告額（固定三択） */
+export const SILENT_BID_OPTIONS = [50, 100, 300];
 
 /** @param {string} game @param {any} choice */
 export function normalizeNewMinigamePick(game, choice) {
@@ -37,10 +40,8 @@ export function normalizeNewMinigamePick(game, choice) {
     return `${a},${b}`;
   }
   if (game === 'silent_bid') {
-    // 上限は pending.pot 側で再クランプする（ここでは正の整数のみ正規化）
     const n = Math.floor(Number(choice?.value));
-    if (!Number.isFinite(n) || n < 1) return 1;
-    return Math.min(9999, n);
+    return SILENT_BID_OPTIONS.includes(n) ? n : 100;
   }
   if (game === 'push_pull') {
     const n = Number(choice?.value);
@@ -89,16 +90,14 @@ export function setupNewMinigameShared(game, ctx) {
   } else if (game === 'hot_potato') {
     shared.safeStops = Math.max(1, Math.floor(rng() * Math.max(1, participants.length)));
   } else if (game === 'silent_bid') {
-    // 申告上限（開始時に pending.pot へ載せ、プレイヤーへ事前公開する）
-    shared.pot = 80 + Math.floor(rng() * 121); // 80〜200
+    shared.options = [...SILENT_BID_OPTIONS];
   }
   return shared;
 }
 
-/** サイレント入札の申告上限を開始時に決める */
-export function rollSilentBidPot(rng) {
-  const r = typeof rng === 'function' ? rng() : Math.random();
-  return 80 + Math.floor(r * 121);
+/** @deprecated かぶりなし賞金は固定三択のため pot は使わない（互換のため残置） */
+export function rollSilentBidPot(_rng) {
+  return 300;
 }
 
 /**
@@ -143,26 +142,26 @@ export function scoreNewMinigamePlayer(g, p, game, pick, shared, helpers) {
     }
     detail = `${a + 1}枚目と${b + 1}枚目`;
   } else if (game === 'silent_bid') {
-    // 自由申告＋同額衝突は不成立。単独なら申告額をそのまま受取（上限=事前公開の pot）
-    const pot = Math.max(1, Math.floor(Number(shared.pot) || 200));
-    const bid = Math.max(1, Math.min(pot, Math.floor(Number(pick) || 1)));
+    // 50 / 100 / 300 から選び、かぶらなかった人だけがその額を受取
+    const bid = SILENT_BID_OPTIONS.includes(Number(pick)) ? Number(pick) : 100;
     const allBids = shared.allBids || {};
     const same = Object.values(allBids).filter((b) => Number(b) === bid).length;
     outcome.bid = bid;
-    outcome.pot = pot;
+    outcome.options = [...SILENT_BID_OPTIONS];
     outcome.collided = same > 1;
     outcome.sameCount = same;
     if (same === 1) {
       win = true;
-      tier = bid >= Math.floor(pot * 0.8) ? 'jackpot' : bid >= Math.floor(pot * 0.45) ? 'win' : 'near';
-      title = '単独申告！';
+      tier = bid >= 300 ? 'jackpot' : bid >= 100 ? 'win' : 'near';
+      title = 'かぶりなし！';
       const prize = flatPrize(bid);
-      prizeWon = grantMinigamePrize(p, prize, messages, `単独 ${bid}G（上限${pot}G）→ +${prize}G`);
+      prizeWon = grantMinigamePrize(p, prize, messages, `かぶりなし ${bid}G → +${prize}G`);
     } else {
-      title = '同額で衝突…';
-      prizeWon = minigameConsolation(p, 12, messages, `同額 ${bid}G が${same}人 → 不成立（参加賞 +12G）`);
+      title = 'かぶりで不成立…';
+      prizeWon = 0;
+      messages.push(`同額 ${bid}G が${same}人 → もらえず`);
     }
-    detail = `申告 ${bid}G / 上限 ${pot}G${same > 1 ? ` / ${same}人衝突` : ' / 単独'}`;
+    detail = `選択 ${bid}G${same > 1 ? ` / ${same}人かぶり` : ' / 単独'}`;
   } else if (game === 'push_pull') {
     const stop = Number(pick) || 3;
     const popAt = Number(shared.popAt) || 4;

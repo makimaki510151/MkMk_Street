@@ -1333,7 +1333,7 @@ export function shopTooltip(g, sq) {
       coin: 'コイントス',
       slot: 'ファイブスロット',
       memory_match: '神経衰弱',
-      silent_bid: 'サイレント入札',
+      silent_bid: 'かぶりなし賞金',
       push_pull: '押し引き',
       divide_pool: '配分ゲーム',
       target_roulette: 'ターゲットルーレット',

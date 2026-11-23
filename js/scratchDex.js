@@ -144,7 +144,7 @@ export function describeEventDef(def) {
       return `独占エリアの株を横取り（最大 ${amount || 8}）`;
     case 'minigame': {
       if (def.game === 'silent_bid') {
-        return 'ミニゲーム「サイレント入札」：上限を見て自由申告。同額は不成立、単独のみその額を受取';
+        return 'ミニゲーム「かぶりなし賞金」：50 / 100 / 300G から選び、かぶらなかった人だけがその額を受取';
       }
       return `ミニゲーム「${def.game || def.label || '？'}」に挑戦`;
     }

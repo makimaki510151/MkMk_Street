@@ -2689,7 +2689,7 @@ function maybeDemoLanding() {
       coin: 'コイントス',
       high_low: 'ハイ＆ロー',
       memory_match: '神経衰弱',
-      silent_bid: 'サイレント入札',
+      silent_bid: 'かぶりなし賞金',
       push_pull: '押し引き',
       divide_pool: '配分ゲーム',
       target_roulette: 'ターゲットルーレット',
@@ -2714,9 +2714,7 @@ function maybeDemoLanding() {
       picks: {},
       party: ordered.length > 1,
     };
-    if (game === 'silent_bid') {
-      app.game.pending.pot = 150;
-    }
+    // silent_bid（かぶりなし賞金）は固定三択のため pot 不要
     app.game.move = null;
     refreshGameUI();
     return;
@@ -4783,8 +4781,8 @@ function formatMinigameSharedLine(reveal) {
   if (game === 'memory_match' && Array.isArray(s.board)) {
     return `盤面 ${s.board.join(' ')}`;
   }
-  if (game === 'silent_bid' && s.pot != null) {
-    return `上限 ${s.pot}G（同額は不成立）`;
+  if (game === 'silent_bid') {
+    return '50 / 100 / 300G（かぶりなしのみ受取）';
   }
   if (game === 'push_pull' && s.popAt != null) {
     return `限界 ${s.popAt} 段階`;
@@ -8842,31 +8840,19 @@ function showChoiceModal(g) {
         };
       });
     } else if (game === 'silent_bid') {
-      const pot = Math.max(1, Math.floor(Number(pend.pot) || 150));
-      const draft = Math.max(1, Math.min(pot, Math.floor(pot * 0.4)));
       body.innerHTML = `
-        <p class="modal-lead">サイレント入札！${partyTag}</p>
-        <p class="hint">${partyHint ? `${partyHint} ` : ''}上限 <strong>${pot.toLocaleString()}G</strong> まで自由入力。同じ額を選んだ人は全員もらえず、被らなかった人だけが自分の申告額を受け取ります。</p>
+        <p class="modal-lead">かぶりなし賞金！${partyTag}</p>
+        <p class="hint">${partyHint ? `${partyHint} ` : ''}<strong>50 / 100 / 300G</strong> から1つ選ぶ。同じ額を選んだ人は全員もらえず、かぶらなかった人だけがその金額を受け取ります。</p>
         ${statusHtml}
-        <div class="silent-bid-form">
-          <label class="field">申告額（1〜${pot.toLocaleString()}G）
-            <input type="number" id="m-silent-bid" min="1" max="${pot}" step="1" value="${draft}" />
-          </label>
-          <button type="button" class="btn primary large" id="m-silent-bid-go">この額で申告</button>
+        <div class="mini-pick-grid silent-bid-picks">
+          ${[50, 100, 300].map((n) =>
+            `<button type="button" class="btn primary mini-pick" data-bid="${n}">${n}G</button>`).join('')}
         </div>`;
-      const input = $('#m-silent-bid');
-      const submit = () => {
-        const raw = Math.floor(Number(input?.value) || 0);
-        const value = Math.max(1, Math.min(pot, raw));
-        hideModal();
-        sendAction({ type: 'choice', choice: { action: 'pick', value } });
-      };
-      $('#m-silent-bid-go').onclick = submit;
-      input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          submit();
-        }
+      body.querySelectorAll('[data-bid]').forEach((btn) => {
+        btn.onclick = () => {
+          hideModal();
+          sendAction({ type: 'choice', choice: { action: 'pick', value: Number(btn.dataset.bid) } });
+        };
       });
     } else if (game === 'push_pull') {
       body.innerHTML = `
