@@ -3674,6 +3674,8 @@ function bindBoardZoomControls(canvas) {
       const btn = document.querySelector(`#modal .pick-invest-shop[data-shop="${hit.id}"]:not([disabled])`);
       if (btn) {
         btn.click();
+        // 増資など：マップ選択に合わせてリスト側も該当店までスクロール
+        scrollShopPickIntoView(btn);
         return;
       }
     }
@@ -7436,6 +7438,48 @@ function bindShopPickAreaChrome(g, listRoot) {
       });
     });
   });
+}
+
+/**
+ * 盤面クリックで選んだ店ボタンをリスト内で見える位置までスクロールし、
+ * 対応エリアタブをアクティブにする。
+ */
+function scrollShopPickIntoView(btn) {
+  if (!btn) return;
+  const root = $('#modal-body');
+  const area = Number(btn.dataset.area);
+  if (root && Number.isFinite(area)) {
+    root.querySelectorAll('.shop-pick-tab').forEach((t) => {
+      t.classList.toggle('is-active', Number(t.dataset.jumpArea) === area);
+    });
+  }
+  // リスト内のスクロールコンテナ優先（カード全体を動かさない）
+  const scroller = btn.closest('.shop-pick-scroll, .pick-invest-list');
+  if (scroller && typeof scroller.getBoundingClientRect === 'function') {
+    const sRect = scroller.getBoundingClientRect();
+    const bRect = btn.getBoundingClientRect();
+    const pad = 12;
+    let nextTop = scroller.scrollTop;
+    if (bRect.top < sRect.top + pad) {
+      nextTop -= (sRect.top + pad) - bRect.top;
+    } else if (bRect.bottom > sRect.bottom - pad) {
+      nextTop += bRect.bottom - (sRect.bottom - pad);
+    } else {
+      // すでに見えていても中央付近へ寄せる（マップ選択のフィードバック）
+      const btnMid = bRect.top + bRect.height / 2;
+      const scrollerMid = sRect.top + sRect.height / 2;
+      nextTop += btnMid - scrollerMid;
+    }
+    const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    nextTop = Math.max(0, Math.min(maxScroll, nextTop));
+    if (typeof scroller.scrollTo === 'function') {
+      scroller.scrollTo({ top: nextTop, behavior: 'smooth' });
+    } else {
+      scroller.scrollTop = nextTop;
+    }
+    return;
+  }
+  btn.scrollIntoView({ block: 'center', behavior: 'smooth', inline: 'nearest' });
 }
 
 function enableShopPickModalCard() {
