@@ -1358,6 +1358,9 @@ export function shopTooltip(g, sq) {
     return `${sq.label} — 止まると小島のいずれかの転移マスへランダム転移`;
   }
   if (sq.type === 'shaft') {
+    if (sq.oneWayOut) {
+      return `${sq.label} — 階層移動の出口（ここからは出るだけ。隣マスからは入れない）`;
+    }
     return sq.shaft === 'down'
       ? `${sq.label} — 乗ると地下一階へ下降（残りの出目で移動継続）`
       : `${sq.label} — 乗ると一階へ上昇（残りの出目で移動継続）`;

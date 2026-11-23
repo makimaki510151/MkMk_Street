@@ -174,7 +174,10 @@ describe('MkMk Street engine', () => {
       for (const n of board.nodes) {
         for (const nid of n.nexts) {
           const other = board.nodes.find((x) => x.id === nid);
-          assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+          assert.ok(
+            other?.nexts.includes(n.id) || n.oneWayOut,
+            `${def.id}: missing back-link`,
+          );
         }
       }
       const counts = {};
@@ -751,7 +754,12 @@ describe('MkMk Street engine', () => {
           );
           for (const nid of n.nexts) {
             const other = getNode(g, nid);
-            assert.ok(other?.nexts.includes(n.id), `${def.id}: missing back-link`);
+            // 強欲鉱山の階層・着は出口のみ（隣からの侵入禁止＝一方通行）
+            const oneWayOut = !!n.oneWayOut;
+            assert.ok(
+              other?.nexts.includes(n.id) || oneWayOut,
+              `${def.id}: missing back-link ${n.label}->${other?.label}`,
+            );
             const dc = other.col - n.col;
             const dr = other.row - n.row;
             const diag = dc !== 0 && dr !== 0;
