@@ -770,7 +770,8 @@ function bindVolumeUI() {
 }
 
 const SIDE_TAB_TITLES = { turn: '手番', holdings: '所持', log: '記録' };
-const MOBILE_UI_MQ = '(max-width: 900px)';
+/** タッチ端末／ごく狭い幅のみシートUI。PCの縮小ウィンドウはコンパクト2カラムを維持 */
+const MOBILE_UI_MQ = '(max-width: 900px) and (hover: none), (max-width: 640px)';
 
 function isMobileUi() {
   return typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_UI_MQ).matches;

@@ -67,7 +67,8 @@ const ZOOM_MAX_DESKTOP = 2.5;
 /** スマホはデスクトップの2倍まで拡大可 */
 const ZOOM_MAX_MOBILE = ZOOM_MAX_DESKTOP * 2;
 const ZOOM_STEP = 0.15;
-const MOBILE_ZOOM_MQ = '(max-width: 900px)';
+/** タッチ端末／ごく狭い幅。PCの縮小ウィンドウはデスクトップ拡大上限のまま */
+const MOBILE_ZOOM_MQ = '(max-width: 900px) and (hover: none), (max-width: 640px)';
 
 function isMobileZoomUi() {
   return typeof window !== 'undefined'
