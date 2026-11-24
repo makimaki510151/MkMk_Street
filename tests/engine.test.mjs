@@ -1097,6 +1097,7 @@ describe('MkMk Street engine', () => {
     const g = createGame({
       players: [{ name: 'A', isCPU: false }, { name: 'B', isCPU: false }, { name: 'C', isCPU: true }],
       seed: 6,
+      bankruptLimit: 3,
     });
     g.currentPlayerIdx = 1;
     g.phase = 'await_choice';
@@ -3851,6 +3852,7 @@ describe('MkMk Street engine', () => {
         { name: 'C', isCPU: true },
       ],
       seed: 12,
+      bankruptLimit: 3,
     });
     g.phase = 'await_choice';
     g.currentPlayerIdx = 0;

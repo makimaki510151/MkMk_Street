@@ -1,5 +1,5 @@
 /**
- * CPU 難易度: 中級＝従来、初心は弱体化。
+ * CPU 難易度: 中級＝標準、初心は弱体化。
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
