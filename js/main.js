@@ -1252,7 +1252,7 @@ function openSetupLocal() {
   renderCpuDifficultyPicker('setup-cpu-diff-options', 'setup-cpu-diff-hint', {
     selected: app.cpuDifficulty,
   });
-  renderSeatEditors(2);
+  renderSeatEditors(4);
   // レイアウト確定後にプレビュー解像度を合わせる
   requestAnimationFrame(() => {
     updateMapPreview(selectedMapId('#setup-map-options'), {
@@ -1293,7 +1293,7 @@ function renderSeatEditors(count) {
     const defaultColor = PLAYER_COLORS[i % PLAYER_COLORS.length];
     row.innerHTML = `
       <input class="seat-name" data-i="${i}" value="${escapeHtml(name)}" maxlength="10" />
-      <label class="seat-cpu"><input type="checkbox" data-cpu="${i}" ${i >= count ? 'checked' : ''}/> CPU</label>
+      <label class="seat-cpu"><input type="checkbox" data-cpu="${i}" ${i > 0 ? 'checked' : ''}/> CPU</label>
       <label class="seat-on"><input type="checkbox" data-on="${i}" ${i < count ? 'checked' : ''}/> 参加</label>
       <div class="seat-color-block color-picker" data-seat-colors="${i}"></div>
     `;
