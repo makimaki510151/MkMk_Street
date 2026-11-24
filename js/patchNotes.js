@@ -4,6 +4,13 @@
  */
 export const PATCH_NOTES = [
   {
+    version: '1.10.2',
+    date: '2026-11-24',
+    items: [
+      'ローカル対戦の初期席を「1人目以外CPU・4人とも参加」にした',
+    ],
+  },
+  {
     version: '1.10.1',
     date: '2026-11-24',
     items: [
