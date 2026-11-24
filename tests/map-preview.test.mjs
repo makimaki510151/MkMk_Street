@@ -20,7 +20,7 @@ describe('setup map preview', () => {
     assert.match(html, /id="lobby-map-preview"/);
     assert.match(html, /map-picker-chips/);
     assert.match(css, /\.setup-panel/);
-    assert.match(css, /overflow: hidden/);
+    assert.match(css, /#screen-setup,\s*#screen-lobby\s*\{[^}]*overflow:\s*hidden/s);
     assert.match(css, /\.map-preview-canvas/);
   });
 
