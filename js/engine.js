@@ -162,7 +162,7 @@ export const CPU_PERSONALITIES = {
 };
 
 /**
- * CPU 難易度。normal（中級）＝従来の強さ。beginner（初心）は弱体化。
+ * CPU 難易度。normal（中級）＝標準。beginner（初心）は弱体化。
  */
 export const CPU_DIFFICULTY_KEYS = ['beginner', 'normal'];
 export const CPU_DIFFICULTY_DEFAULT = 'normal';
@@ -194,7 +194,7 @@ export const CPU_DIFFICULTIES = {
   normal: {
     id: 'normal',
     label: '中級',
-    hint: 'これまでのCPUの強さ',
+    hint: '購入・増資を積極的に行う標準の強さ',
     traitScale: null,
     mistakeChance: 0,
     reserveMult: 1,
@@ -206,12 +206,10 @@ export const CPU_DIFFICULTIES = {
 
 /**
  * 破産人数による早期決着。
- * 0 = 従来どおり残り1人まで。
- * 1〜3 = その人数が破産した時点で、生存者の総資産が多い人が勝ち。
+ * 1〜3 = その人数が破産した時点で、生存者の総資産が多い人が勝ち（既定1）。
  */
-export const BANKRUPT_LIMIT_DEFAULT = 0;
+export const BANKRUPT_LIMIT_DEFAULT = 1;
 export const BANKRUPT_LIMIT_OPTIONS = [
-  { value: 0, label: '最後まで', hint: '残り1人になるまで続ける（従来）' },
   { value: 1, label: '1人', hint: '1人が破産した時点で総資産決着' },
   { value: 2, label: '2人', hint: '2人が破産した時点で総資産決着' },
   { value: 3, label: '3人', hint: '3人が破産した時点で総資産決着' },
@@ -219,13 +217,13 @@ export const BANKRUPT_LIMIT_OPTIONS = [
 
 export function normalizeBankruptLimit(raw) {
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (!Number.isFinite(n) || n < 1) return BANKRUPT_LIMIT_DEFAULT;
   return Math.min(3, n);
 }
 
 export function bankruptLimitLabel(raw) {
   const v = normalizeBankruptLimit(raw);
-  return BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === v)?.label || '最後まで';
+  return BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === v)?.label || '1人';
 }
 
 /** 生存者のうち総資産が最大のプレイヤー ID（同点は現金→席順） */
@@ -783,7 +781,7 @@ export function createGame({
     turn: 1,
     goalPressure: false,
     cpuDifficulty: resolvedCpuDifficulty,
-    /** 0=最後まで。1〜3=その人数破産で総資産決着 */
+    /** 1〜3=その人数破産で総資産決着（既定1） */
     bankruptLimit: resolvedBankruptLimit,
     switchState: board.switchState || 0,
     switchGates: board.switchGates || [],

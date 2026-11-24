@@ -15,9 +15,10 @@ import {
 } from '../js/engine.js';
 
 describe('bankrupt limit end rule', () => {
-  it('normalizes bankruptLimit to 0..3', () => {
-    assert.equal(normalizeBankruptLimit(undefined), 0);
-    assert.equal(normalizeBankruptLimit(-1), 0);
+  it('normalizes bankruptLimit to 1..3 (default 1)', () => {
+    assert.equal(normalizeBankruptLimit(undefined), 1);
+    assert.equal(normalizeBankruptLimit(0), 1);
+    assert.equal(normalizeBankruptLimit(-1), 1);
     assert.equal(normalizeBankruptLimit(1), 1);
     assert.equal(normalizeBankruptLimit(9), 3);
   });
@@ -60,11 +61,24 @@ describe('bankrupt limit end rule', () => {
     assert.match(g.logs[0].text, /破産1人で総資産決着/);
   });
 
-  it('does not end on first bankrupt when limit is 0 (default)', () => {
+  it('defaults to limit 1 and ends on first bankrupt', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
       seed: 3,
-      bankruptLimit: 0,
+      cash: 2500,
+    });
+    assert.equal(g.bankruptLimit, 1);
+    g.players[1].cash = 8000;
+    declareBankrupt(g, g.players[0]);
+    assert.equal(g.phase, 'gameover');
+    assert.equal(g.winnerId, 1);
+  });
+
+  it('does not end on first bankrupt when limit is 3', () => {
+    const g = createGame({
+      players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+      seed: 3,
+      bankruptLimit: 3,
     });
     declareBankrupt(g, g.players[0]);
     assert.equal(g.phase, 'await_roll');

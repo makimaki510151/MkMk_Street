@@ -158,7 +158,7 @@ describe('stall escape: bankrupt clears own pending', () => {
       players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
       seed: 31,
       cash: 100,
-      bankruptLimit: 0,
+      bankruptLimit: 3,
     });
     const shop = g.map.find((n) => n.type === 'shop');
     shop.owner = 0;
