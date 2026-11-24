@@ -108,7 +108,7 @@ import {
   runEventNpcRound,
   takeEventNpcFx,
 } from '../js/engine.js';
-import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode } from '../js/board.js';
+import { buildBoard, AREA_SHOP_MAX, AREA_SHOP_BASE, MAP_CATALOG, getAreaCode, applySwitchState } from '../js/board.js';
 import {
   unscratchedIds,
   EVENT_CATALOG,
@@ -164,7 +164,11 @@ describe('MkMk Street engine', () => {
     assert.ok(ids.has('torima'));
     assert.ok(ids.has('bullet'));
     assert.ok(ids.has('tagai'));
+    assert.ok(ids.has('scratch_panda'));
+    assert.ok(ids.has('rotate_bridge'));
     assert.equal(MAP_CATALOG.find((m) => m.id === 'torima')?.name, 'アーチ');
+    assert.equal(MAP_CATALOG.find((m) => m.id === 'scratch_panda')?.name, '削削パンダ');
+    assert.equal(MAP_CATALOG.find((m) => m.id === 'rotate_bridge')?.name, '回転橋');
 
     for (const def of MAP_CATALOG) {
       const board = buildBoard(def.id);
@@ -736,15 +740,24 @@ describe('MkMk Street engine', () => {
 
   it('all maps keep every square at least 2-connected (no dead ends)', () => {
     for (const def of MAP_CATALOG) {
-      for (const state of def.id === 'shell_harbor' ? [0, 1] : [0]) {
+      const switchStates = def.id === 'shell_harbor' ? [0, 1]
+        : def.id === 'rotate_bridge' ? [0, 1, 2, 3]
+          : [0];
+      for (const state of switchStates) {
         const g = createGame({
           players: [{ name: 'A' }, { name: 'B' }],
           seed: 9,
           mapId: def.id,
         });
-        if (state === 1) toggleBoardSwitch(g);
+        if (def.id === 'rotate_bridge') {
+          g.switchState = state;
+          applySwitchState(g);
+        } else if (state === 1) {
+          toggleBoardSwitch(g);
+        }
         const allowGapDiag = def.id === 'torima' || def.id === 'bullet' || def.id === 'tagai'
-          || def.id === 'kurechigai' || def.id === 'sky_isles' || def.id === 'greed_mine';
+          || def.id === 'kurechigai' || def.id === 'sky_isles' || def.id === 'greed_mine'
+          || def.id === 'scratch_panda';
         const allowDeg1 = new Set(['gate', 'shaft', 'pit']);
         for (const n of g.map) {
           const minDeg = allowDeg1.has(n.type) ? 1 : 2;

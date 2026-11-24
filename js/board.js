@@ -1,6 +1,12 @@
 /** MkMk Street — 分岐マップ群 */
 
-import { buildKurechigai, buildSkyIsles, buildGreedMine } from './mapsSpecial.js';
+import {
+  buildKurechigai,
+  buildSkyIsles,
+  buildGreedMine,
+  buildScratchPanda,
+  buildRotateBridge,
+} from './mapsSpecial.js';
 
 /**
  * 店グループ色は非暖色・プレイヤー単色と混ざらないクール系。
@@ -160,10 +166,28 @@ function freezeBaseNexts(nodes) {
  * スイッチ状態に応じて nexts / 座標を組み立てる（エンジンからも呼ぶ）。
  * @param {{ map?: object[], nodes?: object[], switchState?: number, switchGates?: object[], switchMoves?: object[] }} g
  */
+/** スイッチ状態数（switchMoves の pos 長。最低2） */
+export function getSwitchStateCount(g) {
+  let n = 2;
+  for (const mv of g?.switchMoves || []) {
+    const len = Array.isArray(mv?.pos) ? mv.pos.length : 0;
+    if (len > n) n = len;
+  }
+  return n;
+}
+
+export function normalizeSwitchState(g, raw = g?.switchState) {
+  const n = getSwitchStateCount(g);
+  const v = Math.floor(Number(raw) || 0);
+  if (!Number.isFinite(v) || v < 0) return 0;
+  return v % n;
+}
+
 export function applySwitchState(g) {
   const nodes = g?.map || g?.nodes;
   if (!nodes) return;
-  const state = Number(g.switchState) ? 1 : 0;
+  const state = normalizeSwitchState(g);
+  g.switchState = state;
   for (const n of nodes) {
     const base = n.baseNexts || n.nexts || [];
     n.nexts.length = 0;
@@ -1663,6 +1687,24 @@ export const MAP_CATALOG = [
     defaultCash: 2100,
     diceMax: 7,
     build: buildGreedMine,
+  },
+  {
+    id: 'scratch_panda',
+    name: '削削パンダ',
+    blurb: 'スクラッチと催促マスで心を削る竹林マップ。ランダム転移あり（ダイス1〜6）',
+    defaultGoal: 15000,
+    defaultCash: 2200,
+    diceMax: 6,
+    build: buildScratchPanda,
+  },
+  {
+    id: 'rotate_bridge',
+    name: '回転橋',
+    blurb: 'スイッチでAエリアと銀行が東西南北へ移動。横は回転・正面は平行移動（ダイス1〜6）',
+    defaultGoal: 14000,
+    defaultCash: 2200,
+    diceMax: 6,
+    build: buildRotateBridge,
   },
 ];
 

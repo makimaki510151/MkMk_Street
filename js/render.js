@@ -30,6 +30,7 @@ const TYPE_ICON = {
   warp: '転',
   warp_random: 'ら',
   switch: '切',
+  nudge: '催',
   shaft: '井',
   pit: '坑',
   ore: '鉱',
@@ -309,6 +310,29 @@ export function createRenderer(canvas) {
     const ease = easeInOut(t);
     const hop = t >= 1 ? 0 : Math.sin(Math.PI * ease) * 0.18;
     if (t >= 1) return { col: n.col, row: n.row, hop: 0 };
+    if (slide.motion === 'rotate' && slide.pivot) {
+      const ang0 = Math.atan2(slide.fromRow - slide.pivot.row, slide.fromCol - slide.pivot.col);
+      const ang1 = Math.atan2(slide.toRow - slide.pivot.row, slide.toCol - slide.pivot.col);
+      let dAng = ang1 - ang0;
+      const dir = slide.rotateDir >= 0 ? 1 : -1;
+      if (dir > 0) {
+        while (dAng < 0) dAng += Math.PI * 2;
+        while (dAng >= Math.PI * 2) dAng -= Math.PI * 2;
+      } else {
+        while (dAng > 0) dAng -= Math.PI * 2;
+        while (dAng <= -Math.PI * 2) dAng += Math.PI * 2;
+      }
+      if (Math.abs(dAng) < 1e-6) dAng = dir * (Math.PI / 2);
+      const r0 = Math.hypot(slide.fromCol - slide.pivot.col, slide.fromRow - slide.pivot.row);
+      const r1 = Math.hypot(slide.toCol - slide.pivot.col, slide.toRow - slide.pivot.row);
+      const ang = ang0 + dAng * ease;
+      const r = r0 + (r1 - r0) * ease;
+      return {
+        col: slide.pivot.col + Math.cos(ang) * r,
+        row: slide.pivot.row + Math.sin(ang) * r,
+        hop,
+      };
+    }
     return {
       col: slide.fromCol + (slide.toCol - slide.fromCol) * ease,
       row: slide.fromRow + (slide.toRow - slide.fromRow) * ease,
@@ -562,8 +586,8 @@ export function createRenderer(canvas) {
     delete anim.holds[playerId];
   }
 
-  /** スイッチで動くマスのスライド（from/to はグリッド座標） */
-  function animateTileSlide(nodeId, from, to, dur = 780) {
+  /** スイッチで動くマスのスライド／回転（from/to はグリッド座標） */
+  function animateTileSlide(nodeId, from, to, dur = 780, opts = {}) {
     if (!from || !to || nodeId == null) return;
     anim.tileSlides[nodeId] = {
       fromCol: from.col,
@@ -572,6 +596,9 @@ export function createRenderer(canvas) {
       toRow: to.row,
       start: performance.now(),
       dur,
+      motion: opts.motion || 'slide',
+      rotateDir: opts.rotateDir >= 0 ? 1 : -1,
+      pivot: opts.pivot || null,
     };
   }
 
@@ -779,7 +806,7 @@ export function createRenderer(canvas) {
 
     // スイッチで無効なゲートは点線で残す
     if (g.switchGates?.length) {
-      const state = g.switchState ? 1 : 0;
+      const state = Math.max(0, Math.floor(Number(g.switchState) || 0));
       ctx.save();
       ctx.strokeStyle = 'rgba(255, 210, 120, 0.12)';
       ctx.lineWidth = Math.max(2, size * 0.1);
@@ -859,6 +886,7 @@ export function createRenderer(canvas) {
       else if (n.type === 'warp') fill = '#5b4a8c';
       else if (n.type === 'warp_random') fill = '#6a8b4a';
       else if (n.type === 'switch') fill = '#8a6b2a';
+      else if (n.type === 'nudge') fill = '#6b4a8a';
       else if (n.type === 'shaft') fill = n.shaft === 'up' ? '#7a9a4a' : '#7a4a8a';
       else if (n.type === 'pit') fill = n.pit === 'up' ? '#9a6a5a' : '#4a5a9a';
       else if (n.type === 'ore') {
@@ -1381,8 +1409,11 @@ export function shopTooltip(g, sq) {
     return `${sq.label} — 入ると反対側の門へ飛び、残りの出目で移動継続`;
   }
   if (sq.type === 'switch') {
-    const st = g.switchState ? 2 : 1;
+    const st = Math.max(0, Math.floor(Number(g.switchState) || 0)) + 1;
     return `${sq.label} — 止まると経路・動くマスが切り替わる（今は状態${st}）`;
+  }
+  if (sq.type === 'nudge') {
+    return `${sq.label} — 止まると催促回数に応じたイベントが発生`;
   }
   if (sq.type === 'rest') return `${sq.label} — 止まると次ターン休み`;
   if (sq.type !== 'shop') return `${sq.label}`;

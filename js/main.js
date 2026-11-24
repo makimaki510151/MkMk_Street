@@ -1948,8 +1948,8 @@ function playRemoteFx(data) {
   if (data.kind === 'switchSlide' && data.moves?.length) {
     // 先にスライド予約 → その後に論理座標を更新（一瞬の新位置フラッシュを防ぐ）
     armSwitchSlides(data.moves);
-    if (app.game && (data.switchState === 0 || data.switchState === 1)) {
-      app.game.switchState = data.switchState ? 1 : 0;
+    if (app.game && data.switchState != null && Number.isFinite(Number(data.switchState))) {
+      app.game.switchState = Math.max(0, Math.floor(Number(data.switchState)));
       applySwitchState(app.game);
     }
     app.busy = true;
@@ -2702,7 +2702,9 @@ function startLocal(seats) {
             : demo === 'map-kurechigai' ? 'kurechigai'
               : demo === 'map-sky' || demo === 'map-sky-isles' ? 'sky_isles'
                 : demo === 'map-mine' || demo === 'map-greed-mine' ? 'greed_mine'
-                  : params.get('map');
+                  : demo === 'map-panda' || demo === 'map-scratch-panda' ? 'scratch_panda'
+                    : demo === 'map-bridge' || demo === 'map-rotate-bridge' ? 'rotate_bridge'
+                      : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);
@@ -4286,7 +4288,11 @@ function armSwitchSlides(moves, dur = 780) {
   if (!moves?.length || !app.renderer) return;
   for (const m of moves) {
     if (!m || m.id == null || !m.from || !m.to) continue;
-    app.renderer.animateTileSlide(m.id, m.from, m.to, dur);
+    app.renderer.animateTileSlide(m.id, m.from, m.to, dur, {
+      motion: m.motion || 'slide',
+      rotateDir: m.rotateDir,
+      pivot: m.pivot || null,
+    });
   }
 }
 
@@ -4781,7 +4787,7 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
     broadcastFx({
       kind: 'switchSlide',
       moves,
-      switchState: app.game.switchState ? 1 : 0,
+      switchState: Math.max(0, Math.floor(Number(app.game.switchState) || 0)),
     });
   }
   if (typeof audio.sfx.fork === 'function') audio.sfx.fork();

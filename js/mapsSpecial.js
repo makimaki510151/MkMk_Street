@@ -1,5 +1,5 @@
 /**
- * 特殊マップ: 暮違某為町 / 空島地帯 / 強欲鉱山
+ * 特殊マップ: 暮違某為町 / 空島地帯 / 強欲鉱山 / 削削パンダ / 回転橋
  * grid-map-maker JSON の配置をそのまま使用。
  * board.js の内部ヘルパは export されていないため、同等の構築部品をここに持つ。
  * （board.js からの循環 import を避けるため AREA_META は参照しない）
@@ -119,6 +119,39 @@ function buildAreas(nodes, areaOverrides = {}, areaMeta = {}) {
   return areas;
 }
 
+/** board.js の applySwitchState と同ロジック（循環 import 回避） */
+function applySwitchStateLocal(g) {
+  const nodes = g?.map || g?.nodes;
+  if (!nodes) return;
+  let nStates = 2;
+  for (const mv of g.switchMoves || []) {
+    const len = Array.isArray(mv?.pos) ? mv.pos.length : 0;
+    if (len > nStates) nStates = len;
+  }
+  const state = Math.max(0, Math.floor(Number(g.switchState) || 0)) % nStates;
+  g.switchState = state;
+  for (const n of nodes) {
+    const base = n.baseNexts || n.nexts || [];
+    n.nexts.length = 0;
+    for (const id of base) n.nexts.push(id);
+  }
+  for (const gate of g.switchGates || []) {
+    if (Number(gate.when) !== state) continue;
+    const a = nodes.find((n) => n.id === gate.a);
+    const b = nodes.find((n) => n.id === gate.b);
+    if (!a || !b) continue;
+    if (!a.nexts.includes(b.id)) a.nexts.push(b.id);
+    if (!b.nexts.includes(a.id)) b.nexts.push(a.id);
+  }
+  for (const mv of g.switchMoves || []) {
+    const n = nodes.find((x) => x.id === mv.id);
+    const pos = mv.pos?.[state];
+    if (!n || !pos) continue;
+    n.col = pos.col;
+    n.row = pos.row;
+  }
+}
+
 function packBoard(nodes, bank, cols, rows, extra = {}) {
   finalizeShops(nodes);
   for (const n of nodes) {
@@ -139,6 +172,9 @@ function packBoard(nodes, bank, cols, rows, extra = {}) {
     switchGates: extra.switchGates || [],
     switchMoves: extra.switchMoves || [],
   };
+  if (board.switchGates.length || board.switchMoves.length) {
+    applySwitchStateLocal(board);
+  }
   return board;
 }
 
@@ -205,6 +241,18 @@ function putCommonSpecial(put, N, ch, col, row, ctx) {
   }
   if (ch === 'ワ') {
     put(col, row, N('suit_fill', { label: 'ワイルド', col, row }));
+    return true;
+  }
+  if (ch === 'ら') {
+    put(col, row, N('warp_random', { label: 'ランダム転移', col, row }));
+    return true;
+  }
+  if (ch === '催') {
+    put(col, row, N('nudge', { label: '催促', col, row }));
+    return true;
+  }
+  if (ch === '切') {
+    put(col, row, N('switch', { label: 'スイッチ', col, row }));
     return true;
   }
   return false;
@@ -655,6 +703,335 @@ export function buildGreedMine() {
       11: { name: '宝石工房' },
       12: { name: '金庫通り' },
       13: { name: '深淵' },
+    },
+  });
+}
+
+/**
+ * 削削パンダ（12×15）。
+ * スクラッチ多め＋催促マス。ら＝ランダム転移。店名は竹・パンダ系。
+ */
+export function buildScratchPanda() {
+  const { nodes, N } = makeNodeFactory();
+  const gridRows = [
+    '　　　　　　　　　　　　',
+    '　♦ＣＣらＦＦ削ＦＦ♠　',
+    '　Ｂ　　Ｄ　　Ｅ　　Ｇ　',
+    '　Ｂ　　Ｄ　　スＥＥ株　',
+    '　Ｂ　　当ＤＤ削　　Ｇ　',
+    '　削ＣＣ削　　Ｅ　　Ｇ　',
+    '　Ｂ　　Ｄ　　Ｅ　　Ｇ　',
+    '　削ＡＡ銀ＡＡ削　　ワ　',
+    '　Ｈ　　Ｊ　　Ｋ　　Ｍ　',
+    '　催ＩＩ催　　Ｋ　　Ｍ　',
+    '　Ｈ　　削ＪＪ削　　Ｍ　',
+    '　Ｈ　　Ｊ　　催ＫＫ削　',
+    '　Ｈ　　Ｊ　　Ｋ　　Ｍ　',
+    '　♥ＩＩ削ＬＬ株ＬＬ♣　',
+    '　　　　　　　　　　　　',
+  ];
+  const W = 12;
+  const BLANK = '　';
+  const areaFromChar = {
+    Ａ: 1, Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5,
+    Ｆ: 6, Ｇ: 7, Ｈ: 8, Ｉ: 9, Ｊ: 10,
+    Ｋ: 11, Ｌ: 12, Ｍ: 13,
+  };
+  const shopNames = {
+    1: ['パンダ茶屋', '笹団子屋', '白黒カフェ', '竹林みやげ'],
+    2: ['西の笹横丁', '竹細工屋', '笹の葉屋', 'パンダ屋台'],
+    3: ['北笹マーケット', '竹筒屋', '笹飴屋', '青笹みやげ'],
+    4: ['中央竹通り', '竹炭屋', '笹寿司屋', '竹籠みやげ'],
+    5: ['東の熊猫食堂', 'パンダまん', '笹アイス', '黒目みやげ'],
+    6: ['北東パンダホテル', '竹フロア宿', '笹の展望台', '白熊みやげ'],
+    7: ['東端みやげ市', 'パンダグッズ', '竹ぼうき屋', '笹笛屋'],
+    8: ['南西笹小路', '竹垣屋', '笹餅屋', '子パンダ屋'],
+    9: ['南の笹縁', '竹とんぼ屋', '笹舟屋', 'パンダクレープ'],
+    10: ['南中央工房', '竹ひご屋', '笹すだれ屋', '墨パンダ屋'],
+    11: ['南東熊猫市', 'パンダ焼', '竹ストロー屋', '笹サイダー'],
+    12: ['南端竹市場', '竹刀屋', '笹の湯', '白黒みやげ'],
+    13: ['東南パンダ通り', '竹ランプ屋', '笹カーテン屋', '熊猫ホテル'],
+  };
+  const shopPrice = {
+    1: [280, 220, 200, 320],
+    2: [240, 200, 180, 260],
+    3: [250, 210, 190, 280],
+    4: [260, 220, 200, 300],
+    5: [250, 210, 190, 280],
+    6: [300, 260, 230, 340],
+    7: [240, 200, 180, 270],
+    8: [230, 190, 170, 250],
+    9: [240, 200, 180, 260],
+    10: [250, 210, 190, 280],
+    11: [250, 210, 190, 280],
+    12: [270, 230, 210, 310],
+    13: [260, 220, 200, 300],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+  const ctx = { bank: null, slotCount: 0 };
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== W) throw new Error(`削削パンダ: 行${row}の幅が${chars.length}`);
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        putShop(put, N, col, row, areaFromChar[ch], shopIdx, shopNames, shopPrice);
+        continue;
+      }
+      if (putCommonSpecial(put, N, ch, col, row, ctx)) continue;
+      throw new Error(`削削パンダ: 未知のマス ${ch} @${col},${row}`);
+    }
+  }
+  if (!ctx.bank) throw new Error('削削パンダ: 銀行なし');
+  linkGridOrthoAndGapDiagonals(grid);
+
+  return packBoard(nodes, ctx.bank, W, gridRows.length, {
+    mapId: 'scratch_panda',
+    mapName: '削削パンダ',
+    diceMax: 6,
+    goal: 15000,
+    initialCash: 2200,
+    areaOverrides: {
+      1: { name: 'パンダ茶屋通り', code: 'A1' },
+      2: { name: '西の笹横丁', code: 'B1' },
+      3: { name: '北笹マーケット', code: 'B2' },
+      4: { name: '中央竹通り', code: 'B3' },
+      5: { name: '東の熊猫食堂', code: 'B4' },
+      6: { name: '北東パンダホテル', code: 'B5' },
+      7: { name: '東端みやげ市', code: 'B6' },
+      8: { name: '南西笹小路', code: 'C1' },
+      9: { name: '南の笹縁', code: 'C2' },
+      10: { name: '南中央工房', code: 'C3' },
+      11: { name: '南東熊猫市', code: 'C4' },
+      12: { name: '南端竹市場', code: 'C5' },
+      13: { name: '東南パンダ通り', code: 'C6' },
+    },
+  });
+}
+
+/**
+ * 回転橋（13×13）。
+ * Aエリア＋変動銀行が北東西南の4地点をスイッチでランダム移動。
+ * 横移動は回転、正面は平行移動の演出用メタを switchMoves に載せる。
+ */
+export function buildRotateBridge() {
+  const { nodes, N } = makeNodeFactory();
+  // １２３４・銀は可変のためグリッドには置かず、後で movable を載せる
+  const gridRows = [
+    '　　　スＢＢ切ＣＣラ　　　',
+    '　　　Ｂ　　　　　Ｃ　　　',
+    '　　　Ｂ　　　　　Ｃ　　　',
+    '削ＩＩ♥　　　　　♠ＤＤイ',
+    'Ｉ　　　　　　　　　　　Ｄ',
+    'Ｉ　　　　　　　　　　　Ｄ',
+    '切　　　　　　　　　　　切',
+    'Ｈ　　　　　　　　　　　Ｅ',
+    'Ｈ　　　　　　　　　　　Ｅ',
+    'イＨＨ♦　　　　　♣ＥＥ削',
+    '　　　Ｇ　　　　　Ｆ　　　',
+    '　　　Ｇ　　　　　Ｆ　　　',
+    '　　　ラＧＧ切ＦＦス　　　',
+  ];
+  const W = 13;
+  const BLANK = '　';
+  const areaFromChar = {
+    Ｂ: 2, Ｃ: 3, Ｄ: 4, Ｅ: 5,
+    Ｆ: 6, Ｇ: 7, Ｈ: 8, Ｉ: 9,
+  };
+  const shopNames = {
+    1: ['橋の茶屋', '欄干カフェ', '渡舟屋', '回転みやげ'],
+    2: ['北西埠頭屋', '錨カフェ', '北風屋', '埠頭みやげ'],
+    3: ['北東灯台屋', '霧笛屋', '灯火カフェ', '岬みやげ'],
+    4: ['東波止場', '桟橋食堂', '潮風屋', '波止みやげ'],
+    5: ['南東倉庫通り', 'クレーン屋', '荷揚げ屋', '倉庫みやげ'],
+    6: ['南東砂浜通り', '砂浜カフェ', '貝掘り屋', '南風みやげ'],
+    7: ['南西干潟市', 'しおさい屋', '干潟カフェ', '貝殻みやげ'],
+    8: ['西運河横丁', '運河食堂', '水門屋', '運河みやげ'],
+    9: ['北西運河市', '船大工', 'ロープ屋', '運河みやげ'],
+  };
+  const shopPrice = {
+    1: [300, 260, 240, 340],
+    2: [240, 200, 180, 270],
+    3: [240, 200, 180, 270],
+    4: [250, 210, 190, 280],
+    5: [250, 210, 190, 280],
+    6: [240, 200, 180, 270],
+    7: [240, 200, 180, 270],
+    8: [250, 210, 190, 280],
+    9: [250, 210, 190, 280],
+  };
+  const shopIdx = Object.fromEntries(Object.keys(shopNames).map((k) => [k, 0]));
+  /** @type {(object|null)[][]} */
+  const grid = [];
+  const put = (col, row, node) => {
+    if (!grid[row]) grid[row] = [];
+    grid[row][col] = node;
+    return node;
+  };
+  const ctx = { bank: null, slotCount: 0 };
+  /** @type {object[]} */
+  const switches = [];
+
+  for (let row = 0; row < gridRows.length; row++) {
+    const chars = [...gridRows[row]];
+    if (chars.length !== W) throw new Error(`回転橋: 行${row}の幅が${chars.length}`);
+    for (let col = 0; col < chars.length; col++) {
+      const ch = chars[col];
+      if (ch === BLANK) continue;
+      if (areaFromChar[ch]) {
+        putShop(put, N, col, row, areaFromChar[ch], shopIdx, shopNames, shopPrice);
+        continue;
+      }
+      if (ch === '切') {
+        const sw = put(col, row, N('switch', { label: 'スイッチ', col, row }));
+        switches.push(sw);
+        continue;
+      }
+      if (putCommonSpecial(put, N, ch, col, row, ctx)) continue;
+      throw new Error(`回転橋: 未知のマス ${ch} @${col},${row}`);
+    }
+  }
+
+  // Aエリア4店＋変動銀行（4地点のアーム中央に配置）
+  // 状態0=北 1=東 2=南 3=西
+  const armPos = [
+    // N: 横一列
+    [{ col: 4, row: 3 }, { col: 5, row: 3 }, { col: 6, row: 3 }, { col: 7, row: 3 }, { col: 8, row: 3 }],
+    // E: 縦一列
+    [{ col: 8, row: 4 }, { col: 8, row: 5 }, { col: 8, row: 6 }, { col: 8, row: 7 }, { col: 8, row: 8 }],
+    // S: 横一列（向きを揃えてスロット対応）
+    [{ col: 8, row: 9 }, { col: 7, row: 9 }, { col: 6, row: 9 }, { col: 5, row: 9 }, { col: 4, row: 9 }],
+    // W: 縦一列
+    [{ col: 4, row: 8 }, { col: 4, row: 7 }, { col: 4, row: 6 }, { col: 4, row: 5 }, { col: 4, row: 4 }],
+  ];
+  const aNames = shopNames[1];
+  const aPrices = shopPrice[1];
+  const movable = [];
+  for (let i = 0; i < 5; i++) {
+    const p0 = armPos[0][i];
+    let node;
+    if (i === 2) {
+      node = N('bank', { label: '銀行', isStart: true, col: p0.col, row: p0.row });
+      ctx.bank = node;
+    } else {
+      const si = i < 2 ? i : i - 1;
+      node = N('shop', {
+        label: aNames[si % aNames.length],
+        area: 1,
+        basePrice: aPrices[si % aPrices.length],
+        col: p0.col,
+        row: p0.row,
+      });
+    }
+    put(p0.col, p0.row, node);
+    movable.push(node);
+  }
+  if (!ctx.bank) throw new Error('回転橋: 銀行なし');
+
+  linkGridOrthoAndGapDiagonals(grid);
+
+  // 静的リンクを確定してから、可変ノードの baseNexts は空に（ゲートのみで接続）
+  for (const n of movable) {
+    // グリッド ortho で付いた仮リンクを剥がし、ゲートに任せる
+    for (const other of nodes) {
+      if (other.id === n.id) continue;
+      other.nexts = (other.nexts || []).filter((id) => id !== n.id);
+    }
+    n.nexts = [];
+  }
+
+  const byCR = (c, r) => grid[r]?.[c];
+  const heart = byCR(3, 3);
+  const spade = byCR(9, 3);
+  const diamond = byCR(3, 9);
+  const club = byCR(9, 9);
+  const swN = byCR(6, 0);
+  const swE = byCR(12, 6);
+  const swS = byCR(6, 12);
+  const swW = byCR(0, 6);
+  // 外周の同列アンカー（アーム端の行き止まり防止・長距離直交ゲート）
+  const bTop = byCR(4, 0);
+  const cTop = byCR(8, 0);
+  const gBot = byCR(4, 12);
+  const fBot = byCR(8, 12);
+
+  const [a0, a1, bank, a2, a3] = movable;
+  const switchMoves = movable.map((n, i) => ({
+    id: n.id,
+    pos: armPos.map((arm) => ({ col: arm[i].col, row: arm[i].row })),
+  }));
+
+  /** @type {{a:number,b:number,when:number}[]} */
+  const switchGates = [];
+  const gate = (when, a, b) => {
+    if (!a || !b) return;
+    switchGates.push({ a: a.id, b: b.id, when });
+  };
+  // N: ♥—A—銀—A—♠ ＋ 北辺Ｂ/Ｃ・北スイッチ
+  gate(0, heart, a0);
+  gate(0, a0, a1);
+  gate(0, a1, bank);
+  gate(0, bank, a2);
+  gate(0, a2, a3);
+  gate(0, a3, spade);
+  gate(0, a0, bTop);
+  gate(0, a3, cTop);
+  gate(0, swN, bank);
+  // E: 北Ｃ／南Ｆ・東スイッチ
+  gate(1, cTop, a0);
+  gate(1, a0, a1);
+  gate(1, a1, bank);
+  gate(1, bank, a2);
+  gate(1, a2, a3);
+  gate(1, a3, fBot);
+  gate(1, bank, swE);
+  // S: ♣—A—銀—A—♦ ＋ 南辺Ｆ/Ｇ・南スイッチ
+  gate(2, club, a0);
+  gate(2, a0, a1);
+  gate(2, a1, bank);
+  gate(2, bank, a2);
+  gate(2, a2, a3);
+  gate(2, a3, diamond);
+  gate(2, a0, fBot);
+  gate(2, a3, gBot);
+  gate(2, swS, bank);
+  // W: 南Ｇ／北Ｂ・西スイッチ
+  gate(3, gBot, a0);
+  gate(3, a0, a1);
+  gate(3, a1, bank);
+  gate(3, bank, a2);
+  gate(3, a2, a3);
+  gate(3, a3, bTop);
+  gate(3, bank, swW);
+
+  return packBoard(nodes, ctx.bank, W, gridRows.length, {
+    mapId: 'rotate_bridge',
+    mapName: '回転橋',
+    diceMax: 6,
+    goal: 14000,
+    initialCash: 2200,
+    switchState: 0,
+    switchGates,
+    switchMoves,
+    areaOverrides: {
+      1: { name: '回転橋', code: 'A1' },
+      2: { name: '北西埠頭', code: 'B1' },
+      3: { name: '北東灯台', code: 'B2' },
+      4: { name: '東波止場', code: 'C1' },
+      5: { name: '南東倉庫', code: 'C2' },
+      6: { name: '南東砂浜', code: 'D1' },
+      7: { name: '南西干潟', code: 'D2' },
+      8: { name: '西運河', code: 'E1' },
+      9: { name: '北西運河', code: 'E2' },
     },
   });
 }
