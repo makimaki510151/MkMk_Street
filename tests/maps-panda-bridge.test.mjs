@@ -76,6 +76,30 @@ describe('rotate_bridge map', () => {
     assert.ok(seen.size >= 3, `bank should visit multiple anchors, got ${[...seen]}`);
   });
 
+  it('E/W arm matches JSON: shops with mid gap + bank one cell outward', () => {
+    const expected = {
+      1: { bank: [9, 6], shops: [[8, 4], [8, 5], [8, 7], [8, 8]] },
+      3: { bank: [3, 6], shops: [[4, 4], [4, 5], [4, 7], [4, 8]] },
+    };
+    for (const [state, exp] of Object.entries(expected)) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed: 1,
+        mapId: 'rotate_bridge',
+      });
+      g.switchState = Number(state);
+      applySwitchState(g);
+      const bank = getNode(g, g.startId);
+      assert.deepEqual([bank.col, bank.row], exp.bank, `state ${state} bank`);
+      const shops = g.map
+        .filter((n) => n.type === 'shop' && n.area === 1)
+        .map((n) => [n.col, n.row])
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const want = [...exp.shops].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      assert.deepEqual(shops, want, `state ${state} shops`);
+    }
+  });
+
   it('serialize/restore keeps multi-state switchState', () => {
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],

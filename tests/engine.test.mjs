@@ -776,7 +776,13 @@ describe('MkMk Street engine', () => {
             const dc = other.col - n.col;
             const dr = other.row - n.row;
             const diag = dc !== 0 && dr !== 0;
-            if (!allowGapDiag) {
+            if (def.id === 'rotate_bridge') {
+              // 長距離直交（切↔銀）と、東西アームの銀↔店の斜め隣接を許可
+              assert.ok(
+                (dc === 0 || dr === 0) || (Math.abs(dc) <= 1 && Math.abs(dr) <= 1),
+                `${def.id}: bad link ${n.label}-${other.label} dc=${dc} dr=${dr}`,
+              );
+            } else if (!allowGapDiag) {
               assert.equal(diag, false, `${def.id}: diagonal ${n.label}-${other.label}`);
             } else {
               assert.ok(Math.abs(dc) <= 1 && Math.abs(dr) <= 1, `${def.id}: link too far`);

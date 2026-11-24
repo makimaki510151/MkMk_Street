@@ -901,17 +901,18 @@ export function buildRotateBridge() {
     }
   }
 
-  // Aエリア4店＋変動銀行（N/Sはアーム中央、E/Wは銀行だけ1マス外側）
-  // 状態0=北 1=東 2=南 3=西／movable 順: a0,a1,bank,a2,a3
+  // Aエリア4店＋変動銀行。配置は grid-map-maker JSON（１〜４／銀）に忠実。
+  // 状態0=北(１) 1=東(４) 2=南(３) 3=西(２)／movable 順: a0,a1,bank,a2,a3
+  // E/W は店列の中央が空き、銀行がその外側（JSONの銀位置）。
   const armPos = [
-    // N: 横一列（銀行中央）
+    // N: ♥１１銀１１♠
     [{ col: 4, row: 3 }, { col: 5, row: 3 }, { col: 6, row: 3 }, { col: 7, row: 3 }, { col: 8, row: 3 }],
-    // E: 店は col8、銀行のみ (9,6) へ外側
-    [{ col: 8, row: 4 }, { col: 8, row: 5 }, { col: 9, row: 6 }, { col: 8, row: 6 }, { col: 8, row: 7 }],
-    // S: 横一列（銀行中央・スロット対応で反転）
+    // E: ４×4（col8・中央空き）＋銀(9,6)
+    [{ col: 8, row: 4 }, { col: 8, row: 5 }, { col: 9, row: 6 }, { col: 8, row: 7 }, { col: 8, row: 8 }],
+    // S: ♦３３銀３３♣（スロット対応で反転）
     [{ col: 8, row: 9 }, { col: 7, row: 9 }, { col: 6, row: 9 }, { col: 5, row: 9 }, { col: 4, row: 9 }],
-    // W: 店は col4、銀行のみ (3,6) へ外側
-    [{ col: 4, row: 8 }, { col: 4, row: 7 }, { col: 3, row: 6 }, { col: 4, row: 6 }, { col: 4, row: 5 }],
+    // W: ２×4（col4・中央空き）＋銀(3,6)
+    [{ col: 4, row: 8 }, { col: 4, row: 7 }, { col: 3, row: 6 }, { col: 4, row: 5 }, { col: 4, row: 4 }],
   ];
   const aNames = shopNames[1];
   const aPrices = shopPrice[1];
@@ -986,12 +987,12 @@ export function buildRotateBridge() {
   gate(0, a0, bTop);
   gate(0, a3, cTop);
   gate(0, swN, bank);
-  // E: 店列 col8＋銀行 (9,6)。a2 が銀行の西隣
+  // E: ４列は中央空き。銀行(9,6)は a1(8,5)／a2(8,7) と斜め接続
   gate(1, cTop, a0);
   gate(1, a0, a1);
-  gate(1, a1, a2);
+  gate(1, a1, bank);
+  gate(1, bank, a2);
   gate(1, a2, a3);
-  gate(1, a2, bank);
   gate(1, a3, fBot);
   gate(1, bank, swE);
   // S: ♣—A—銀—A—♦ ＋ 南辺Ｆ/Ｇ・南スイッチ
@@ -1004,12 +1005,12 @@ export function buildRotateBridge() {
   gate(2, a0, fBot);
   gate(2, a3, gBot);
   gate(2, swS, bank);
-  // W: 店列 col4＋銀行 (3,6)。a2 が銀行の東隣
+  // W: ２列は中央空き。銀行(3,6)は a1(4,7)／a2(4,5) と斜め接続
   gate(3, gBot, a0);
   gate(3, a0, a1);
-  gate(3, a1, a2);
+  gate(3, a1, bank);
+  gate(3, bank, a2);
   gate(3, a2, a3);
-  gate(3, a2, bank);
   gate(3, a3, bTop);
   gate(3, bank, swW);
 
