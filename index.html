@@ -141,7 +141,7 @@
           <li>マークをそろえて銀行に戻ると、<strong>昇進 → 株1種類 → 進む方向</strong>の順です。</li>
           <li>昇進賞金はレベルごとに全員同額（高いほど増えます）。</li>
           <li>総資産が目標以上なら、<strong>銀行に止まる／通過する</strong>と勝利。昇進賞金だけで初めて目標に達した場合は、いったん出てから再通過が必要です。</li>
-          <li>開始前に<strong>破産人数で決着</strong>を選べます（既定は最後の1人まで）。例: 「1人」なら、誰か1人が破産した時点で生存者の総資産が多い人が勝ちます。</li>
+          <li>開始前に<strong>破産人数で決着</strong>を選べます（既定は1人）。指定人数が破産した時点で、生存者の総資産が多い人が勝ちます。</li>
           <li>誰かが目標に達するとBGMが変わります。終了後は順位・統計・アワードを表示／エクスポートできます。タイトルの<strong>試合結果</strong>から保存したJSONをあとから表示できます。</li>
         </ul>
       </section>
@@ -153,7 +153,7 @@
           <li>スクラッチで<strong>マークの妖精／大商人／貧乏神</strong>を呼べます（同種は同時に1体まで）。NPCは周回ごとに徘徊し、3〜7回行動したあと異界へ帰ります。</li>
           <li><strong>ラッキー</strong>中は、他者の買い物料の20%を銀行から受け取れます（次の自分の番まで）。</li>
           <li>ミニゲームの報酬は<strong>レベルで緩やかに上乗せ</strong>（一発当たりは目標額の約8%まで）。サイコロ当て／コイン／ハイロー／競馬／ルーレットなど共通結果型は<strong>全員参加</strong>（選択がそろってから精算）。スロットや金庫破りなどは引いた人だけの個人挑戦です。</li>
-          <li>CPUには店舗王／株マニア／独占屋／勝負師の個性があります。対戦開始時に<strong>初心／中級</strong>の強さを選べます（中級＝これまでの強さ）。</li>
+          <li>CPUには店舗王／株マニア／独占屋／勝負師の個性があります。対戦開始時に<strong>初心／中級</strong>の強さを選べます（初心＝買い控え寄り、中級＝購入・増資を積極的に行う標準）。</li>
         </ul>
       </section>
 
@@ -217,16 +217,18 @@
             <legend>マップ</legend>
             <div class="map-picker-grid map-picker-chips" id="setup-map-options"></div>
           </fieldset>
-          <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-bankrupt-limit-picker">
-            <legend>破産人数で決着</legend>
-            <div class="map-picker-grid map-picker-chips" id="setup-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
-            <p class="hint cpu-diff-hint" id="setup-bankrupt-limit-hint"></p>
-          </fieldset>
-          <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-cpu-diff-picker">
-            <legend>CPUの強さ</legend>
-            <div class="map-picker-grid map-picker-chips" id="setup-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
-            <p class="hint cpu-diff-hint" id="setup-cpu-diff-hint"></p>
-          </fieldset>
+          <div class="setup-rules-row">
+            <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-bankrupt-limit-picker">
+              <legend>破産人数で決着</legend>
+              <div class="map-picker-grid map-picker-chips" id="setup-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
+              <p class="hint cpu-diff-hint" id="setup-bankrupt-limit-hint"></p>
+            </fieldset>
+            <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="setup-cpu-diff-picker">
+              <legend>CPUの強さ</legend>
+              <div class="map-picker-grid map-picker-chips" id="setup-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
+              <p class="hint cpu-diff-hint" id="setup-cpu-diff-hint"></p>
+            </fieldset>
+          </div>
           <div id="seat-editors" class="seat-editors-compact"></div>
           <div class="row-actions">
             <button class="btn" id="btn-setup-back">戻る</button>
@@ -247,75 +249,83 @@
 
   <!-- LOBBY -->
   <section id="screen-lobby" class="screen">
-    <div class="panel">
+    <div class="panel lobby-panel">
       <h2>マルチプレイロビー</h2>
-      <p id="lobby-role" class="hint"></p>
-      <label class="field">ニックネーム
-        <input id="lobby-name" maxlength="12" value="プレイヤー" />
-      </label>
-      <div class="field">
-        <span class="field-label">プレイヤー色</span>
-        <div id="lobby-color-picker" class="color-picker" role="listbox" aria-label="プレイヤー色"></div>
-      </div>
-      <div id="lobby-room-wrap">
-        <label class="field">部屋コード
-          <input id="lobby-room" maxlength="8" placeholder="例: AB12CD" style="text-transform:uppercase" />
-        </label>
-      </div>
-      <div id="lobby-host-tools">
-        <div class="code-big" id="lobby-code-display">------</div>
-        <div class="row-actions">
-          <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
-          <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
-        </div>
-        <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-bankrupt-limit-picker">
-          <legend>破産人数で決着</legend>
-          <div class="map-picker-grid map-picker-chips" id="lobby-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
-          <p class="hint cpu-diff-hint" id="lobby-bankrupt-limit-hint"></p>
-        </fieldset>
-        <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-cpu-diff-picker">
-          <legend>CPUの強さ</legend>
-          <div class="map-picker-grid map-picker-chips" id="lobby-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
-          <p class="hint cpu-diff-hint" id="lobby-cpu-diff-hint"></p>
-        </fieldset>
-        <div class="setup-money-row">
-          <label class="field">目標資産（G）
-            <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
+      <div class="lobby-layout">
+        <div class="lobby-main">
+          <p id="lobby-role" class="hint"></p>
+          <label class="field">ニックネーム
+            <input id="lobby-name" maxlength="12" value="プレイヤー" />
           </label>
-          <label class="field">初期資金（G）
-            <input type="number" id="lobby-cash" value="2200" min="0" step="100" />
-          </label>
-        </div>
-        <div class="lobby-map-layout">
-          <fieldset class="map-picker map-picker-compact" id="lobby-map-picker">
-            <legend>マップ</legend>
-            <div class="map-picker-grid map-picker-chips" id="lobby-map-options"></div>
-          </fieldset>
-          <aside class="map-preview map-preview-lobby" aria-live="polite">
+          <div class="field">
+            <span class="field-label">プレイヤー色</span>
+            <div id="lobby-color-picker" class="color-picker" role="listbox" aria-label="プレイヤー色"></div>
+          </div>
+          <div id="lobby-room-wrap">
+            <label class="field">部屋コード
+              <input id="lobby-room" maxlength="8" placeholder="例: AB12CD" style="text-transform:uppercase" />
+            </label>
+          </div>
+          <p class="hint" id="lobby-guest-bankrupt-limit" hidden></p>
+          <aside id="lobby-guest-map" class="map-preview map-preview-lobby lobby-guest-map" hidden aria-live="polite">
             <div class="map-preview-head">
-              <strong id="lobby-map-preview-name">マップ</strong>
-              <span class="map-preview-hint">配置プレビュー</span>
+              <strong id="lobby-guest-map-name">マップ</strong>
+              <span class="map-preview-hint">ホストが選んだマップ</span>
             </div>
-            <canvas id="lobby-map-preview" class="map-preview-canvas" width="280" height="180" aria-label="選択中マップの配置"></canvas>
+            <canvas id="lobby-guest-map-preview" class="map-preview-canvas" width="280" height="180" aria-label="選択中マップの配置"></canvas>
           </aside>
+          <div id="net-status">未接続</div>
+          <div id="lobby-players"></div>
+          <div class="row-actions lobby-main-actions">
+            <button class="btn" id="btn-lobby-back">戻る</button>
+            <button class="btn primary" id="btn-lobby-connect">部屋作成</button>
+            <button class="btn danger ghost" id="btn-lobby-dismantle" hidden>部屋を解体</button>
+            <button class="btn" id="btn-lobby-reconnect" hidden>再接続</button>
+            <button class="btn primary" id="btn-lobby-start">ゲーム開始</button>
+          </div>
         </div>
-      </div>
-      <p class="hint" id="lobby-guest-bankrupt-limit" hidden></p>
-      <aside id="lobby-guest-map" class="map-preview map-preview-lobby lobby-guest-map" hidden aria-live="polite">
-        <div class="map-preview-head">
-          <strong id="lobby-guest-map-name">マップ</strong>
-          <span class="map-preview-hint">ホストが選んだマップ</span>
+        <div id="lobby-host-tools">
+          <div class="lobby-host-top">
+            <div class="code-big" id="lobby-code-display">------</div>
+            <div class="row-actions">
+              <button class="btn tiny" id="btn-copy-code">コードをコピー</button>
+              <button class="btn tiny" id="btn-add-cpu">CPU追加</button>
+            </div>
+          </div>
+          <div class="setup-rules-row">
+            <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-bankrupt-limit-picker">
+              <legend>破産人数で決着</legend>
+              <div class="map-picker-grid map-picker-chips" id="lobby-bankrupt-limit-options" role="radiogroup" aria-label="破産人数で決着"></div>
+              <p class="hint cpu-diff-hint" id="lobby-bankrupt-limit-hint"></p>
+            </fieldset>
+            <fieldset class="map-picker map-picker-compact cpu-diff-picker" id="lobby-cpu-diff-picker">
+              <legend>CPUの強さ</legend>
+              <div class="map-picker-grid map-picker-chips" id="lobby-cpu-diff-options" role="radiogroup" aria-label="CPUの強さ"></div>
+              <p class="hint cpu-diff-hint" id="lobby-cpu-diff-hint"></p>
+            </fieldset>
+          </div>
+          <div class="setup-money-row">
+            <label class="field">目標資産（G）
+              <input type="number" id="lobby-goal" value="10000" min="3000" step="1000" />
+            </label>
+            <label class="field">初期資金（G）
+              <input type="number" id="lobby-cash" value="2200" min="0" step="100" />
+            </label>
+          </div>
+          <div class="lobby-map-layout">
+            <fieldset class="map-picker map-picker-compact" id="lobby-map-picker">
+              <legend>マップ</legend>
+              <div class="map-picker-grid map-picker-chips" id="lobby-map-options"></div>
+            </fieldset>
+            <aside class="map-preview map-preview-lobby" aria-live="polite">
+              <div class="map-preview-head">
+                <strong id="lobby-map-preview-name">マップ</strong>
+                <span class="map-preview-hint">配置プレビュー</span>
+              </div>
+              <canvas id="lobby-map-preview" class="map-preview-canvas" width="280" height="180" aria-label="選択中マップの配置"></canvas>
+            </aside>
+          </div>
         </div>
-        <canvas id="lobby-guest-map-preview" class="map-preview-canvas" width="280" height="180" aria-label="選択中マップの配置"></canvas>
-      </aside>
-      <div id="net-status">未接続</div>
-      <div id="lobby-players"></div>
-      <div class="row-actions">
-        <button class="btn" id="btn-lobby-back">戻る</button>
-        <button class="btn primary" id="btn-lobby-connect">部屋作成</button>
-        <button class="btn danger ghost" id="btn-lobby-dismantle" hidden>部屋を解体</button>
-        <button class="btn" id="btn-lobby-reconnect" hidden>再接続</button>
-        <button class="btn primary" id="btn-lobby-start">ゲーム開始</button>
       </div>
     </div>
   </section>

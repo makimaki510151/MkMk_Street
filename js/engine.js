@@ -3,6 +3,8 @@
 import {
   buildBoard,
   applySwitchState,
+  getSwitchStateCount,
+  normalizeSwitchState,
   recordSwitchSlide,
   takeSwitchFx,
   SUIT_LABELS,
@@ -162,7 +164,7 @@ export const CPU_PERSONALITIES = {
 };
 
 /**
- * CPU 難易度。normal（中級）＝従来の強さ。beginner（初心）は弱体化。
+ * CPU 難易度。normal（中級）＝標準。beginner（初心）は弱体化。
  */
 export const CPU_DIFFICULTY_KEYS = ['beginner', 'normal'];
 export const CPU_DIFFICULTY_DEFAULT = 'normal';
@@ -194,7 +196,7 @@ export const CPU_DIFFICULTIES = {
   normal: {
     id: 'normal',
     label: '中級',
-    hint: 'これまでのCPUの強さ',
+    hint: '購入・増資を積極的に行う標準の強さ',
     traitScale: null,
     mistakeChance: 0,
     reserveMult: 1,
@@ -206,12 +208,10 @@ export const CPU_DIFFICULTIES = {
 
 /**
  * 破産人数による早期決着。
- * 0 = 従来どおり残り1人まで。
- * 1〜3 = その人数が破産した時点で、生存者の総資産が多い人が勝ち。
+ * 1〜3 = その人数が破産した時点で、生存者の総資産が多い人が勝ち（既定1）。
  */
-export const BANKRUPT_LIMIT_DEFAULT = 0;
+export const BANKRUPT_LIMIT_DEFAULT = 1;
 export const BANKRUPT_LIMIT_OPTIONS = [
-  { value: 0, label: '最後まで', hint: '残り1人になるまで続ける（従来）' },
   { value: 1, label: '1人', hint: '1人が破産した時点で総資産決着' },
   { value: 2, label: '2人', hint: '2人が破産した時点で総資産決着' },
   { value: 3, label: '3人', hint: '3人が破産した時点で総資産決着' },
@@ -219,13 +219,13 @@ export const BANKRUPT_LIMIT_OPTIONS = [
 
 export function normalizeBankruptLimit(raw) {
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (!Number.isFinite(n) || n < 1) return BANKRUPT_LIMIT_DEFAULT;
   return Math.min(3, n);
 }
 
 export function bankruptLimitLabel(raw) {
   const v = normalizeBankruptLimit(raw);
-  return BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === v)?.label || '最後まで';
+  return BANKRUPT_LIMIT_OPTIONS.find((o) => o.value === v)?.label || '1人';
 }
 
 /** 生存者のうち総資産が最大のプレイヤー ID（同点は現金→席順） */
@@ -686,6 +686,73 @@ const BOARD_EVENTS = [
   }},
 ];
 
+/** 催促マス：オンライン催促回数に紐づくイベント（ランダム1つ） */
+const NUDGE_SQUARE_EVENTS = [
+  {
+    id: 'nudge_from_senders',
+    label: '催促上手から徴収',
+    apply: (g, p) => {
+      const mySent = ensureStats(p).nudgeSent || 0;
+      const unit = Math.max(1, (p.level || 1) * 100);
+      let total = 0;
+      const names = [];
+      for (const other of g.players) {
+        if (!other || other.bankrupt || other.id === p.id) continue;
+        const sent = ensureStats(other).nudgeSent || 0;
+        if (sent <= mySent) continue;
+        const pay = Math.min(Math.max(0, other.cash), unit);
+        other.cash -= pay;
+        total += pay;
+        names.push(other.name);
+      }
+      p.cash += total;
+      return names.length
+        ? `${names.join('・')}から計 +${total}G（各最大 Lv×100）`
+        : '対象なし（0G）';
+    },
+  },
+  {
+    id: 'nudge_to_targets',
+    label: '催促され上手へ寄付',
+    apply: (g, p) => {
+      const myRecv = ensureStats(p).nudgeReceived || 0;
+      const unit = Math.max(1, (p.level || 1) * 50);
+      let total = 0;
+      const names = [];
+      for (const other of g.players) {
+        if (!other || other.bankrupt || other.id === p.id) continue;
+        const recv = ensureStats(other).nudgeReceived || 0;
+        if (recv <= myRecv) continue;
+        other.cash += unit;
+        total += unit;
+        names.push(other.name);
+      }
+      p.cash -= total;
+      return names.length
+        ? `${names.join('・')}へ計 -${total}G（各 Lv×50）`
+        : '対象なし（0G）';
+    },
+  },
+  {
+    id: 'nudge_sent_bonus',
+    label: '催促実績ボーナス',
+    apply: (g, p) => {
+      const n = Math.max(0, ensureStats(p).nudgeSent || 0);
+      p.cash += n;
+      return `催促した数 +${n}G`;
+    },
+  },
+  {
+    id: 'nudge_recv_bonus',
+    label: '催促され実績ボーナス',
+    apply: (g, p) => {
+      const n = Math.max(0, (ensureStats(p).nudgeReceived || 0) * 5);
+      p.cash += n;
+      return `催促された数×5 +${n}G`;
+    },
+  },
+];
+
 function mulberry32(seed) {
   let s = seed >>> 0;
   return () => {
@@ -783,7 +850,7 @@ export function createGame({
     turn: 1,
     goalPressure: false,
     cpuDifficulty: resolvedCpuDifficulty,
-    /** 0=最後まで。1〜3=その人数破産で総資産決着 */
+    /** 1〜3=その人数破産で総資産決着（既定1） */
     bankruptLimit: resolvedBankruptLimit,
     switchState: board.switchState || 0,
     switchGates: board.switchGates || [],
@@ -802,10 +869,27 @@ export function createGame({
   return g;
 }
 
-/** スイッチマス：経路と動くマスを切り替える（動くマスは switchFx にスライド情報を積む） */
+/** スイッチマス：経路と動くマスを切り替える（動くマスは switchFx にスライド／回転情報を積む） */
 export function toggleBoardSwitch(g) {
-  const prev = g.switchState ? 1 : 0;
-  const next = prev ? 0 : 1;
+  const nStates = getSwitchStateCount(g);
+  const prev = normalizeSwitchState(g);
+  let next;
+  if (nStates <= 2) {
+    next = prev ? 0 : 1;
+  } else {
+    // 3状態以上：現在以外からランダム（回転橋など）
+    const opts = [];
+    for (let i = 0; i < nStates; i++) if (i !== prev) opts.push(i);
+    next = opts[Math.floor(rngNext(g) * opts.length)] ?? ((prev + 1) % nStates);
+  }
+  const dist = Math.min((next - prev + nStates) % nStates, (prev - next + nStates) % nStates);
+  // 正面（反対側）＝平行移動、横＝回転（ピボットは盤面中央付近）
+  const motion = dist >= 2 ? 'slide' : 'rotate';
+  const cw = ((next - prev + nStates) % nStates) <= (nStates / 2);
+  const pivot = {
+    col: ((g.cols || 1) - 1) / 2,
+    row: ((g.rows || 1) - 1) / 2,
+  };
   for (const mv of g.switchMoves || []) {
     const from = mv.pos?.[prev];
     const to = mv.pos?.[next];
@@ -815,6 +899,9 @@ export function toggleBoardSwitch(g) {
       id: mv.id,
       from: { col: from.col, row: from.row },
       to: { col: to.col, row: to.row },
+      motion,
+      rotateDir: cw ? 1 : -1,
+      pivot: motion === 'rotate' ? pivot : null,
     });
   }
   g.switchState = next;
@@ -1787,7 +1874,7 @@ export function serializeState(g) {
     mapId: g.mapId || DEFAULT_MAP_ID,
     mapName: g.mapName || '',
     diceMax: getMoveDiceMax(g),
-    switchState: g.switchState ? 1 : 0,
+    switchState: normalizeSwitchState(g),
     switchGates: g.switchGates || [],
     switchMoves: g.switchMoves || [],
     cols: g.cols,
@@ -1851,7 +1938,7 @@ export function restoreState(data) {
   }
   if (!Array.isArray(g.switchGates)) g.switchGates = [];
   if (!Array.isArray(g.switchMoves)) g.switchMoves = [];
-  g.switchState = g.switchState ? 1 : 0;
+  g.switchState = normalizeSwitchState(g, g.switchState);
   if (!Array.isArray(g.eventNpcs)) g.eventNpcs = [];
   if (!Array.isArray(g.eventNpcFx)) g.eventNpcFx = [];
   if (g.povertyHolidayClearTurn === undefined) g.povertyHolidayClearTurn = null;
@@ -2813,6 +2900,15 @@ function resolveLanding(g, p, { passedBank, fromWarp = false } = {}) {
       `${p.name} がスイッチを倒した！ 経路が切り替わった（状態${next + 1}）`,
       'event',
     );
+    finishLanding(g, p);
+    return;
+  }
+
+  if (sq.type === 'nudge') {
+    const ev = NUDGE_SQUARE_EVENTS[Math.floor(rngNext(g) * NUDGE_SQUARE_EVENTS.length)];
+    const detail = ev.apply(g, p);
+    addLog(g, `催促マス！ ${ev.label}（${detail}）`, 'event');
+    if (openEventDebtIfNeeded(g, p, { type: 'after_event', mode: 'landing' })) return;
     finishLanding(g, p);
     return;
   }

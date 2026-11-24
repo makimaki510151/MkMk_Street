@@ -1947,9 +1947,10 @@ function playRemoteFx(data) {
   }
   if (data.kind === 'switchSlide' && data.moves?.length) {
     // 先にスライド予約 → その後に論理座標を更新（一瞬の新位置フラッシュを防ぐ）
-    armSwitchSlides(data.moves);
-    if (app.game && (data.switchState === 0 || data.switchState === 1)) {
-      app.game.switchState = data.switchState ? 1 : 0;
+    const guestDur = data.moves.some((m) => m?.motion === 'rotate') ? 1100 : 780;
+    armSwitchSlides(data.moves, guestDur);
+    if (app.game && data.switchState != null && Number.isFinite(Number(data.switchState))) {
+      app.game.switchState = Math.max(0, Math.floor(Number(data.switchState)));
       applySwitchState(app.game);
     }
     app.busy = true;
@@ -2702,7 +2703,9 @@ function startLocal(seats) {
             : demo === 'map-kurechigai' ? 'kurechigai'
               : demo === 'map-sky' || demo === 'map-sky-isles' ? 'sky_isles'
                 : demo === 'map-mine' || demo === 'map-greed-mine' ? 'greed_mine'
-                  : params.get('map');
+                  : demo === 'map-panda' || demo === 'map-scratch-panda' ? 'scratch_panda'
+                    : demo === 'map-bridge' || demo === 'map-rotate-bridge' ? 'rotate_bridge'
+                      : params.get('map');
   const mapId = mapFromDemo || selectedMapId('#setup-map-options');
   const mapDef = MAP_CATALOG.find((m) => m.id === mapId);
   const goalFromUi = Number($('#setup-goal')?.value);
@@ -4286,7 +4289,11 @@ function armSwitchSlides(moves, dur = 780) {
   if (!moves?.length || !app.renderer) return;
   for (const m of moves) {
     if (!m || m.id == null || !m.from || !m.to) continue;
-    app.renderer.animateTileSlide(m.id, m.from, m.to, dur);
+    app.renderer.animateTileSlide(m.id, m.from, m.to, dur, {
+      motion: m.motion || 'slide',
+      rotateDir: m.rotateDir,
+      pivot: m.pivot || null,
+    });
   }
 }
 
@@ -4759,12 +4766,14 @@ async function presentWarpFx(warps, { remote = false } = {}) {
   pumpEventFlash();
 }
 
-/** スイッチで動くマスのスライド演出 */
+/** スイッチで動くマスのスライド／回転演出 */
 async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } = {}) {
   if (!moves?.length || !app.game) return;
   const wasBusy = app.busy;
   app.busy = true;
-  const dur = 780;
+  // 回転は弧が見えるよう長め、平行移動は従来どおり
+  const isRotate = moves.some((m) => m?.motion === 'rotate');
+  const dur = isRotate ? 1100 : 780;
   if (!alreadyArmed) {
     // 予約→論理座標更新の順を同一同期ブロックで行う
     armSwitchSlides(moves, dur);
@@ -4781,7 +4790,7 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
     broadcastFx({
       kind: 'switchSlide',
       moves,
-      switchState: app.game.switchState ? 1 : 0,
+      switchState: Math.max(0, Math.floor(Number(app.game.switchState) || 0)),
     });
   }
   if (typeof audio.sfx.fork === 'function') audio.sfx.fork();
@@ -4793,13 +4802,13 @@ async function presentSwitchFx(moves, { remote = false, alreadyArmed = false } =
     // endTurn 後の reader=着地者のままホストが閉じられず 確認中で止まる。
     pushEventStamp({
       kicker: 'スイッチ',
-      title: '航路が切り替わった',
-      detail: `動くマス ×${moves.length}`,
+      title: isRotate ? '橋が回転した' : '航路が切り替わった',
+      detail: isRotate ? `回転移動 ×${moves.length}` : `平行移動 ×${moves.length}`,
       kind: 'system',
       color: '#ffe08a',
       silentStamp: true,
     });
-    toast('航路が切り替わった');
+    toast(isRotate ? '橋が回転した' : '航路が切り替わった');
   }
   await wait(dur + 80);
   // スイッチ演出自体は確認UIを持たない。ここで HoldingBusy を立てると
