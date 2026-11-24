@@ -47,9 +47,8 @@ function isShaftLandingExit(n) {
   return (n.shaft === 'down' && n.floor === 2) || (n.shaft === 'up' && n.floor === 1);
 }
 
-function linkGridOrthoAndGapDiagonals(grid) {
+function linkGridOrtho(grid) {
   const ortho = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   for (let r = 0; r < grid.length; r++) {
     const row = grid[r] || [];
     for (let c = 0; c < row.length; c++) {
@@ -60,6 +59,18 @@ function linkGridOrthoAndGapDiagonals(grid) {
         if (!b || a.id >= b.id) continue;
         link([a, b]);
       }
+    }
+  }
+}
+
+function linkGridOrthoAndGapDiagonals(grid) {
+  linkGridOrtho(grid);
+  const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const a = row[c];
+      if (!a) continue;
       for (const [dc, dr] of diag) {
         const b = grid[r + dr]?.[c + dc];
         if (!b || a.id >= b.id) continue;
@@ -938,11 +949,11 @@ export function buildRotateBridge() {
   }
   if (!ctx.bank) throw new Error('回転橋: 銀行なし');
 
-  linkGridOrthoAndGapDiagonals(grid);
+  // 空洞をまたぐ斜め・長距離は禁止。直交隣接のみ
+  linkGridOrtho(grid);
 
   // 静的リンクを確定してから、可変ノードの baseNexts は空に（ゲートのみで接続）
   for (const n of movable) {
-    // グリッド ortho で付いた仮リンクを剥がし、ゲートに任せる
     for (const other of nodes) {
       if (other.id === n.id) continue;
       other.nexts = (other.nexts || []).filter((id) => id !== n.id);
@@ -955,15 +966,6 @@ export function buildRotateBridge() {
   const spade = byCR(9, 3);
   const diamond = byCR(3, 9);
   const club = byCR(9, 9);
-  const swN = byCR(6, 0);
-  const swE = byCR(12, 6);
-  const swS = byCR(6, 12);
-  const swW = byCR(0, 6);
-  // 北南アーム端の行き止まり防止（同列の外周店へ）
-  const bTop = byCR(4, 0);
-  const cTop = byCR(8, 0);
-  const gBot = byCR(4, 12);
-  const fBot = byCR(8, 12);
 
   const [a0, a1, bank, a2, a3] = movable;
   const switchMoves = movable.map((n, i) => ({
@@ -973,46 +975,50 @@ export function buildRotateBridge() {
 
   /** @type {{a:number,b:number,when:number}[]} */
   const switchGates = [];
+  const posOf = (node, when) => {
+    const idx = movable.indexOf(node);
+    if (idx >= 0) return armPos[when][idx];
+    return { col: node.col, row: node.row };
+  };
   const gate = (when, a, b) => {
     if (!a || !b) return;
+    // その状態での配置で直交隣接のみ（切↔銀などの飛び越え禁止）
+    const pa = posOf(a, when);
+    const pb = posOf(b, when);
+    const dc = Math.abs(pa.col - pb.col);
+    const dr = Math.abs(pa.row - pb.row);
+    if (dc + dr !== 1) return;
     switchGates.push({ a: a.id, b: b.id, when });
   };
-  // N: ♥—A—銀—A—♠ ＋ 北辺Ｂ/Ｃ・北スイッチ
+  // ゲートはアーム内＋マークへの直交隣接のみ（切↔銀などの飛び越え禁止）
+  // N: ♥—A—銀—A—♠
   gate(0, heart, a0);
   gate(0, a0, a1);
   gate(0, a1, bank);
   gate(0, bank, a2);
   gate(0, a2, a3);
   gate(0, a3, spade);
-  gate(0, a0, bTop);
-  gate(0, a3, cTop);
-  gate(0, swN, bank);
-  // E: ♠—A—銀—A—♣（銀と同じ縦軸）＋東スイッチ
+  // E: ♠—A—銀—A—♣
   gate(1, spade, a0);
   gate(1, a0, a1);
   gate(1, a1, bank);
   gate(1, bank, a2);
   gate(1, a2, a3);
   gate(1, a3, club);
-  gate(1, bank, swE);
-  // S: ♣—A—銀—A—♦ ＋ 南辺Ｆ/Ｇ・南スイッチ
+  // S: ♣—A—銀—A—♦
   gate(2, club, a0);
   gate(2, a0, a1);
   gate(2, a1, bank);
   gate(2, bank, a2);
   gate(2, a2, a3);
   gate(2, a3, diamond);
-  gate(2, a0, fBot);
-  gate(2, a3, gBot);
-  gate(2, swS, bank);
-  // W: ♦—A—銀—A—♥（銀と同じ縦軸）＋西スイッチ
+  // W: ♦—A—銀—A—♥
   gate(3, diamond, a0);
   gate(3, a0, a1);
   gate(3, a1, bank);
   gate(3, bank, a2);
   gate(3, a2, a3);
   gate(3, a3, heart);
-  gate(3, bank, swW);
 
   return packBoard(nodes, ctx.bank, W, gridRows.length, {
     mapId: 'rotate_bridge',

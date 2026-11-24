@@ -57,6 +57,20 @@ describe('rotate_bridge map', () => {
     assert.equal(getSwitchStateCount(board), 4);
     assert.ok(board.switchMoves.length >= 5);
     assert.ok(board.switchGates.length >= 20);
+    // 長距離ゲートが残っていないこと
+    for (const g of board.switchGates) {
+      const a = board.nodes.find((n) => n.id === g.a);
+      const b = board.nodes.find((n) => n.id === g.b);
+      const posA = board.switchMoves.find((m) => m.id === g.a)?.pos?.[g.when]
+        || { col: a.col, row: a.row };
+      const posB = board.switchMoves.find((m) => m.id === g.b)?.pos?.[g.when]
+        || { col: b.col, row: b.row };
+      assert.equal(
+        Math.abs(posA.col - posB.col) + Math.abs(posA.row - posB.row),
+        1,
+        `gate when=${g.when} non-adjacent`,
+      );
+    }
 
     const g = createGame({
       players: [{ name: 'A' }, { name: 'B' }],
@@ -97,6 +111,26 @@ describe('rotate_bridge map', () => {
         .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       const want = [...exp.shops].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       assert.deepEqual(shops, want, `state ${state} shops`);
+    }
+  });
+
+  it('never links bank directly to a switch (no long jumps)', () => {
+    for (const state of [0, 1, 2, 3]) {
+      const g = createGame({
+        players: [{ name: 'A' }, { name: 'B' }],
+        seed: 1,
+        mapId: 'rotate_bridge',
+      });
+      g.switchState = state;
+      applySwitchState(g);
+      const bank = getNode(g, g.startId);
+      for (const nid of bank.nexts) {
+        const n = getNode(g, nid);
+        assert.notEqual(n.type, 'switch', `state ${state}: bank↔switch`);
+      }
+      for (const sw of g.map.filter((n) => n.type === 'switch')) {
+        assert.equal(sw.nexts.includes(bank.id), false, `state ${state}: switch↔bank`);
+      }
     }
   });
 
