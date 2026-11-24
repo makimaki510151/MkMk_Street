@@ -322,15 +322,18 @@ export function createRenderer(canvas) {
         while (dAng > 0) dAng -= Math.PI * 2;
         while (dAng <= -Math.PI * 2) dAng += Math.PI * 2;
       }
+      // 90°回転を想定。ほぼ0なら明示的に ±π/2
       if (Math.abs(dAng) < 1e-6) dAng = dir * (Math.PI / 2);
       const r0 = Math.hypot(slide.fromCol - slide.pivot.col, slide.fromRow - slide.pivot.row);
       const r1 = Math.hypot(slide.toCol - slide.pivot.col, slide.toRow - slide.pivot.row);
       const ang = ang0 + dAng * ease;
-      const r = r0 + (r1 - r0) * ease;
+      // 弧の途中で少し外側へ膨らませ、回転感を強調
+      const bulge = Math.sin(Math.PI * ease) * 0.35;
+      const r = r0 + (r1 - r0) * ease + bulge;
       return {
         col: slide.pivot.col + Math.cos(ang) * r,
         row: slide.pivot.row + Math.sin(ang) * r,
-        hop,
+        hop: hop + bulge * 0.15,
       };
     }
     return {

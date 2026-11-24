@@ -76,10 +76,10 @@ describe('rotate_bridge map', () => {
     assert.ok(seen.size >= 3, `bank should visit multiple anchors, got ${[...seen]}`);
   });
 
-  it('E/W arm matches JSON: shops with mid gap + bank one cell outward', () => {
+  it('E/W arm shares bank column: shops + bank in one vertical line', () => {
     const expected = {
-      1: { bank: [9, 6], shops: [[8, 4], [8, 5], [8, 7], [8, 8]] },
-      3: { bank: [3, 6], shops: [[4, 4], [4, 5], [4, 7], [4, 8]] },
+      1: { bank: [9, 6], shops: [[9, 4], [9, 5], [9, 7], [9, 8]] },
+      3: { bank: [3, 6], shops: [[3, 4], [3, 5], [3, 7], [3, 8]] },
     };
     for (const [state, exp] of Object.entries(expected)) {
       const g = createGame({

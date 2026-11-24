@@ -901,18 +901,18 @@ export function buildRotateBridge() {
     }
   }
 
-  // Aエリア4店＋変動銀行。配置は grid-map-maker JSON（１〜４／銀）に忠実。
-  // 状態0=北(１) 1=東(４) 2=南(３) 3=西(２)／movable 順: a0,a1,bank,a2,a3
-  // E/W は店列の中央が空き、銀行がその外側（JSONの銀位置）。
+  // Aエリア4店＋変動銀行。中心 (6,6) まわりの幾何回転で N→E→S→W がつながる。
+  // 状態0=北 1=東 2=南 3=西／movable 順: a0,a1,bank,a2,a3
+  // E/W は銀行と同じ縦軸（東 col9／西 col3）に店＋銀を一列配置。
   const armPos = [
     // N: ♥１１銀１１♠
     [{ col: 4, row: 3 }, { col: 5, row: 3 }, { col: 6, row: 3 }, { col: 7, row: 3 }, { col: 8, row: 3 }],
-    // E: ４×4（col8・中央空き）＋銀(9,6)
-    [{ col: 8, row: 4 }, { col: 8, row: 5 }, { col: 9, row: 6 }, { col: 8, row: 7 }, { col: 8, row: 8 }],
-    // S: ♦３３銀３３♣（スロット対応で反転）
+    // E: 銀と同じ縦軸 col9（中央は銀行）
+    [{ col: 9, row: 4 }, { col: 9, row: 5 }, { col: 9, row: 6 }, { col: 9, row: 7 }, { col: 9, row: 8 }],
+    // S: ♦３３銀３３♣（回転継続のため左右反転スロット）
     [{ col: 8, row: 9 }, { col: 7, row: 9 }, { col: 6, row: 9 }, { col: 5, row: 9 }, { col: 4, row: 9 }],
-    // W: ２×4（col4・中央空き）＋銀(3,6)
-    [{ col: 4, row: 8 }, { col: 4, row: 7 }, { col: 3, row: 6 }, { col: 4, row: 5 }, { col: 4, row: 4 }],
+    // W: 銀と同じ縦軸 col3（中央は銀行）
+    [{ col: 3, row: 8 }, { col: 3, row: 7 }, { col: 3, row: 6 }, { col: 3, row: 5 }, { col: 3, row: 4 }],
   ];
   const aNames = shopNames[1];
   const aPrices = shopPrice[1];
@@ -959,7 +959,7 @@ export function buildRotateBridge() {
   const swE = byCR(12, 6);
   const swS = byCR(6, 12);
   const swW = byCR(0, 6);
-  // 外周の同列アンカー（アーム端の行き止まり防止・長距離直交ゲート）
+  // 北南アーム端の行き止まり防止（同列の外周店へ）
   const bTop = byCR(4, 0);
   const cTop = byCR(8, 0);
   const gBot = byCR(4, 12);
@@ -987,13 +987,13 @@ export function buildRotateBridge() {
   gate(0, a0, bTop);
   gate(0, a3, cTop);
   gate(0, swN, bank);
-  // E: ４列は中央空き。銀行(9,6)は a1(8,5)／a2(8,7) と斜め接続
-  gate(1, cTop, a0);
+  // E: ♠—A—銀—A—♣（銀と同じ縦軸）＋東スイッチ
+  gate(1, spade, a0);
   gate(1, a0, a1);
   gate(1, a1, bank);
   gate(1, bank, a2);
   gate(1, a2, a3);
-  gate(1, a3, fBot);
+  gate(1, a3, club);
   gate(1, bank, swE);
   // S: ♣—A—銀—A—♦ ＋ 南辺Ｆ/Ｇ・南スイッチ
   gate(2, club, a0);
@@ -1005,13 +1005,13 @@ export function buildRotateBridge() {
   gate(2, a0, fBot);
   gate(2, a3, gBot);
   gate(2, swS, bank);
-  // W: ２列は中央空き。銀行(3,6)は a1(4,7)／a2(4,5) と斜め接続
-  gate(3, gBot, a0);
+  // W: ♦—A—銀—A—♥（銀と同じ縦軸）＋西スイッチ
+  gate(3, diamond, a0);
   gate(3, a0, a1);
   gate(3, a1, bank);
   gate(3, bank, a2);
   gate(3, a2, a3);
-  gate(3, a3, bTop);
+  gate(3, a3, heart);
   gate(3, bank, swW);
 
   return packBoard(nodes, ctx.bank, W, gridRows.length, {
